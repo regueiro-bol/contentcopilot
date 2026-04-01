@@ -314,7 +314,7 @@ export default function InformeRevisionDashboard({ informe, fecha, agente }: Pro
               const cfg = estadoKeywordConfig(data.estructura_hs.estado)
               return (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">Estructura H's</span>
+                  <span className="text-xs text-gray-500">Estructura H&apos;s</span>
                   <Badge className={cfg.bg}>{cfg.label}</Badge>
                 </div>
               )

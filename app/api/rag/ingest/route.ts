@@ -532,6 +532,7 @@ export async function DELETE(req: NextRequest) {
     const docsActualizados = ((proyectoActual?.documentos_subidos ?? []) as Array<Record<string, unknown>>)
       .map((doc) => {
         if (documento_id && doc.id === documento_id) {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { estado_rag: _r, chunks_generados: _c, fecha_procesado: _f, ...resto } = doc
           return resto
         }
