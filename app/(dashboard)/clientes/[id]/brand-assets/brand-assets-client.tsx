@@ -79,6 +79,8 @@ const DRIVE_FOLDER_NAME: Record<AssetType, string> = {
   product_image: 'imagenes-producto',
   reference_ad:  'ads-referencia',
   template:      'plantillas',
+  font:          'fuentes',
+  color:         'colores',
 }
 
 const ASSET_TYPE_ICON: Record<AssetType, React.ReactNode> = {
@@ -87,6 +89,8 @@ const ASSET_TYPE_ICON: Record<AssetType, React.ReactNode> = {
   product_image: <FileType className="h-4 w-4" />,
   reference_ad:  <Megaphone className="h-4 w-4" />,
   template:      <Layout className="h-4 w-4" />,
+  font:          <Layout className="h-4 w-4" />,
+  color:         <Layout className="h-4 w-4" />,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1107,7 +1111,7 @@ export default function BrandAssetsClient({
 
   // Agrupa activos por tipo
   const byType: Record<AssetType, BrandAssetRow[]> = {
-    logo: [], brand_book: [], product_image: [], reference_ad: [], template: [],
+    logo: [], brand_book: [], product_image: [], reference_ad: [], template: [], font: [], color: [],
   }
   for (const asset of assets) {
     byType[asset.asset_type as AssetType]?.push(asset)

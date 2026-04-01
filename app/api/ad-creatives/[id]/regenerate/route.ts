@@ -1,30 +1,32 @@
 /**
  * POST /api/ad-creatives/[id]/regenerate
  *
- * Regenera la imagen de un creative existente manteniendo el mismo copy.
- * Útil cuando la imagen generada no es satisfactoria.
+ * Regenera la imagen de un creative manteniendo el copy.
+ * Usa el mismo pipeline que generate:
+ *   1. FLUX / Nano Banana genera el fondo (sin texto)
+ *   2. sharp compone el PNG final con el copy guardado
+ *   3. Sube a Supabase Storage y actualiza image_url
  */
 
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { fal } from '@fal-ai/client'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { downloadFromDrive } from '@/lib/google-drive'
+import { composeCreative } from '@/lib/ad-creatives/compose'
+import { ensureAdCreativesBucket, uploadAdCreative } from '@/lib/ad-creatives/storage'
 
 export const maxDuration = 120
 
 type AdFormat = '1x1' | '9x16' | '1.91x1'
 
 const FAL_MODELS = {
-  ideogram:   'fal-ai/ideogram/v3',
   flux:       'fal-ai/flux-pro/v1.1-ultra',
   nanoBanana: 'fal-ai/nano-banana-pro',
 } as const
 
-const IDEOGRAM_IMAGE_SIZE: Record<AdFormat, string | { width: number; height: number }> = {
-  '1x1':    'square_hd',
-  '9x16':   'portrait_16_9',
-  '1.91x1': { width: 1200, height: 628 },
-}
+type FalModelKey = keyof typeof FAL_MODELS
+
 const FLUX_ASPECT_RATIO: Record<AdFormat, string> = {
   '1x1': '1:1', '9x16': '9:16', '1.91x1': '16:9',
 }
@@ -33,15 +35,54 @@ const NANO_BANANA_ASPECT_RATIO: Record<AdFormat, string> = {
 }
 
 interface StoredColor { name: string; hex: string; role?: string; usage?: string }
+interface RgbColor    { r: number; g: number; b: number }
+interface InstitutionColor { rgb: RgbColor; color_weight: number }
 interface FalResult   { data?: { images?: Array<{ url: string }>; image?: { url: string } } }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const clean = hex.startsWith('#') ? hex.slice(1) : hex
-  if (clean.length !== 6) return null
-  const r = parseInt(clean.slice(0, 2), 16)
-  const g = parseInt(clean.slice(2, 4), 16)
-  const b = parseInt(clean.slice(4, 6), 16)
-  return isNaN(r) || isNaN(g) || isNaN(b) ? null : { r, g, b }
+function rgbToHex({ r, g, b }: RgbColor): string {
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+
+function getCompositionColors(
+  colors: StoredColor[],
+  institutionPalette: InstitutionColor[] | null,
+): { primaryHex: string; secondaryHex: string } {
+  if (institutionPalette && institutionPalette.length >= 1) {
+    return {
+      primaryHex:   rgbToHex(institutionPalette[0].rgb),
+      secondaryHex: institutionPalette.length >= 3
+        ? rgbToHex(institutionPalette[2].rgb)
+        : rgbToHex(institutionPalette[institutionPalette.length - 1].rgb),
+    }
+  }
+  const primary   = colors.find((c) => c.role === 'primary'   || c.usage === 'primary')   ?? colors[0]
+  const secondary = colors.find((c) => c.role === 'secondary' || c.usage === 'secondary') ?? colors[1] ?? colors[0]
+  return {
+    primaryHex:   primary?.hex   ?? '#1a1a2e',
+    secondaryHex: secondary?.hex ?? '#e94560',
+  }
+}
+
+function detectInstitution(brief: string): InstitutionColor[] | null {
+  const t = brief.toLowerCase()
+  if (t.includes('policía nacional') || t.includes('policia nacional') || t.includes(' cnp '))
+    return [
+      { rgb: { r: 0,   g: 56,  b: 117 }, color_weight: 0.50 },
+      { rgb: { r: 255, g: 255, b: 255 }, color_weight: 0.30 },
+      { rgb: { r: 212, g: 175, b: 55  }, color_weight: 0.20 },
+    ]
+  if (t.includes('guardia civil') || t.includes('benemérita'))
+    return [
+      { rgb: { r: 34,  g: 85,  b: 34  }, color_weight: 0.50 },
+      { rgb: { r: 255, g: 255, b: 255 }, color_weight: 0.30 },
+      { rgb: { r: 212, g: 175, b: 55  }, color_weight: 0.20 },
+    ]
+  if (t.includes('bombero'))
+    return [
+      { rgb: { r: 180, g: 30,  b: 30  }, color_weight: 0.55 },
+      { rgb: { r: 255, g: 165, b: 0   }, color_weight: 0.45 },
+    ]
+  return null
 }
 
 export async function POST(
@@ -52,8 +93,10 @@ export async function POST(
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const { id } = params
-  fal.config({ credentials: process.env.FAL_API_KEY })
+  fal.config({ credentials: process.env.FAL_KEY ?? process.env.FAL_API_KEY })
   const supabase = createAdminClient()
+
+  await ensureAdCreativesBucket()
 
   // Cargar el creative existente
   const { data: creative, error: creativeError } = await supabase
@@ -62,63 +105,74 @@ export async function POST(
     .eq('id', id)
     .single()
 
-  if (creativeError || !creative) {
+  if (creativeError || !creative)
     return NextResponse.json({ error: 'Creative no encontrado' }, { status: 404 })
-  }
 
-  // Cargar brand_context del cliente
-  const { data: context } = await supabase
-    .from('brand_context')
-    .select('colors, style_keywords')
-    .eq('client_id', creative.client_id)
-    .single()
+  // Cargar brand_context y assets
+  const [{ data: context }, { data: assetsData }] = await Promise.all([
+    supabase
+      .from('brand_context')
+      .select('colors, style_keywords')
+      .eq('client_id', creative.client_id)
+      .single(),
+    supabase
+      .from('brand_assets')
+      .select('id, asset_type, drive_file_id, file_name')
+      .eq('client_id', creative.client_id)
+      .eq('approved', true)
+      .eq('active', true)
+      .in('asset_type', ['logo', 'font']),
+  ])
 
   const colors        = (context?.colors as unknown as StoredColor[]) ?? []
   const styleKeywords = (context?.style_keywords as string[] | null) ?? []
+  const institutionPalette = detectInstitution((creative.brief as string) ?? '')
+  const { primaryHex, secondaryHex } = getCompositionColors(colors, institutionPalette)
 
-  // Recuperar el prompt original de generation_meta
-  const meta = creative.generation_meta as Record<string, unknown>
-  const originalPrompt = (meta?.image_prompt as string) ?? creative.brief
+  // Descargar logo y fuente
+  const logoAsset = (assetsData ?? []).find((a) => a.asset_type === 'logo')
+  const fontAsset = (assetsData ?? []).find((a) => a.asset_type === 'font')
+  const [logoBuffer, fontBuffer] = await Promise.all([
+    logoAsset?.drive_file_id ? downloadFromDrive(logoAsset.drive_file_id) : Promise.resolve(null),
+    fontAsset?.drive_file_id ? downloadFromDrive(fontAsset.drive_file_id) : Promise.resolve(null),
+  ])
 
-  const format    = creative.format as AdFormat
-  const modelUsed = creative.model_used as string
+  // Recuperar prompt de fondo del generation_meta
+  const meta         = (creative.generation_meta ?? {}) as Record<string, unknown>
+  const originalPrompt = (meta.image_prompt as string | undefined) ?? (creative.brief as string)
+  const format       = creative.format as AdFormat
 
-  // Determinar modelKey desde model_used
-  const modelKey =
-    modelUsed === FAL_MODELS.ideogram   ? 'ideogram'   :
-    modelUsed === FAL_MODELS.nanoBanana ? 'nanoBanana' : 'flux'
+  // Recuperar copy del creative
+  const copy = (creative.copy ?? {}) as {
+    headline?: string; body?: string; cta?: string
+    tagline?: string; caption?: string
+  }
+  const headline = copy.headline ?? (creative.brief as string)
+  const body     = copy.body ?? copy.caption
+  const cta      = copy.cta
 
-  // Generar nueva imagen
-  let newUrl: string | null = null
+  // Seleccionar modelo
+  const modelKey: FalModelKey =
+    creative.model_used === FAL_MODELS.nanoBanana ? 'nanoBanana' : 'flux'
+
+  // Añadir sufijo no-text al prompt si no lo tiene ya
+  const noTextSuffix = 'Clean background, no text, no words, no typography, no letters, no captions, no overlays. Photorealistic commercial photography.'
+  const cleanPrompt  = originalPrompt.includes('no text')
+    ? originalPrompt
+    : `${originalPrompt}. ${noTextSuffix}`
+
+  // Generar nuevo fondo
+  let bgUrl: string | null = null
   let genError: string | undefined
 
   try {
     let result: FalResult
 
-    if (modelKey === 'ideogram') {
-      const members = colors
-        .slice(0, 5)
-        .map((c) => { const rgb = hexToRgb(c.hex); return rgb ? { rgb, color_weight: 0.2 } : null })
-        .filter((m): m is NonNullable<typeof m> => m !== null)
-      const colorPalette = members.length > 0 ? { members } : undefined
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      result = await (fal as any).subscribe(FAL_MODELS.ideogram, {
-        input: {
-          prompt:          originalPrompt,
-          image_size:      IDEOGRAM_IMAGE_SIZE[format],
-          style:           'DESIGN',
-          rendering_speed: 'BALANCED',
-          num_images:      1,
-          expand_prompt:   false,
-          ...(colorPalette ? { color_palette: colorPalette } : {}),
-        },
-      })
-    } else if (modelKey === 'flux') {
+    if (modelKey === 'flux') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       result = await (fal as any).subscribe(FAL_MODELS.flux, {
         input: {
-          prompt:           originalPrompt,
+          prompt:           cleanPrompt,
           aspect_ratio:     FLUX_ASPECT_RATIO[format],
           num_images:       1,
           output_format:    'jpeg',
@@ -130,7 +184,7 @@ export async function POST(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       result = await (fal as any).subscribe(FAL_MODELS.nanoBanana, {
         input: {
-          prompt:        originalPrompt,
+          prompt:        cleanPrompt,
           aspect_ratio:  NANO_BANANA_ASPECT_RATIO[format],
           num_images:    1,
           resolution:    '2K',
@@ -140,36 +194,69 @@ export async function POST(
     }
 
     const output = result?.data ?? result
-    newUrl = (output as FalResult['data'])?.images?.[0]?.url
+    bgUrl = (output as FalResult['data'])?.images?.[0]?.url
       ?? (output as FalResult['data'])?.image?.url
       ?? null
   } catch (err) {
     genError = err instanceof Error ? err.message : String(err)
   }
 
-  if (!newUrl) {
+  if (!bgUrl) {
     return NextResponse.json(
-      { error: genError ?? 'No se pudo generar la imagen' },
+      { error: genError ?? 'No se pudo generar la imagen de fondo' },
       { status: 500 },
     )
+  }
+
+  // Componer PNG final
+  let finalImageUrl: string | null = bgUrl
+
+  try {
+    const composedBuffer = await composeCreative({
+      backgroundImageUrl: bgUrl,
+      headline,
+      body,
+      cta,
+      logoBuffer,
+      primaryHex,
+      secondaryHex,
+      format,
+      fontBuffer,
+    })
+
+    const storageUrl = await uploadAdCreative({
+      buffer:         composedBuffer,
+      clientId:       creative.client_id as string,
+      campaignName:   creative.campaign_name as string | null,
+      format,
+      variationIndex: (creative.variation_index as number) ?? 0,
+    })
+
+    if (storageUrl) finalImageUrl = storageUrl
+  } catch (err) {
+    console.error('[regenerate] Error componiendo:', err instanceof Error ? err.message : err)
   }
 
   // Actualizar en Supabase
   const { data: updated, error: updateError } = await supabase
     .from('ad_creatives')
     .update({
-      image_url:  newUrl,
+      image_url:  finalImageUrl,
       status:     'draft',
       updated_at: new Date().toISOString(),
-      generation_meta: { ...meta, regenerated_at: new Date().toISOString() },
+      generation_meta: {
+        ...meta,
+        regenerated_at:       new Date().toISOString(),
+        background_image_url: bgUrl,
+        image_prompt:         cleanPrompt,
+      },
     })
     .eq('id', id)
     .select()
     .single()
 
-  if (updateError) {
+  if (updateError)
     return NextResponse.json({ error: updateError.message }, { status: 500 })
-  }
 
   return NextResponse.json({ creative: updated })
 }

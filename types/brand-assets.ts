@@ -14,6 +14,8 @@ export type AssetType =
   | 'product_image'   // Fotografías de producto
   | 'reference_ad'    // Anuncios de referencia aprobados
   | 'template'        // Plantillas (Canva, Figma, Word…)
+  | 'font'            // Tipografías custom (TTF, OTF, WOFF)
+  | 'color'           // Paleta de colores corporativa
 
 /** Intención de publicación. Espejo del ENUM `publication_intent` de Postgres. */
 export type PublicationIntent =
@@ -374,6 +376,8 @@ export const ASSET_TYPE_LABELS: Record<AssetType, string> = {
   product_image: 'Imagen de producto',
   reference_ad:  'Anuncio de referencia',
   template:      'Plantilla',
+  font:          'Tipografía',
+  color:         'Color corporativo',
 }
 
 export const PUBLICATION_INTENT_LABELS: Record<PublicationIntent, string> = {
