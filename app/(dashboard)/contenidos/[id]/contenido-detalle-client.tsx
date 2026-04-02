@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@clerk/nextjs'
 import { ChevronRight, Sparkles, ExternalLink, FileText, Clock, MessageSquare, RefreshCw, Loader2, PenLine, Wand2, Bot, LayoutGrid } from 'lucide-react'
@@ -21,6 +21,8 @@ import {
   actualizarEntregaContenido,
   actualizarBriefContenido,
   guardarRevision,
+  devolverContenido,
+  publicarContenido,
 } from './actions'
 import type { Contenido, Proyecto, Cliente, PerfilAutor, EstadoContenido, BriefSEO } from '@/types'
 
@@ -55,7 +57,7 @@ const AGENTE_COLORS: Record<string, string> = {
   redactor:        'bg-blue-100 text-blue-700',
 }
 
-type ContenidoExtendido = Contenido & { texto_contenido?: string; notas_iniciales?: string }
+type ContenidoExtendido = Contenido & { texto_contenido?: string; notas_iniciales?: string; notas_revision?: string }
 
 const ESTADOS: EstadoContenido[] = [
   'pendiente', 'borrador', 'revision_seo', 'revision_cliente', 'devuelto', 'aprobado', 'publicado',
@@ -141,16 +143,29 @@ function RevisarConIAModal({
   brief,
   open,
   onClose,
+  textoContenido,
 }: {
   contenidoId: string
   brief?: BriefSEO
   open: boolean
   onClose: () => void
+  textoContenido?: string
 }) {
   const router = useRouter()
   const { userId } = useAuth()
   const [textoArticulo, setTextoArticulo] = useState('')
+  const [autoLoaded, setAutoLoaded] = useState(false)
   const [revisando, setRevisando] = useState(false)
+
+  // Auto-populate textarea from article text when modal opens
+  useEffect(() => {
+    if (open && textoContenido?.trim()) {
+      setTextoArticulo(textoContenido)
+      setAutoLoaded(true)
+    } else if (!open) {
+      setAutoLoaded(false)
+    }
+  }, [open, textoContenido])
   const [error, setError] = useState<string | null>(null)
 
   async function handleRevisar() {
@@ -193,6 +208,7 @@ function RevisarConIAModal({
 
       router.refresh()
       setTextoArticulo('')
+      setAutoLoaded(false)
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error inesperado al revisar')
@@ -227,6 +243,16 @@ function RevisarConIAModal({
               <span className="text-amber-500 mt-0.5">⚠</span>
               <p className="text-amber-800">
                 No hay brief SEO generado. El agente analizará el texto sin contexto de brief.
+              </p>
+            </div>
+          )}
+
+          {/* Banner: texto cargado automáticamente */}
+          {autoLoaded && (
+            <div className="flex items-start gap-2.5 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-sm">
+              <span className="text-emerald-600 mt-0.5">✓</span>
+              <p className="text-emerald-800">
+                Texto del artículo cargado automáticamente. Puedes editarlo antes de revisar.
               </p>
             </div>
           )}
@@ -503,6 +529,13 @@ export default function ContenidoDetalleClient({
   const [modalBrief, setModalBrief] = useState(false)
   const [modalRevisar, setModalRevisar] = useState(false)
   const [cambiandoEstado, setCambiandoEstado] = useState(false)
+  const [heRevisado, setHeRevisado] = useState(false)
+  const [mostrarConfirmEnvio, setMostrarConfirmEnvio] = useState(false)
+  const [notaDevolucion, setNotaDevolucion] = useState('')
+  const [mostrarFormDevolucion, setMostrarFormDevolucion] = useState(false)
+  const [modalPublicar, setModalPublicar] = useState(false)
+  const [urlParaPublicar, setUrlParaPublicar] = useState(contenido.url_publicado ?? '')
+  const [notasRevision, setNotasRevision] = useState(contenido.notas_revision ?? '')
 
   const redactorNombre = autores.find((a) => a.id === contenido.redactor_id)?.nombre
 
@@ -521,67 +554,104 @@ export default function ContenidoDetalleClient({
   async function handleGenerarBorrador() {
     setGenerandoBorrador(true)
     setErrorBorrador(null)
+
+    const SYSTEM_REDACTOR = `AGENTE REDACTOR COPILOTO — ContentCopilot
+
+Eres el Agente Redactor Copiloto de una agencia española de marketing de contenidos. Ahora estás en MODO BORRADOR AUTOMÁTICO.
+
+En este modo combinas tres capas de contexto en este orden de prioridad:
+1. Voz de marca del proyecto (siempre dominante)
+2. Brief SEO (estructura y keywords obligatorias)
+3. Perfil del autor (matices de estilo, subordinado a las dos anteriores)
+
+MODO BORRADOR AUTOMÁTICO — proceso:
+1. Lee el brief SEO completo del mensaje del usuario
+2. Genera el artículo completo respetando:
+   OBLIGATORIO: Reproduce EXACTAMENTE todos los H1, H2 y H3 del brief en el mismo orden. Ningún H puede faltar ni modificarse. Cada H debe tener contenido desarrollado debajo — nunca dejes un H vacío o con una sola frase. Si el brief tiene 4 H2 y 8 H3, el artículo debe tener exactamente 4 H2 y 8 H3 en ese orden exacto. Esto es una restricción absoluta — no es negociable.
+   - La keyword principal en los primeros 100 palabras
+   - Las keywords secundarias distribuidas de forma natural
+   - Los links obligatorios integrados en contexto
+   - El tono de voz de marca del proyecto
+   - La extensión objetivo ± 10%
+
+REGLA CRÍTICA — datos y estadísticas:
+- Cita siempre la fuente real entre paréntesis con año
+- Formato: "Según [organismo/estudio] ([año]),"
+- Si no conoces la fuente exacta, NO incluyas el dato
+- Nunca escribas "estudios demuestran" sin fuente concreta
+- Mínimo 2-3 datos con fuente por artículo
+
+Tras el borrador añade siempre:
+---
+Borrador generado — pendiente de revisión humana
+- Extensión: [X palabras]
+- Keywords usadas: [lista]
+- H's respetados: [sí/parcialmente]
+- Sugerencia: Revisa especialmente [el punto más débil]
+---
+
+REGLAS GENERALES:
+1. NUNCA inventes datos, estadísticas o citas
+2. NUNCA cambies la estructura de H's definida por el SEO
+3. NUNCA ignores una restricción global del cliente
+4. Responde siempre en español`
+
     try {
-      // Construir el brief: usar texto_generado si existe, o campos sueltos como fallback
-      const briefTexto = contenido.brief?.texto_generado?.trim()
+      const extMin = contenido.tamanyo_texto_min ?? 800
+      const extMax = contenido.tamanyo_texto_max ?? 1200
+
+      const briefSeoBloque = contenido.brief?.texto_generado?.trim()
         ? contenido.brief.texto_generado.trim()
-        : [
-            contenido.keyword_principal && `Keyword principal: ${contenido.keyword_principal}`,
-            `Título: ${contenido.titulo}`,
-            contenido.tamanyo_texto_min && contenido.tamanyo_texto_max
-              ? `Extensión objetivo: ${contenido.tamanyo_texto_min}-${contenido.tamanyo_texto_max} palabras`
-              : null,
-          ]
-            .filter(Boolean)
-            .join('\n')
+        : `Keyword principal: ${contenido.keyword_principal ?? 'No especificada'}
+Título: ${contenido.titulo}
+Extensión objetivo: ${extMin}-${extMax} palabras`
 
-      const lineas: (string | null)[] = [
-        'MODO: BORRADOR AUTOMÁTICO',
-        `CLIENTE: ${cliente?.nombre ?? 'No especificado'}`,
-        `PROYECTO: ${proyecto?.nombre ?? 'No especificado'}`,
-        proyecto?.tono_voz ? `VOZ DE MARCA: ${proyecto.tono_voz}` : null,
-        proyecto?.keywords_objetivo?.length
-          ? `KEYWORDS OBJETIVO: ${proyecto.keywords_objetivo.join(', ')}`
-          : null,
-        (proyecto as any)?.perfil_lector
-          ? `PERFIL DE LECTOR: ${(proyecto as any).perfil_lector}`
-          : null,
-        (cliente as any)?.restricciones_globales?.length
-          ? `RESTRICCIONES GLOBALES: ${((cliente as any).restricciones_globales as string[]).join(', ')}`
-          : null,
-        '',
-        'BRIEF SEO:',
-        briefTexto,
-        '',
-        `INSTRUCCIÓN: Genera el artículo completo en español siguiendo el brief.${
-          contenido.tamanyo_texto_min && contenido.tamanyo_texto_max
-            ? ` Extensión: ${contenido.tamanyo_texto_min}-${contenido.tamanyo_texto_max} palabras.`
-            : ''
-        } Aplica las mejores prácticas SEO y GEO de la agencia.`,
-      ]
+      const userContent = `CLIENTE: ${cliente?.nombre ?? 'No especificado'}
+PROYECTO: ${proyecto?.nombre ?? 'No especificado'}
+VOZ DE MARCA: ${proyecto?.tono_voz ?? 'No especificado'}
+ETIQUETAS DE TONO: ${(proyecto as any)?.etiquetas_tono?.join(', ') ?? 'No especificadas'}
+KEYWORDS OBJETIVO DEL PROYECTO: ${proyecto?.keywords_objetivo?.join(', ') ?? 'No especificadas'}
+PERFIL DE LECTOR: ${(proyecto as any)?.perfil_lector ?? 'No especificado'}
+RESTRICCIONES GLOBALES: ${((cliente as any)?.restricciones_globales as string[] | undefined)?.join(', ') ?? 'Ninguna'}
+MODO CREATIVO: false
 
-      const query = lineas.filter((l): l is string => l !== null).join('\n')
+BRIEF SEO COMPLETO:
+${briefSeoBloque}
 
-      const res = await fetch('/api/dify', {
+INSTRUCCIÓN: Genera el artículo completo en español siguiendo estrictamente el brief anterior.
+Extensión objetivo: ${extMin}-${extMax} palabras.`
+
+      const res = await fetch('/api/claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query,
-          app_id: process.env.NEXT_PUBLIC_DIFY_REDACTOR_COPILOTO_APP_ID,
-          usuario: userId,
-          modo: 'blocking',
+          system: SYSTEM_REDACTOR,
+          messages: [{ role: 'user', content: userContent }],
+          modo: 'json',
+          max_tokens: 4000,
+          proyecto_id: contenido.proyecto_id ?? null,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error al conectar con el agente redactor')
-      const textoBorrador: string = data.answer ?? data.respuesta ?? ''
+      const textoBorrador: string = data.contenido ?? ''
       if (!textoBorrador) throw new Error('El agente no devolvió contenido')
 
-      setTexto(textoBorrador)
+      // FIX 1 — regex más agresiva: captura cualquier variante del bloque de notas
+      const limpiarTextoBorrador = (t: string): string => {
+        const indice = t.search(/\n?-{2,}\n[\s\S]*?[Bb]orrador\s+generado/i)
+        if (indice > -1) return t.substring(0, indice).trim()
+        return t.trim()
+      }
+      const textoBorradorLimpio = limpiarTextoBorrador(textoBorrador)
+
+      setTexto(textoBorradorLimpio)
+      setHeRevisado(false)
       setShowWelcome(false)
-      // Guardar automáticamente en Supabase
-      await actualizarTextoContenido(contenido.id, textoBorrador)
-      router.refresh()
+      // Guardar automáticamente en Supabase (sin el bloque de notas)
+      await actualizarTextoContenido(contenido.id, textoBorradorLimpio)
+      // Abrir copiloto para revisar/editar el borrador generado
+      router.push(`/copiloto?contenido=${contenido.id}`)
     } catch (e) {
       setErrorBorrador(e instanceof Error ? e.message : 'Error inesperado al generar el borrador')
     } finally {
@@ -599,6 +669,46 @@ export default function ContenidoDetalleClient({
     } catch {
       // handle silently
     } finally { setGuardandoTexto(false) }
+  }
+
+  async function handleAprobar() {
+    setCambiandoEstado(true)
+    try {
+      if (texto !== (contenido.texto_contenido ?? '')) {
+        await actualizarTextoContenido(contenido.id, texto)
+      }
+      await actualizarEstadoContenido(contenido.id, 'aprobado')
+      setEstado('aprobado')
+      router.refresh()
+    } catch {
+      // handle silently
+    } finally { setCambiandoEstado(false) }
+  }
+
+  async function handleDevolver() {
+    setCambiandoEstado(true)
+    try {
+      await devolverContenido(contenido.id, notaDevolucion.trim())
+      setEstado('devuelto')
+      setNotasRevision(notaDevolucion.trim())
+      setMostrarFormDevolucion(false)
+      setNotaDevolucion('')
+      router.refresh()
+    } catch {
+      // handle silently
+    } finally { setCambiandoEstado(false) }
+  }
+
+  async function handlePublicar() {
+    setCambiandoEstado(true)
+    try {
+      await publicarContenido(contenido.id, urlParaPublicar)
+      setEstado('publicado')
+      setModalPublicar(false)
+      router.refresh()
+    } catch {
+      // handle silently
+    } finally { setCambiandoEstado(false) }
   }
 
   return (
@@ -685,6 +795,163 @@ export default function ContenidoDetalleClient({
         </div>
       )}
 
+      {/* ── Banners de transición de estado ── */}
+
+      {estado === 'revision_seo' && (
+        <div className="rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-4">
+          <div className="flex items-start gap-3">
+            <span className="text-yellow-500 text-xl shrink-0">⏳</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-yellow-800">
+                Este contenido está pendiente de revisión SEO
+              </p>
+              {!mostrarFormDevolucion ? (
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <Button
+                    size="sm"
+                    onClick={() => handleCambiarEstado('aprobado')}
+                    disabled={cambiandoEstado}
+                    className="bg-green-600 hover:bg-green-700 text-white gap-1.5"
+                  >
+                    {cambiandoEstado && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Aprobar contenido
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMostrarFormDevolucion(true)}
+                    disabled={cambiandoEstado}
+                    className="border-red-300 text-red-600 hover:bg-red-50"
+                  >
+                    Devolver al redactor
+                  </Button>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  <textarea
+                    value={notaDevolucion}
+                    onChange={(e) => setNotaDevolucion(e.target.value)}
+                    placeholder="Motivo de la devolución (opcional)..."
+                    rows={3}
+                    className="w-full rounded-lg border border-yellow-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-400 resize-none"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handleDevolver}
+                      disabled={cambiandoEstado}
+                      className="bg-red-600 hover:bg-red-700 text-white gap-1.5"
+                    >
+                      {cambiandoEstado && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Confirmar devolución
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { setMostrarFormDevolucion(false); setNotaDevolucion('') }}
+                      disabled={cambiandoEstado}
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {estado === 'aprobado' && (
+        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <span className="text-green-500 text-xl">✅</span>
+              <p className="text-sm font-semibold text-green-800">
+                Contenido aprobado — listo para publicar
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={() => setModalPublicar(true)}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                Marcar como publicado
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleCambiarEstado('borrador')}
+                disabled={cambiandoEstado}
+                className="text-gray-500 text-xs"
+              >
+                Volver a borrador
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {estado === 'publicado' && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-blue-500 text-xl shrink-0">🌐</span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-blue-800">Publicado</p>
+                {contenido.url_publicado && (
+                  <a
+                    href={contenido.url_publicado}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5 truncate"
+                  >
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                    {contenido.url_publicado}
+                  </a>
+                )}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setModalEntrega(true)}
+              className="shrink-0 text-xs"
+            >
+              Editar URL
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {estado === 'devuelto' && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-4">
+          <div className="flex items-start gap-3">
+            <span className="text-red-500 text-xl shrink-0">↩️</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-red-800">
+                Contenido devuelto — revisa las notas antes de reenviar
+              </p>
+              {notasRevision && (
+                <p className="mt-2 text-sm text-red-700 bg-red-100 rounded-lg px-3 py-2 leading-relaxed">
+                  {notasRevision}
+                </p>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleCambiarEstado('revision_seo')}
+                disabled={cambiandoEstado}
+                className="mt-3 border-red-300 text-red-700 hover:bg-red-100 gap-1.5"
+              >
+                {cambiandoEstado && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Volver a enviar a revisión SEO
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <Tabs defaultValue="brief">
         <TabsList>
@@ -748,7 +1015,24 @@ export default function ContenidoDetalleClient({
         <TabsContent value="contenido">
           {showWelcome ? (
             /* ── Pantalla de bienvenida — sin texto todavía ── */
-            <Card>
+            <Card className="relative overflow-hidden">
+              {/* Overlay de generación — cubre la tarjeta entera */}
+              {generandoBorrador && (
+                <div className="absolute inset-0 z-20 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+                  <div className="h-16 w-16 rounded-2xl bg-indigo-100 flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 text-indigo-600 animate-spin" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-base font-bold text-gray-900">Generando borrador completo…</p>
+                    <p className="text-sm text-gray-500 mt-1">Puede tardar 30–60 segundos según la extensión</p>
+                  </div>
+                  <div className="flex gap-1.5 mt-2">
+                    <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:0ms]" />
+                    <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:150ms]" />
+                    <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:300ms]" />
+                  </div>
+                </div>
+              )}
               <CardContent className="py-12 px-6">
                 {/* Resumen del contenido */}
                 <div className="max-w-2xl mx-auto text-center mb-10">
@@ -801,7 +1085,7 @@ export default function ContenidoDetalleClient({
 
                   {/* Modo 2: Escribir con Copiloto */}
                   <Link
-                    href={`/copiloto?contenido=${contenido.id}`}
+                    href={`/copiloto?contenido=${contenido.id}&modo=copiloto`}
                     className="group flex flex-col items-center text-center gap-3 rounded-2xl border-2 border-violet-200 bg-violet-50 px-5 py-7 hover:border-violet-400 hover:bg-violet-100 transition-all"
                   >
                     <div className="h-12 w-12 rounded-xl bg-violet-600 flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
@@ -841,6 +1125,7 @@ export default function ContenidoDetalleClient({
               </CardContent>
             </Card>
           ) : (
+          <>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-semibold">
@@ -872,6 +1157,78 @@ export default function ContenidoDetalleClient({
               )}
             </CardContent>
           </Card>
+
+          {/* ── Barra de acciones — solo en pendiente / borrador ── */}
+          {texto.trim() && (estado === 'pendiente' || estado === 'borrador') && (
+            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+              {/* Checkbox de revisión */}
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={heRevisado}
+                  onChange={(e) => setHeRevisado(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm text-gray-700">
+                  He leído y revisado el contenido completo
+                </span>
+              </label>
+
+              {/* Botones de acción */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setMostrarConfirmEnvio(!mostrarConfirmEnvio)}
+                  disabled={cambiandoEstado}
+                  className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                >
+                  Enviar a revisión SEO
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!heRevisado || cambiandoEstado}
+                  onClick={handleAprobar}
+                  className="bg-green-600 hover:bg-green-700 text-white gap-1.5 disabled:opacity-40"
+                >
+                  {cambiandoEstado && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Marcar como revisado y aprobar
+                </Button>
+              </div>
+
+              {/* Confirmación inline — envío a revisión SEO */}
+              {mostrarConfirmEnvio && (
+                <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 flex-wrap">
+                  <p className="text-sm text-blue-800 flex-1">
+                    ¿Enviar este contenido al consultor SEO?
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        handleCambiarEstado('revision_seo')
+                        setMostrarConfirmEnvio(false)
+                      }}
+                      disabled={cambiandoEstado}
+                      className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+                    >
+                      {cambiandoEstado && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Sí, enviar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setMostrarConfirmEnvio(false)}
+                      disabled={cambiandoEstado}
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          </>
           )}
         </TabsContent>
 
@@ -1058,7 +1415,47 @@ export default function ContenidoDetalleClient({
         brief={contenido.brief}
         open={modalRevisar}
         onClose={() => setModalRevisar(false)}
+        textoContenido={texto}
       />
+
+      {/* Modal publicar */}
+      <Dialog open={modalPublicar} onOpenChange={(v) => !v && !cambiandoEstado && setModalPublicar(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Marcar como publicado</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-gray-500">
+              Introduce la URL donde se ha publicado el contenido. Puedes dejarla vacía si aún no tienes la URL.
+            </p>
+            <div className="space-y-1.5">
+              <Label>URL de publicación</Label>
+              <Input
+                value={urlParaPublicar}
+                onChange={(e) => setUrlParaPublicar(e.target.value)}
+                placeholder="https://blog.empresa.com/articulo-..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setModalPublicar(false)}
+              disabled={cambiandoEstado}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handlePublicar}
+              disabled={cambiandoEstado}
+              className="bg-green-600 hover:bg-green-700 text-white gap-1.5"
+            >
+              {cambiandoEstado && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Confirmar publicación
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

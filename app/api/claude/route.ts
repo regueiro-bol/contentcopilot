@@ -30,19 +30,24 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const {
+      // Accept both naming conventions: new (messages/system) and legacy (mensajes/sistema)
+      messages,
       mensajes,
       modo = 'stream',
+      system,
       sistema,
       max_tokens,
       proyecto_id,
     } = body
 
-    if (!mensajes || !Array.isArray(mensajes)) {
+    const mensajesResueltos = messages ?? mensajes
+    if (!mensajesResueltos || !Array.isArray(mensajesResueltos)) {
       return NextResponse.json({ error: 'Mensajes inválidos' }, { status: 400 })
     }
+    const sistemaResuelto: string | undefined = system ?? sistema
 
-    const baseSystem: string = typeof sistema === 'string' && sistema.trim()
-      ? sistema
+    const baseSystem: string = typeof sistemaResuelto === 'string' && sistemaResuelto.trim()
+      ? sistemaResuelto
       : SISTEMA_COPILOTO_DEFAULT
 
     // ── Inyección RAG ─────────────────────────────────────────────────────────
@@ -54,7 +59,7 @@ export async function POST(request: NextRequest) {
 
     if (typeof proyecto_id === 'string' && proyecto_id.trim()) {
       // La query para RAG es el último mensaje del usuario
-      const lastUser = [...mensajes].reverse().find((m: { role: string }) => m.role === 'user')
+      const lastUser = [...mensajesResueltos].reverse().find((m: { role: string }) => m.role === 'user')
       const query = typeof lastUser?.content === 'string'
         ? lastUser.content.substring(0, 1000)
         : ''
@@ -74,12 +79,12 @@ export async function POST(request: NextRequest) {
 
     // ── Modo JSON: respuesta completa sin streaming ───────────────────────────
     if (modo === 'json') {
-      const maxTok = typeof max_tokens === 'number' ? max_tokens : 1024
+      const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 1024
       const respuesta = await anthropic.messages.create({
         model     : 'claude-sonnet-4-5',
         max_tokens: maxTok,
         system    : systemPrompt,
-        messages  : mensajes,
+        messages  : mensajesResueltos,
       })
 
       const bloque = respuesta.content[0]
@@ -88,7 +93,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Modo streaming ────────────────────────────────────────────────────────
-    const maxTokStream = typeof max_tokens === 'number' ? max_tokens : 4096
+    const maxTokStream = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 4096
     const encoder = new TextEncoder()
 
     const stream = new ReadableStream({
@@ -98,7 +103,7 @@ export async function POST(request: NextRequest) {
             model     : 'claude-sonnet-4-5',
             max_tokens: maxTokStream,
             system    : systemPrompt,
-            messages  : mensajes,
+            messages  : mensajesResueltos,
           })
 
           for await (const chunk of streamAnthropic) {

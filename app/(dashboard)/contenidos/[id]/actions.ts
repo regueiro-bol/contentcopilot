@@ -70,6 +70,34 @@ export async function actualizarBriefContenido(
   revalidatePath(path(id))
 }
 
+export async function devolverContenido(
+  id: string,
+  notas_revision: string,
+) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('contenidos')
+    .update({ estado: 'devuelto', notas_revision: notas_revision || null })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(path(id))
+}
+
+export async function publicarContenido(
+  id: string,
+  url_publicado: string,
+) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('contenidos')
+    .update({ estado: 'publicado', url_publicado: url_publicado.trim() || null })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(path(id))
+}
+
 /**
  * Guarda una revisión de IA en la tabla conversaciones.
  * Usa el campo `modelo` para identificar el agente que generó la revisión.

@@ -5,13 +5,25 @@ import Papa from 'papaparse'
 import JSZip from 'jszip'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// ─── Route segment config ─────────────────────────────────────────────────────
+// Aumenta el tiempo máximo de ejecución (necesario para archivos grandes)
+export const maxDuration = 60        // segundos (máx. en Vercel Pro)
+// Tamaño máximo del body para este route handler
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '50mb',
+    },
+  },
+}
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE    = 500  // palabras por chunk
 const CHUNK_OVERLAP = 50   // palabras de solape entre chunks
-const MIN_PALABRAS  = 50   // mínimo para no descartar artículo
+const MIN_PALABRAS  = 20   // mínimo para no descartar artículo
 const EMBED_BATCH   = 20   // chunks por llamada a OpenAI
 const EMBED_DELAY   = 100  // ms entre lotes para no saturar la API
 
@@ -146,7 +158,24 @@ async function guardarChunks(
 
 // ─── Procesadores por tipo de archivo ─────────────────────────────────────────
 
-/** CSV de exportación WordPress */
+/**
+ * Devuelve el primer valor no vacío de `row` para las claves `candidatos`.
+ * Permite detectar columnas con nombres en español, inglés o mayúsculas
+ * sin encadenar decenas de `||`.
+ */
+function resolverColumna(
+  row       : Record<string, string>,
+  candidatos: string[],
+  fallback  : string = '',
+): string {
+  for (const clave of candidatos) {
+    const valor = row[clave]
+    if (valor !== undefined && valor.trim() !== '') return valor.trim()
+  }
+  return fallback
+}
+
+/** CSV de exportación WordPress (y exportaciones genéricas en español/inglés) */
 async function procesarCSVWordpress(
   buffer     : Buffer,
   proyectoId : string,
@@ -157,26 +186,90 @@ async function procesarCSVWordpress(
   let chunks_totales = 0
   const errores: string[] = []
 
+  // ── Detectar separador automáticamente ───────────────────────────────────
+  const detectarSeparador = (contenido: string): string => {
+    const primeraLinea = contenido.split('\n')[0]
+    const comas       = (primeraLinea.match(/,/g)  || []).length
+    const puntosComa  = (primeraLinea.match(/;/g)  || []).length
+    const tabs        = (primeraLinea.match(/\t/g) || []).length
+    if (tabs > comas && tabs > puntosComa) return '\t'
+    if (puntosComa > comas) return ';'
+    return ','
+  }
+  const separador = detectarSeparador(texto)
+  console.log('[RAG CSV] Separador detectado:', JSON.stringify(separador))
+
   await new Promise<void>((resolve, reject) => {
     Papa.parse<Record<string, string>>(texto, {
       header        : true,
+      delimiter     : separador,
       skipEmptyLines: true,
       async complete(results) {
-        for (const row of results.data) {
+        // ── FIX 2 — normalizar claves: elimina BOM y espacios del primer header ──
+        // PapaParse puede incluir \uFEFF en el primer key si el CSV tiene BOM UTF-8
+        const rowsNormalizados = results.data.map(row => {
+          const normalizado: Record<string, string> = {}
+          for (const [k, v] of Object.entries(row)) {
+            normalizado[k.replace(/^\uFEFF/, '').trim()] = v
+          }
+          return normalizado
+        })
+
+        // ── Log 2: resumen del CSV parseado (headers originales + primera fila) ──
+        console.log('[RAG CSV] Total filas parseadas:', results.data.length)
+        console.log('[RAG CSV] Headers raw (meta.fields):', results.meta.fields)
+        console.log('[RAG CSV] Primera fila raw:', JSON.stringify(results.data[0]))
+
+        const headers = Object.keys(rowsNormalizados[0] || {})
+        console.log('[RAG CSV] Headers normalizados (sin BOM):', headers)
+
+        let filaIdx = 0   // contador para loguear primeras 3 filas
+
+        const CANDIDATOS_TITULO    = ['post_title', 'Title', 'Título', 'titulo', 'TITULO', 'title']
+        const CANDIDATOS_CONTENIDO = ['post_content', 'Content', 'Contenido', 'contenido', 'CONTENIDO', 'content']
+        const CANDIDATOS_ID        = ['ID', 'Id', 'id', 'Enlace', 'enlace', 'URL', 'url', 'post_name', 'slug']
+
+        // ── Log 3: detección de columnas sobre la primera fila normalizada ──
+        const colTitulo    = CANDIDATOS_TITULO.find(k    => rowsNormalizados[0]?.[k]?.trim()) ?? '(no detectada)'
+        const colContenido = CANDIDATOS_CONTENIDO.find(k => rowsNormalizados[0]?.[k]?.trim()) ?? '(no detectada)'
+        const colId        = CANDIDATOS_ID.find(k        => rowsNormalizados[0]?.[k]?.trim()) ?? '(no detectada)'
+        console.log('[RAG CSV] colTitulo:', colTitulo)
+        console.log('[RAG CSV] colContenido:', colContenido)
+        console.log('[RAG CSV] colId:', colId)
+
+        // ── Log 4: si contenido no detectado, muestra columnas disponibles ──
+        if (colContenido === '(no detectada)') {
+          console.log('[RAG CSV] ERROR - columnas disponibles:', results.meta.fields)
+        }
+
+        for (const row of rowsNormalizados) {
+          // ── Log 5: primeras 3 filas para inspección ───────────────────────
+          if (filaIdx < 3) {
+            console.log(`[RAG CSV] Fila ${filaIdx}:`, JSON.stringify(row))
+          }
+          filaIdx++
+
           try {
-            // Columnas: acepta variantes de nombre de campo
-            const titulo = (
-              row['post_title'] || row['Title'] || row['titulo'] || row['title'] || ''
-            ).trim()
-            const contenidoRaw =
-              row['post_content'] || row['Content'] || row['contenido'] || row['content'] || ''
-            const articuloId =
-              row['ID'] || row['id'] || row['post_name'] || row['slug'] || String(procesados)
-            const tipo = row['post_type'] || row['post_status'] || ''
+            // ── Detección flexible de columnas ──────────────────────────────
+            // Orden: WordPress nativo → inglés estándar → español → mayúsculas
+
+            const titulo = resolverColumna(row, CANDIDATOS_TITULO)
+
+            const contenidoRaw = resolverColumna(row, CANDIDATOS_CONTENIDO)
+
+            const articuloId = resolverColumna(row, [
+              'ID', 'Id', 'id',                       // identificador numérico
+              'Enlace', 'enlace',                     // columna de URL/enlace
+              'URL', 'url',                           // variante URL
+              'post_name', 'slug',                    // WP nativo
+            ], String(procesados))
+
+            const tipo = row['post_type'] || row['post_status'] || row['Tipo'] || row['tipo'] || ''
 
             if (!titulo && !contenidoRaw.trim()) continue
-            // Solo posts/páginas publicadas; ignorar borradores, attachments, etc.
-            if (tipo && !['post', 'page', 'publish', 'publicado', ''].includes(tipo)) continue
+            // FIX 1 — solo rechaza borradores/papelera; acepta cualquier otro tipo
+            const tiposRechazados = ['draft', 'borrador', 'trash', 'papelera', 'private', 'privado', 'auto-draft']
+            if (tipo && tiposRechazados.includes(tipo.toLowerCase().trim())) continue
 
             const contenidoLimpio = limpiarHtmlWordpress(contenidoRaw)
             if (contenidoLimpio.split(/\s+/).filter(Boolean).length < MIN_PALABRAS) continue
@@ -190,10 +283,24 @@ async function procesarCSVWordpress(
               contenido  : contenidoLimpio,
               metadatos  : {
                 fuente    : 'wordpress_csv',
-                categorias: row['Categorías'] || row['Categories'] || row['categories'] || '',
-                etiquetas : row['Etiquetas'] || row['Tags'] || row['tags'] || '',
-                url       : row['guid'] || row['link'] || row['URL'] || '',
-                fecha     : row['post_date'] || row['Date'] || '',
+                categorias: resolverColumna(row, [
+                  'Categorías', 'Categorias',         // español (con y sin tilde)
+                  'Categories',                       // inglés
+                  'Categorías y Etiquetas',           // columna combinada WP
+                  'categorias', 'categories',         // minúsculas
+                ]),
+                etiquetas : resolverColumna(row, [
+                  'Etiquetas', 'Tags', 'tags', 'etiquetas',
+                ]),
+                url       : resolverColumna(row, [
+                  'guid', 'link',                     // WP nativo
+                  'Enlace', 'enlace',                 // exportaciones en español
+                  'URL', 'url',
+                ]),
+                fecha     : resolverColumna(row, [
+                  'post_date',                        // WP nativo
+                  'Date', 'Fecha', 'fecha',
+                ]),
               },
             }
 
@@ -377,6 +484,8 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 3. Detectar tipo y procesar ───────────────────────────────────────────
+    console.log('[RAG] Archivo descargado, tamaño:', buffer.length)
+
     const nombreLower = nombre.toLowerCase() || url.toLowerCase()
 
     // Si viene `tipo` explícito lo respetamos; si no, lo deducimos del nombre
@@ -389,6 +498,8 @@ export async function POST(req: NextRequest) {
           : nombreLower.endsWith('.docx') || nombreLower.endsWith('.doc')
             ? 'docx'
             : 'desconocido')
+
+    console.log('[RAG] Tipo detectado:', tipoDetectado, '| Nombre:', nombre)
 
     let resultado: ResultadoProcesamiento
 

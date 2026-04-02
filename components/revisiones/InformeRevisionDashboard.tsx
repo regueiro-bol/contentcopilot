@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import {
   CheckCircle,
   AlertCircle,
@@ -176,9 +177,12 @@ interface Props {
   informe: string
   fecha: string
   agente: string
+  onAplicarMejora?: (mejora: MejoraPrioritaria) => void
 }
 
-export default function InformeRevisionDashboard({ informe, fecha, agente }: Props) {
+export default function InformeRevisionDashboard({ informe, fecha, agente, onAplicarMejora }: Props) {
+  const [mejorasAplicadas, setMejorasAplicadas] = useState<Set<number>>(new Set())
+
   // Intentar parsear JSON
   let data: InformeGEOSEO | null = null
   let parseError = false
@@ -391,16 +395,32 @@ export default function InformeRevisionDashboard({ informe, fecha, agente }: Pro
       {/* ── ZONA 6: Mejoras prioritarias ── */}
       {data.mejoras_prioritarias?.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Mejoras prioritarias
-          </p>
+          <div className="flex items-center gap-3 mb-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Mejoras prioritarias
+            </p>
+            {mejorasAplicadas.size > 0 && (
+              <span className="text-xs font-medium text-emerald-600">
+                {mejorasAplicadas.size} de {data.mejoras_prioritarias.length} aplicadas
+              </span>
+            )}
+          </div>
           <div className="space-y-3">
             {data.mejoras_prioritarias.map((m, i) => {
               const cfg = prioridadConfig(m.prioridad)
+              const aplicada = mejorasAplicadas.has(i)
               return (
-                <div key={i} className="rounded-xl border border-gray-200 bg-white p-4">
+                <div
+                  key={i}
+                  style={aplicada ? { borderLeft: '4px solid #4ade80', backgroundColor: 'rgb(240 253 244 / 0.4)' } : {}}
+                  className={`rounded-xl border p-4 transition-all ${
+                    aplicada ? 'border-green-200' : 'bg-white border-gray-200'
+                  }`}
+                >
                   <div className="flex items-start gap-3">
-                    <Badge className={`${cfg.bg} shrink-0 mt-0.5`}>{cfg.label}</Badge>
+                    <Badge className={`${cfg.bg} shrink-0 mt-0.5 ${aplicada ? 'opacity-60' : ''}`}>
+                      {cfg.label}
+                    </Badge>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-900">{m.titulo}</p>
                       {m.que_hacer && (
@@ -414,6 +434,26 @@ export default function InformeRevisionDashboard({ informe, fecha, agente }: Pro
                           <span className="font-medium">Dónde: </span>
                           {m.donde}
                         </p>
+                      )}
+                      {onAplicarMejora && (
+                        <button
+                          disabled={aplicada}
+                          onClick={() => {
+                            setMejorasAplicadas(prev => {
+                              const next = new Set(prev)
+                              next.add(i)
+                              return next
+                            })
+                            onAplicarMejora?.(m)
+                          }}
+                          className={`mt-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 transition-colors ${
+                            aplicada
+                              ? 'bg-green-50 text-green-600 cursor-default opacity-75'
+                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+                          }`}
+                        >
+                          {aplicada ? '✓ Aplicada' : 'Aplicar en copiloto →'}
+                        </button>
                       )}
                     </div>
                   </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ const ESTADOS: EstadoContenido[] = [
 ]
 
 export default function ContenidosPageClient({ contenidos }: { contenidos: FilaContenido[] }) {
+  const router = useRouter()
   const [busqueda, setBusqueda] = useState('')
   const [filtroCliente, setFiltroCliente] = useState('')
   const [filtroProyecto, setFiltroProyecto] = useState('')
@@ -154,16 +156,16 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
 
           <div className="divide-y divide-gray-100">
             {contenidosFiltrados.map((c) => (
-              <Link
+              <div
                 key={c.id}
-                href={`/contenidos/${c.id}`}
-                className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-x-4 items-center px-4 py-3 hover:bg-indigo-50/40 transition-colors group"
+                onClick={() => router.push(`/contenidos/${c.id}`)}
+                className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-x-4 items-center px-4 py-3 hover:bg-indigo-50/40 transition-colors group cursor-pointer"
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
                     {c.titulo}
                   </p>
-                  <div className="flex items-center gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1 mt-0.5">
                     <Link
                       href={`/clientes/${c.cliente_id}/proyectos/${c.proyecto_id}`}
                       className="text-xs text-gray-400 truncate hover:text-indigo-500 hover:underline"
@@ -213,7 +215,7 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
                 <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ${colorEstadoContenido(c.estado)}`}>
                   {etiquetaEstadoContenido(c.estado)}
                 </span>
-              </Link>
+              </div>
             ))}
           </div>
         </div>

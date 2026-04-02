@@ -4,7 +4,7 @@ import CopilotoClient from './copiloto-client'
 export default async function CopilotoPage({
   searchParams,
 }: {
-  searchParams: { contenido?: string }
+  searchParams: { contenido?: string; modo?: string }
 }) {
   let contenidos: ContenidoLista[] = []
   try {
@@ -17,6 +17,7 @@ export default async function CopilotoPage({
     <CopilotoClient
       contenidosInicial={contenidos}
       contenidoIdInicial={searchParams.contenido ?? null}
+      modoInicial={searchParams.modo ?? null}
     />
   )
 }
