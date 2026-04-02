@@ -10,8 +10,6 @@ import { calcularCosteEmbeddingUSD, guardarRegistroCoste } from '@/lib/costes'
 // Tiempo máximo de ejecución (App Router — Vercel Pro admite hasta 60s)
 export const maxDuration = 60
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE    = 500  // palabras por chunk
@@ -88,6 +86,7 @@ function dividirEnChunks(
 async function generarEmbeddings(
   textos: string[],
 ): Promise<{ embeddings: number[][]; totalTokens: number }> {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   const inputs = textos.map((t) => t.slice(0, 8000)) // límite seguro
   const response = await openai.embeddings.create({
     model: 'text-embedding-3-small',

@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { fal } from '@fal-ai/client'
 import { calcularCosteFluxUSD, guardarRegistroCoste } from '@/lib/costes'
 
-fal.config({ credentials: process.env.FAL_KEY ?? process.env.FAL_API_KEY ?? '' })
-
 export const maxDuration = 60
 
 const FAL_MODEL = 'fal-ai/flux-pro/v1.1-ultra'
@@ -16,6 +14,7 @@ const ASPECTO: Record<string, string> = {
 }
 
 export async function POST(req: NextRequest) {
+  fal.config({ credentials: process.env.FAL_KEY ?? process.env.FAL_API_KEY ?? '' })
   try {
     const {
       prompt,

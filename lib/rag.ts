@@ -1,13 +1,9 @@
 import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// Una instancia singleton para no re-crear en cada llamada
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 }
-
-/** @deprecated usa buscarContextoRAG — esta variable queda para buscarRAG/buscarRAGChunks */
-const openai = getOpenAI()
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -36,7 +32,7 @@ export async function buscarRAG(
   limite = 5,
 ): Promise<string> {
   // 1. Generar embedding de la consulta
-  const embeddingResponse = await openai.embeddings.create({
+  const embeddingResponse = await getOpenAI().embeddings.create({
     model: 'text-embedding-3-small',
     input: query,
   })
@@ -76,7 +72,7 @@ export async function buscarRAGChunks(
   query: string,
   limite = 5,
 ): Promise<RagChunk[]> {
-  const embeddingResponse = await openai.embeddings.create({
+  const embeddingResponse = await getOpenAI().embeddings.create({
     model: 'text-embedding-3-small',
     input: query,
   })
