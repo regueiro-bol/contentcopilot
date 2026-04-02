@@ -5,15 +5,23 @@
  *
  * Pipeline:
  *   1. Fal.ai genera el fondo (sin texto, sin overlays)
- *   2. composeCreative() construye el PNG final:
- *      - Imagen de fondo recortada al área superior/izquierda
- *      - Bloque de color sólido (color primario del cliente) en el área inferior/derecha
- *      - SVG overlay: headline, body, CTA, logo
+ *   2. composeCreative() construye el PNG final según el modo:
  *
- * Formatos soportados:
- *   1x1    → 1080×1080  — image top 60%  / color block bottom 40%
- *   9x16   → 1080×1920  — image top 55%  / color block bottom 45%
- *   1.91x1 → 1200×628   — image left 60% / color block right 40%
+ *   MODO "split"  → 1x1 y 1.91x1
+ *      — Imagen de fondo en área superior/izquierda
+ *      — Bloque de color sólido (primario del cliente) en área inferior/derecha
+ *      — SVG overlay: headline, body, CTA, logo
+ *
+ *   MODO "overlay" → 9x16 (Stories/Reels)
+ *      — Foto ocupa el canvas completo (1080×1920, object-cover)
+ *      — Gradiente oscuro con tinte del color primario en el 40% inferior
+ *      — Texto encima del gradiente: headline + body + CTA
+ *      — Logo esquina superior derecha con backdrop blanco
+ *
+ * NOTA IMPORTANTE:
+ *   En Vercel (Amazon Linux 2) Arial/Helvetica NO están instaladas.
+ *   Siempre usar la familia genérica "sans-serif" como fallback para
+ *   garantizar que librsvg renderice el texto correctamente.
  */
 
 import sharp from 'sharp'
@@ -25,28 +33,19 @@ import sharp from 'sharp'
 export type AdFormat = '1x1' | '9x16' | '1.91x1'
 
 export interface ComposeParams {
-  /** URL de la imagen generada por Fal.ai (sin texto) */
   backgroundImageUrl: string
-  /** Titular principal (max ~6 palabras idealmente) */
-  headline: string
-  /** Texto del cuerpo (opcional) */
-  body?: string
-  /** Call to action (opcional, 2-4 palabras) */
-  cta?: string
-  /** Bytes del logo del cliente (PNG/SVG previa conversión) */
-  logoBuffer?: Buffer | null
-  /** Color primario del bloque de texto, en HEX (con o sin #) */
-  primaryHex: string
-  /** Color secundario para el botón CTA, en HEX */
-  secondaryHex: string
-  /** Formato del creativo */
-  format: AdFormat
-  /** Bytes de fuente custom TTF/OTF (opcional, fallback a Arial) */
-  fontBuffer?: Buffer | null
+  headline:           string
+  body?:              string
+  cta?:               string
+  logoBuffer?:        Buffer | null
+  primaryHex:         string
+  secondaryHex:       string
+  format:             AdFormat
+  fontBuffer?:        Buffer | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dimensiones por formato
+// Dimensiones
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FORMAT_DIMS: Record<AdFormat, { width: number; height: number }> = {
@@ -65,14 +64,14 @@ function escapeXml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+    .replace(/'/g, '&apos;')
 }
 
 function normalizeHex(hex: string): string {
   const clean = hex.startsWith('#') ? hex.slice(1) : hex
   return clean.length === 3
     ? clean.split('').map((c) => c + c).join('')
-    : clean
+    : clean.padEnd(6, '0')
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -84,10 +83,9 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   }
 }
 
-/** Devuelve "white" o "black" dependiendo del luminance del color de fondo */
+/** WCAG luminance → color de texto con contraste adecuado */
 function contrastColor(hex: string): string {
   const { r, g, b } = hexToRgb(hex)
-  // Relative luminance (WCAG)
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
   return lum > 0.55 ? '#1a1a1a' : '#FFFFFF'
 }
@@ -106,179 +104,229 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
     }
   }
   if (current) lines.push(current)
-  return lines.slice(0, 4) // hard cap: 4 líneas
+  return lines.slice(0, 4)
+}
+
+/** Familia de fuente para SVG — SIEMPRE termina en sans-serif (genérica, siempre disponible) */
+function fontFamily(customBase64: string | null): string {
+  return customBase64
+    ? "'CustomFont', sans-serif"
+    : 'sans-serif'
+}
+
+/** Definición @font-face para fuente custom en SVG */
+function fontDefs(customBase64: string | null): string {
+  if (!customBase64) return ''
+  return `<defs><style>@font-face{font-family:'CustomFont';src:url('data:font/truetype;base64,${customBase64}') format('truetype')}</style></defs>`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Layout
+// MODO "split" — 1x1 y 1.91x1
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface AreaRect { left: number; top: number; width: number; height: number }
-
-interface Layout {
-  bg:    AreaRect
-  block: AreaRect
-  logo: {
-    /** Posición X del logo en el canvas (se ajusta tras conocer logoWidth) */
-    baseX: number
-    y: number
-    maxHeight: number
-    inColorBlock: boolean
-  }
-  text: {
-    startX: number
-    /** Coordenada Y de la primera línea (antes de añadir fontSize) */
-    startY: number
-    maxWidth: number
-  }
+interface SplitLayout {
+  bg:    { left: number; top: number; width: number; height: number }
+  block: { left: number; top: number; width: number; height: number }
+  logo:  { x: number; y: number; maxH: number; inColorBlock: boolean }
+  text:  { x: number; startY: number; maxW: number }
   fonts: { headline: number; body: number; cta: number }
 }
 
-function buildLayout(width: number, height: number, format: AdFormat): Layout {
+function buildSplitLayout(width: number, height: number, format: AdFormat): SplitLayout {
   const pad = 48
 
   if (format === '1.91x1') {
-    const bgW     = Math.round(width * 0.60)   // 720
-    const blkLeft = bgW
-    const blkW    = width - bgW                // 480
-
+    const bgW = Math.round(width * 0.60)     // 720
+    const blkW = width - bgW                  // 480
     return {
       bg:    { left: 0, top: 0, width: bgW, height },
-      block: { left: blkLeft, top: 0, width: blkW, height },
-      logo:  {
-        baseX:       blkLeft + blkW - 120 - 20,  // ajustado en compose()
-        y:           20,
-        maxHeight:   80,
-        inColorBlock: true,
-      },
-      text:  {
-        startX:   blkLeft + pad,
-        startY:   pad,                           // texto arriba-izquierda del bloque
-        maxWidth: blkW - pad * 2,
-      },
+      block: { left: bgW, top: 0, width: blkW, height },
+      logo:  { x: bgW + blkW - 120 - 20, y: 20, maxH: 80, inColorBlock: true },
+      text:  { x: bgW + pad, startY: pad, maxW: blkW - pad * 2 },
       fonts: { headline: 52, body: 24, cta: 22 },
     }
   }
 
-  const bgFrac = format === '9x16' ? 0.55 : 0.60
-  const bgH = Math.round(height * bgFrac)
-
+  // 1x1
+  const bgH = Math.round(height * 0.60)     // 648
   return {
     bg:    { left: 0, top: 0, width, height: bgH },
     block: { left: 0, top: bgH, width, height: height - bgH },
-    logo:  {
-      baseX:       width - 120 - 20,           // ajustado en compose()
-      y:           20,
-      maxHeight:   format === '9x16' ? 120 : 100,
-      inColorBlock: false,
-    },
-    text:  {
-      startX:   pad,
-      startY:   bgH + pad,
-      maxWidth: width - pad * 2,
-    },
-    fonts: {
-      headline: format === '9x16' ? 96 : 72,
-      body:     format === '9x16' ? 36 : 32,
-      cta:      format === '9x16' ? 32 : 28,
-    },
+    logo:  { x: width - 120 - 20, y: 20, maxH: 100, inColorBlock: false },
+    text:  { x: pad, startY: bgH + pad, maxW: width - pad * 2 },
+    fonts: { headline: 72, body: 32, cta: 28 },
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SVG builder
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildSvgOverlay(opts: {
-  layout:        Layout
-  width:         number
-  height:        number
-  headline:      string
-  body?:         string
-  cta?:          string
-  primaryHex:    string
-  secondaryHex:  string
-  logoBase64?:   string | null
-  logoDrawW:     number
-  logoDrawH:     number
-  fontBase64?:   string | null
+function buildSplitSvg(opts: {
+  layout:      SplitLayout
+  width:       number
+  height:      number
+  headline:    string
+  body?:       string
+  cta?:        string
+  primaryHex:  string
+  secondaryHex:string
+  logoBase64:  string | null
+  logoDrawW:   number
+  logoDrawH:   number
+  fontBase64:  string | null
 }): string {
-  const {
-    layout, width, height,
-    headline, body, cta,
-    primaryHex, secondaryHex,
-    logoBase64, logoDrawW, logoDrawH,
-    fontBase64,
-  } = opts
-
+  const { layout, width, height, headline, body, cta,
+          primaryHex, secondaryHex, logoBase64, logoDrawW, logoDrawH, fontBase64 } = opts
   const { block, logo, text, fonts } = layout
-  const textColor = contrastColor(primaryHex)
-  const lineH = (fs: number) => Math.round(fs * 1.32)
 
-  // ── Fuente personalizada ──────────────────────────────────────────────────
-  const fontDef = fontBase64
-    ? `<defs><style>@font-face{font-family:'CF';src:url('data:font/truetype;base64,${fontBase64}') format('truetype')}</style></defs>`
-    : ''
-  const ff = fontBase64
-    ? "'CF', Arial, 'Liberation Sans', sans-serif"
-    : "Arial, 'Liberation Sans', Helvetica, sans-serif"
+  const ff         = fontFamily(fontBase64)
+  const textColor  = contrastColor(primaryHex)
+  const lineH      = (fs: number) => Math.round(fs * 1.32)
+  const maxCols    = (fs: number) => Math.floor(text.maxW / (fs * 0.58))
 
-  let inner = ''
+  let inner = fontDefs(fontBase64)
 
-  // ── Color block (fondo sólido) ────────────────────────────────────────────
+  // Color block
   inner += `<rect x="${block.left}" y="${block.top}" width="${block.width}" height="${block.height}" fill="#${normalizeHex(primaryHex)}"/>`
 
-  // ── Logo ──────────────────────────────────────────────────────────────────
+  // Logo
   if (logoBase64 && logoDrawW > 0) {
     const lx = logo.inColorBlock
       ? block.left + block.width - logoDrawW - 20
       : width - logoDrawW - 20
-    const ly = logo.y
-
-    // Fondo blanco semitransparente cuando el logo está sobre la foto
     if (!logo.inColorBlock) {
-      inner += `<rect x="${lx - 10}" y="${ly - 6}" width="${logoDrawW + 20}" height="${logoDrawH + 12}" rx="10" fill="rgba(255,255,255,0.82)"/>`
+      inner += `<rect x="${lx - 10}" y="${logo.y - 6}" width="${logoDrawW + 20}" height="${logoDrawH + 12}" rx="10" fill="rgba(255,255,255,0.85)"/>`
     }
-    inner += `<image href="data:image/png;base64,${logoBase64}" x="${lx}" y="${ly}" width="${logoDrawW}" height="${logoDrawH}" preserveAspectRatio="xMidYMid meet"/>`
+    inner += `<image href="data:image/png;base64,${logoBase64}" x="${lx}" y="${logo.y}" width="${logoDrawW}" height="${logoDrawH}" preserveAspectRatio="xMidYMid meet"/>`
   }
 
-  // ── Texto (headline, body, CTA) ───────────────────────────────────────────
-  const maxCols = (fs: number) => Math.floor(text.maxWidth / (fs * 0.58))
-  const hlLines  = wrapText(headline, maxCols(fonts.headline))
-  const bdLines  = body ? wrapText(body, maxCols(fonts.body)) : []
+  // Text
+  const hlLines = wrapText(headline, maxCols(fonts.headline))
+  const bdLines = body ? wrapText(body, maxCols(fonts.body)) : []
+  let cy = text.startY + fonts.headline
 
-  let cy = text.startY + fonts.headline  // primera baseline
-
-  // Headline
   for (const line of hlLines) {
-    inner += `<text x="${text.startX}" y="${cy}" font-family="${ff}" font-weight="bold" font-size="${fonts.headline}" fill="${escapeXml(textColor)}">${escapeXml(line)}</text>`
+    inner += `<text x="${text.x}" y="${cy}" font-family="${ff}" font-weight="bold" font-size="${fonts.headline}" fill="${escapeXml(textColor)}">${escapeXml(line)}</text>`
     cy += lineH(fonts.headline)
   }
-  cy += 16  // gap
+  cy += 16
 
-  // Body
   for (const line of bdLines) {
-    inner += `<text x="${text.startX}" y="${cy}" font-family="${ff}" font-size="${fonts.body}" fill="${escapeXml(textColor)}" opacity="0.88">${escapeXml(line)}</text>`
+    inner += `<text x="${text.x}" y="${cy}" font-family="${ff}" font-size="${fonts.body}" fill="${escapeXml(textColor)}" opacity="0.88">${escapeXml(line)}</text>`
     cy += lineH(fonts.body)
   }
   if (bdLines.length) cy += 20
 
-  // CTA button
   if (cta) {
-    const ctaH  = fonts.cta + 28
-    const ctaR  = 8
-    const ctaW  = Math.min(cta.length * fonts.cta * 0.62 + 56, text.maxWidth)
-    const secColor = escapeXml(`#${normalizeHex(secondaryHex)}`)
-    const ctaTextColor = escapeXml(contrastColor(secondaryHex))
-    inner += `<rect x="${text.startX}" y="${cy}" width="${ctaW}" height="${ctaH}" rx="${ctaR}" fill="${secColor}"/>`
-    inner += `<text x="${text.startX + ctaW / 2}" y="${cy + ctaH / 2 + fonts.cta * 0.35}" font-family="${ff}" font-weight="bold" font-size="${fonts.cta}" fill="${ctaTextColor}" text-anchor="middle">${escapeXml(cta)}</text>`
+    const ctaH = fonts.cta + 28
+    const ctaW = Math.min(cta.length * fonts.cta * 0.62 + 56, text.maxW)
+    inner += `<rect x="${text.x}" y="${cy}" width="${ctaW}" height="${ctaH}" rx="8" fill="#${normalizeHex(secondaryHex)}"/>`
+    inner += `<text x="${text.x + ctaW / 2}" y="${cy + ctaH / 2 + fonts.cta * 0.35}" font-family="${ff}" font-weight="bold" font-size="${fonts.cta}" fill="${escapeXml(contrastColor(secondaryHex))}" text-anchor="middle">${escapeXml(cta)}</text>`
   }
 
-  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${fontDef}${inner}</svg>`
+  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${inner}</svg>`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Función principal: composeCreative
+// MODO "overlay" — 9x16 (Stories/Reels)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildOverlaySvg(opts: {
+  width:        number
+  height:       number
+  headline:     string
+  body?:        string
+  cta?:         string
+  primaryHex:   string
+  secondaryHex: string
+  logoBase64:   string | null
+  logoDrawW:    number
+  logoDrawH:    number
+  fontBase64:   string | null
+}): string {
+  const { width, height, headline, body, cta,
+          primaryHex, secondaryHex, logoBase64, logoDrawW, logoDrawH, fontBase64 } = opts
+
+  const ff     = fontFamily(fontBase64)
+  const pad    = 60
+  const maxW   = width - pad * 2
+
+  // Gradiente: cubre el 45% inferior (desde y=1056)
+  const gradTop = Math.round(height * 0.55)   // 1056
+  const gradH   = height - gradTop             // 864
+
+  // Colores del gradiente — negro puro + tinte del primario
+  const pHex = normalizeHex(primaryHex)
+
+  // Posiciones de texto (bottom-up desde y=height-pad)
+  const fonts = { headline: 80, body: 34, cta: 30 }
+  const lineH = (fs: number) => Math.round(fs * 1.28)
+  const maxCols = (fs: number) => Math.floor(maxW / (fs * 0.56))
+
+  const hlLines = wrapText(headline, maxCols(fonts.headline))
+  const bdLines = body ? wrapText(body, maxCols(fonts.body)) : []
+
+  // Calcular altura total del bloque de texto (bottom-up)
+  const ctaH      = cta ? fonts.cta + 32 : 0
+  const ctaGap    = cta ? 24 : 0
+  const bodyH     = bdLines.length ? bdLines.length * lineH(fonts.body) + 24 : 0
+  const headlineH = hlLines.length * lineH(fonts.headline)
+  const totalTextH = headlineH + bodyH + ctaH + ctaGap
+
+  // Texto empieza en: bottom - bottomPad - totalTextH
+  const bottomPad   = 80
+  const textStartY  = Math.max(gradTop + pad, height - bottomPad - totalTextH)
+  let cy            = textStartY + fonts.headline
+
+  let inner = fontDefs(fontBase64)
+
+  // ── Gradiente ────────────────────────────────────────────────────────────
+  inner += `
+<defs>
+  <linearGradient id="ovgrad" x1="0" y1="${gradTop}" x2="0" y2="${height}" gradientUnits="userSpaceOnUse">
+    <stop offset="0%"   stop-color="#000000" stop-opacity="0"/>
+    <stop offset="50%"  stop-color="#${pHex}" stop-opacity="0.45"/>
+    <stop offset="100%" stop-color="#${pHex}" stop-opacity="0.88"/>
+  </linearGradient>
+</defs>
+<rect x="0" y="${gradTop}" width="${width}" height="${gradH}" fill="url(#ovgrad)"/>`.trim()
+
+  // ── Logo (esquina superior derecha) ───────────────────────────────────────
+  if (logoBase64 && logoDrawW > 0) {
+    const lx = width - logoDrawW - 40
+    const ly = 48
+    const logoH = logoDrawH
+    inner += `<rect x="${lx - 12}" y="${ly - 8}" width="${logoDrawW + 24}" height="${logoH + 16}" rx="12" fill="rgba(255,255,255,0.88)"/>`
+    inner += `<image href="data:image/png;base64,${logoBase64}" x="${lx}" y="${ly}" width="${logoDrawW}" height="${logoH}" preserveAspectRatio="xMidYMid meet"/>`
+  }
+
+  // ── Headline ──────────────────────────────────────────────────────────────
+  for (const line of hlLines) {
+    inner += `<text x="${pad}" y="${cy}" font-family="${ff}" font-weight="bold" font-size="${fonts.headline}" fill="#FFFFFF" filter="url(#ts)">${escapeXml(line)}</text>`
+    cy += lineH(fonts.headline)
+  }
+  cy += 20
+
+  // ── Body ──────────────────────────────────────────────────────────────────
+  for (const line of bdLines) {
+    inner += `<text x="${pad}" y="${cy}" font-family="${ff}" font-size="${fonts.body}" fill="#FFFFFF" opacity="0.90">${escapeXml(line)}</text>`
+    cy += lineH(fonts.body)
+  }
+  if (bdLines.length) cy += 24
+
+  // ── CTA ───────────────────────────────────────────────────────────────────
+  if (cta) {
+    const ctaRectH = fonts.cta + 32
+    const ctaW     = Math.min(cta.length * fonts.cta * 0.62 + 56, maxW * 0.7)
+    inner += `<rect x="${pad}" y="${cy}" width="${ctaW}" height="${ctaRectH}" rx="10" fill="#${normalizeHex(secondaryHex)}"/>`
+    inner += `<text x="${pad + ctaW / 2}" y="${cy + ctaRectH / 2 + fonts.cta * 0.35}" font-family="${ff}" font-weight="bold" font-size="${fonts.cta}" fill="${escapeXml(contrastColor(secondaryHex))}" text-anchor="middle">${escapeXml(cta)}</text>`
+  }
+
+  // Sombra suave en el headline (mejora legibilidad sobre foto)
+  const shadowFilter = `<defs><filter id="ts" x="-5%" y="-5%" width="110%" height="120%"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="black" flood-opacity="0.6"/></filter></defs>`
+
+  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${shadowFilter}${inner}</svg>`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Función principal
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function composeCreative(params: ComposeParams): Promise<Buffer> {
@@ -292,63 +340,93 @@ export async function composeCreative(params: ComposeParams): Promise<Buffer> {
   } = params
 
   const { width, height } = FORMAT_DIMS[format]
-  const layout = buildLayout(width, height, format)
+  const isOverlay = format === '9x16'
 
-  // ── 1. Imagen de fondo ────────────────────────────────────────────────────
+  // ── 1. Descargar fondo ────────────────────────────────────────────────────
   const bgResp = await fetch(backgroundImageUrl)
   if (!bgResp.ok) throw new Error(`Error descargando fondo: ${bgResp.status} ${bgResp.statusText}`)
   const bgBuffer = Buffer.from(await bgResp.arrayBuffer())
 
-  const bgResized = await sharp(bgBuffer)
-    .resize(layout.bg.width, layout.bg.height, { fit: 'cover', position: 'centre' })
-    .jpeg({ quality: 95 })
-    .toBuffer()
-
   // ── 2. Logo ───────────────────────────────────────────────────────────────
   let logoBase64: string | null = null
   let logoDrawW = 0
-  let logoDrawH = layout.logo.maxHeight
+  const logoMaxH = isOverlay ? 90 : (format === '1.91x1' ? 80 : 100)
+  let logoDrawH = logoMaxH
 
   if (logoBuffer && logoBuffer.length > 0) {
     try {
-      const meta = await sharp(logoBuffer).metadata()
+      const meta   = await sharp(logoBuffer).metadata()
       const aspect = meta.width && meta.height ? meta.width / meta.height : 1
-      logoDrawH = layout.logo.maxHeight
-      logoDrawW = Math.round(logoDrawH * aspect)
+      logoDrawH    = logoMaxH
+      logoDrawW    = Math.round(logoDrawH * aspect)
       const logoPng = await sharp(logoBuffer)
         .resize({ height: logoDrawH, withoutEnlargement: true })
         .png()
         .toBuffer()
       logoBase64 = logoPng.toString('base64')
+      console.log(`[compose] Logo procesado: ${logoDrawW}×${logoDrawH}px`)
     } catch (e) {
       console.warn('[compose] Logo processing failed, skipping:', e instanceof Error ? e.message : e)
     }
   }
 
   // ── 3. Fuente custom ──────────────────────────────────────────────────────
-  const fontBase64 = fontBuffer && fontBuffer.length > 0
-    ? fontBuffer.toString('base64')
-    : null
+  const fontBase64 = fontBuffer && fontBuffer.length > 0 ? fontBuffer.toString('base64') : null
 
   // ── 4. SVG overlay ────────────────────────────────────────────────────────
-  const svgStr = buildSvgOverlay({
-    layout, width, height,
-    headline, body, cta,
-    primaryHex, secondaryHex,
-    logoBase64, logoDrawW, logoDrawH,
-    fontBase64,
-  })
+  let svgStr: string
+
+  if (isOverlay) {
+    svgStr = buildOverlaySvg({
+      width, height, headline, body, cta,
+      primaryHex, secondaryHex,
+      logoBase64, logoDrawW, logoDrawH,
+      fontBase64,
+    })
+  } else {
+    const layout = buildSplitLayout(width, height, format)
+    svgStr = buildSplitSvg({
+      layout, width, height, headline, body, cta,
+      primaryHex, secondaryHex,
+      logoBase64, logoDrawW, logoDrawH,
+      fontBase64,
+    })
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[compose] SVG ${format} (${svgStr.length} chars):`, svgStr.slice(0, 400))
+  } else {
+    console.log(`[compose] SVG ${format}: ${svgStr.length} chars, logo=${!!logoBase64}, font=${!!fontBase64}`)
+  }
 
   // ── 5. Composición final ──────────────────────────────────────────────────
-  const finalBuffer = await sharp({
-    create: { width, height, channels: 3, background: { r: 255, g: 255, b: 255 } },
-  })
-    .composite([
-      { input: bgResized, top: layout.bg.top,  left: layout.bg.left  },
-      { input: Buffer.from(svgStr), top: 0, left: 0 },
-    ])
-    .png({ compressionLevel: 8 })
-    .toBuffer()
+  if (isOverlay) {
+    // Foto ocupa canvas completo, SVG encima
+    const bgFull = await sharp(bgBuffer)
+      .resize(width, height, { fit: 'cover', position: 'centre' })
+      .jpeg({ quality: 95 })
+      .toBuffer()
 
-  return finalBuffer
+    return sharp({ create: { width, height, channels: 3, background: { r: 0, g: 0, b: 0 } } })
+      .composite([
+        { input: bgFull,               top: 0, left: 0 },
+        { input: Buffer.from(svgStr),  top: 0, left: 0 },
+      ])
+      .png({ compressionLevel: 8 })
+      .toBuffer()
+  } else {
+    const layout    = buildSplitLayout(width, height, format)
+    const bgResized = await sharp(bgBuffer)
+      .resize(layout.bg.width, layout.bg.height, { fit: 'cover', position: 'centre' })
+      .jpeg({ quality: 95 })
+      .toBuffer()
+
+    return sharp({ create: { width, height, channels: 3, background: { r: 255, g: 255, b: 255 } } })
+      .composite([
+        { input: bgResized,            top: layout.bg.top,  left: layout.bg.left },
+        { input: Buffer.from(svgStr),  top: 0, left: 0 },
+      ])
+      .png({ compressionLevel: 8 })
+      .toBuffer()
+  }
 }
