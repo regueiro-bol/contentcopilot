@@ -8,10 +8,6 @@ import {
   type TipoOperacion,
 } from '@/lib/costes'
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
-
 const MODELO_CLAUDE = 'claude-sonnet-4-5'
 
 const SISTEMA_COPILOTO_DEFAULT = `Eres ContentCopilot, un experto en copywriting y estrategia de contenido digital.
@@ -36,6 +32,10 @@ export async function POST(request: NextRequest) {
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }
+
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  })
 
   try {
     const body = await request.json()
