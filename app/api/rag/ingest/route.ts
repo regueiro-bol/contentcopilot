@@ -4,6 +4,7 @@ import mammoth from 'mammoth'
 import Papa from 'papaparse'
 import JSZip from 'jszip'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { calcularCosteEmbeddingUSD, guardarRegistroCoste } from '@/lib/costes'
 
 // ─── Route segment config ─────────────────────────────────────────────────────
 // Tiempo máximo de ejecución (App Router — Vercel Pro admite hasta 60s)
@@ -84,13 +85,18 @@ function dividirEnChunks(
 }
 
 /** Genera embeddings para un array de textos (en batch) */
-async function generarEmbeddings(textos: string[]): Promise<number[][]> {
+async function generarEmbeddings(
+  textos: string[],
+): Promise<{ embeddings: number[][]; totalTokens: number }> {
   const inputs = textos.map((t) => t.slice(0, 8000)) // límite seguro
   const response = await openai.embeddings.create({
     model: 'text-embedding-3-small',
     input: inputs,
   })
-  return response.data.map((d) => d.embedding)
+  return {
+    embeddings : response.data.map((d) => d.embedding),
+    totalTokens: response.usage?.total_tokens ?? 0,
+  }
 }
 
 // ─── Persistencia en Supabase ──────────────────────────────────────────────────
@@ -103,13 +109,15 @@ async function guardarChunks(
 ): Promise<{ guardados: number; errores: string[] }> {
   const supabase = createAdminClient()
   let guardados = 0
+  let tokensTotalesEmbedding = 0
   const errores: string[] = []
 
   for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
     const lote = chunks.slice(i, i + EMBED_BATCH)
 
     try {
-      const embeddings = await generarEmbeddings(lote)
+      const { embeddings, totalTokens } = await generarEmbeddings(lote)
+      tokensTotalesEmbedding += totalTokens
 
       const rows = lote.map((chunk, j) => ({
         proyecto_id : proyectoId,
@@ -143,6 +151,24 @@ async function guardarChunks(
     }
 
     if (i + EMBED_BATCH < chunks.length) await sleep(EMBED_DELAY)
+  }
+
+  // ── Registrar coste de embeddings (fire & forget) ──────────────────────────
+  if (tokensTotalesEmbedding > 0) {
+    guardarRegistroCoste({
+      proyecto_id   : proyectoId,
+      tipo_operacion: 'rag_embedding',
+      agente        : 'openai_embedding',
+      modelo        : 'text-embedding-3-small',
+      tokens_input  : tokensTotalesEmbedding,
+      unidades      : guardados,
+      coste_usd     : calcularCosteEmbeddingUSD(tokensTotalesEmbedding),
+      metadatos     : {
+        documento_id: documentoId,
+        articulo_titulo: articulo.titulo,
+        chunks_guardados: guardados,
+      },
+    }).catch((e) => console.error('[Costes RAG] Error al guardar:', e))
   }
 
   return { guardados, errores }

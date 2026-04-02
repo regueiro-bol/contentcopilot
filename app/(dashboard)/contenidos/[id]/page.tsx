@@ -22,6 +22,7 @@ export default async function ContenidoDetallePage({
     { data: proyectoRaw },
     { data: conversacionesRaw },
     { data: autoresRaw },
+    { data: socialPiezasRaw },
   ] = await Promise.all([
     supabase
       .from('proyectos')
@@ -38,6 +39,11 @@ export default async function ContenidoDetallePage({
       .select('id, nombre, email, especialidad, activo')
       .eq('activo', true)
       .order('nombre'),
+    supabase
+      .from('ad_creatives')
+      .select('id, image_url, format, status, created_at, copy, publication_intent')
+      .eq('contenido_id', params.id)
+      .order('created_at', { ascending: false }),
   ])
 
   // Fetch cliente from proyecto
@@ -51,7 +57,25 @@ export default async function ContenidoDetallePage({
     clienteRaw = data
   }
 
-  const contenido: Contenido & { texto_contenido?: string; notas_iniciales?: string } = {
+  // Costes acumulados del contenido (vista puede no existir aún → maybeSingle + try/catch)
+  let costesRaw: { coste_total: number; coste_texto: number; coste_imagenes: number; coste_rag: number } | null = null
+  try {
+    const { data } = await supabase
+      .from('vista_costes_contenido')
+      .select('coste_total, coste_texto, coste_imagenes, coste_rag')
+      .eq('contenido_id', params.id)
+      .maybeSingle()
+    costesRaw = data as typeof costesRaw
+  } catch {
+    // vista aún no existe o error — ignorar
+  }
+
+  const contenido: Contenido & {
+    texto_contenido?: string
+    notas_iniciales?: string
+    notas_revision?: string
+    imagen_destacada?: string
+  } = {
     id: raw.id,
     titulo: raw.titulo,
     slug: raw.slug,
@@ -71,6 +95,8 @@ export default async function ContenidoDetallePage({
     link_drive: raw.link_drive ?? undefined,
     texto_contenido: raw.texto_contenido ?? undefined,
     notas_iniciales: raw.notas_iniciales ?? undefined,
+    notas_revision: raw.notas_revision ?? undefined,
+    imagen_destacada: raw.imagen_destacada ?? undefined,
   }
 
   const proyecto = proyectoRaw ? {
@@ -108,6 +134,25 @@ export default async function ContenidoDetallePage({
     created_at: c.created_at,
   }))
 
+  const socialPiezas = (socialPiezasRaw ?? []).map((p) => ({
+    id:                p.id as string,
+    image_url:         p.image_url as string | null,
+    format:            p.format as string,
+    status:            p.status as string,
+    created_at:        p.created_at as string,
+    copy:              (p.copy ?? null) as Record<string, string> | null,
+    publication_intent: p.publication_intent as string,
+  }))
+
+  type CostesRow = { coste_total: number; coste_texto: number; coste_imagenes: number; coste_rag: number }
+  const cr = costesRaw as CostesRow | null
+  const costes = cr ? {
+    coste_total   : Number(cr.coste_total)    || 0,
+    coste_texto   : Number(cr.coste_texto)    || 0,
+    coste_imagenes: Number(cr.coste_imagenes) || 0,
+    coste_rag     : Number(cr.coste_rag)      || 0,
+  } : null
+
   return (
     <ContenidoDetalleClient
       contenido={contenido}
@@ -115,6 +160,8 @@ export default async function ContenidoDetallePage({
       cliente={cliente}
       autores={autores}
       conversaciones={conversaciones}
+      socialPiezas={socialPiezas}
+      costes={costes}
     />
   )
 }

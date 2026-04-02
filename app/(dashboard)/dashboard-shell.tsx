@@ -12,6 +12,7 @@ const titulosPagina: Record<string, string> = {
   '/proyectos': 'Contenidos',
   '/copiloto': 'Copiloto de contenido',
   '/agentes': 'Agentes de IA',
+  '/costes': 'Calculadora de costes',
 }
 
 export function DashboardShell({

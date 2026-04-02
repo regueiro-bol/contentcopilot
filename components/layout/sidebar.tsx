@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Sparkles,
   ClipboardList,
+  Calculator,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -50,6 +51,11 @@ const navItems = [
     titulo: 'Agentes',
     href: '/agentes',
     icono: Cpu,
+  },
+  {
+    titulo: 'Costes',
+    href: '/costes',
+    icono: Calculator,
   },
 ]
 

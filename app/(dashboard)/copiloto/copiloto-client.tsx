@@ -534,11 +534,14 @@ Keyword principal: ${c.keyword_principal ?? 'No especificada'}${
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
-          mensajes   : historialApi,
-          modo       : 'json',
-          sistema    : buildSystemConContexto(),
-          max_tokens : 2000,
-          proyecto_id: contenidoActual?.proyecto_id ?? contenidoActual?.proyectos?.id ?? null,
+          mensajes      : historialApi,
+          modo          : 'json',
+          sistema       : buildSystemConContexto(),
+          max_tokens    : 2000,
+          proyecto_id   : contenidoActual?.proyecto_id ?? contenidoActual?.proyectos?.id ?? null,
+          contenido_id  : contenidoId || null,
+          tipo_operacion: 'copiloto',
+          agente        : 'claude_api',
         }),
       })
       const datos = await res.json()
@@ -593,9 +596,12 @@ ${briefTexto ?? 'No disponible'}
 TEXTO DEL ARTÍCULO:
 ${texto}`,
           }],
-          modo       : 'json',
-          max_tokens : 2000,
-          proyecto_id: contenidoActual?.proyecto_id ?? contenidoActual?.proyectos?.id ?? null,
+          modo          : 'json',
+          max_tokens    : 2000,
+          proyecto_id   : contenidoActual?.proyecto_id ?? contenidoActual?.proyectos?.id ?? null,
+          contenido_id  : contenidoId || null,
+          tipo_operacion: 'revision',
+          agente        : 'claude_api',
         }),
       })
 

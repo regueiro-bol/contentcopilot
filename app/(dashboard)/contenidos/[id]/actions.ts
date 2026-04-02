@@ -8,6 +8,12 @@ function path(id: string) {
   return `/contenidos/${id}`
 }
 
+function revalidateListas() {
+  revalidatePath('/contenidos')
+  revalidatePath('/proyectos')
+  revalidatePath('/dashboard')
+}
+
 export async function actualizarEstadoContenido(
   id: string,
   estado: EstadoContenido,
@@ -20,6 +26,7 @@ export async function actualizarEstadoContenido(
 
   if (error) throw new Error(error.message)
   revalidatePath(path(id))
+  revalidateListas()
 }
 
 export async function actualizarTextoContenido(
@@ -70,6 +77,20 @@ export async function actualizarBriefContenido(
   revalidatePath(path(id))
 }
 
+export async function actualizarImagenDestacada(
+  id: string,
+  imagen_destacada: string | null,
+) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('contenidos')
+    .update({ imagen_destacada })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(path(id))
+}
+
 export async function devolverContenido(
   id: string,
   notas_revision: string,
@@ -82,6 +103,7 @@ export async function devolverContenido(
 
   if (error) throw new Error(error.message)
   revalidatePath(path(id))
+  revalidateListas()
 }
 
 export async function publicarContenido(
@@ -96,6 +118,7 @@ export async function publicarContenido(
 
   if (error) throw new Error(error.message)
   revalidatePath(path(id))
+  revalidateListas()
 }
 
 /**

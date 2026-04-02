@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@clerk/nextjs'
-import { ChevronRight, Sparkles, ExternalLink, FileText, Clock, MessageSquare, RefreshCw, Loader2, PenLine, Wand2, Bot, LayoutGrid } from 'lucide-react'
+import { ChevronRight, ChevronDown, Sparkles, ExternalLink, FileText, Clock, MessageSquare, RefreshCw, Loader2, PenLine, Wand2, Bot, LayoutGrid, X } from 'lucide-react'
 import InformeRevisionDashboard from '@/components/revisiones/InformeRevisionDashboard'
 import BriefSEODisplay from '@/components/contenidos/BriefSEODisplay'
 import Link from 'next/link'
@@ -57,7 +57,22 @@ const AGENTE_COLORS: Record<string, string> = {
   redactor:        'bg-blue-100 text-blue-700',
 }
 
-type ContenidoExtendido = Contenido & { texto_contenido?: string; notas_iniciales?: string; notas_revision?: string }
+type ContenidoExtendido = Contenido & {
+  texto_contenido?: string
+  notas_iniciales?: string
+  notas_revision?: string
+  imagen_destacada?: string
+}
+
+type PiezaSocial = {
+  id: string
+  image_url: string | null
+  format: string
+  status: string
+  created_at: string
+  copy: Record<string, string> | null
+  publication_intent: string
+}
 
 const ESTADOS: EstadoContenido[] = [
   'pendiente', 'borrador', 'revision_seo', 'revision_cliente', 'devuelto', 'aprobado', 'publicado',
@@ -503,18 +518,29 @@ function EditarEntregaModal({
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
+type CostesContenido = {
+  coste_total   : number
+  coste_texto   : number
+  coste_imagenes: number
+  coste_rag     : number
+}
+
 export default function ContenidoDetalleClient({
   contenido,
   proyecto,
   cliente,
   autores,
   conversaciones,
+  socialPiezas = [],
+  costes = null,
 }: {
-  contenido: ContenidoExtendido
-  proyecto: Proyecto | null
-  cliente: Cliente | null
-  autores: PerfilAutor[]
+  contenido     : ContenidoExtendido
+  proyecto      : Proyecto | null
+  cliente       : Cliente | null
+  autores       : PerfilAutor[]
   conversaciones: ConversacionResumen[]
+  socialPiezas? : PiezaSocial[]
+  costes?       : CostesContenido | null
 }) {
   const router = useRouter()
   const { userId } = useAuth()
@@ -536,6 +562,33 @@ export default function ContenidoDetalleClient({
   const [modalPublicar, setModalPublicar] = useState(false)
   const [urlParaPublicar, setUrlParaPublicar] = useState(contenido.url_publicado ?? '')
   const [notasRevision, setNotasRevision] = useState(contenido.notas_revision ?? '')
+
+  // ── Tab Social ────────────────────────────────────────────────────────────
+  const [nombreCampana, setNombreCampana] = useState(contenido.titulo)
+  const [briefSocial, setBriefSocial] = useState(
+    [contenido.titulo, contenido.keyword_principal ? `Keyword: ${contenido.keyword_principal}` : '']
+      .filter(Boolean).join('. ')
+  )
+  const [intentSocial, setIntentSocial] = useState<'organic_informative' | 'organic_brand' | 'paid_campaign'>('organic_informative')
+  const [formatosSocial, setFormatosSocial] = useState<string[]>(['1x1'])
+  const [variantesSocial, setVariantesSocial] = useState<1 | 2 | 3>(1)
+  const [generandoSocial, setGenerandoSocial] = useState(false)
+  const [errorSocial, setErrorSocial] = useState<string | null>(null)
+  const [piezasNuevas, setPiezasNuevas] = useState<PiezaSocial[]>([])
+  const [lightboxSocialUrl, setLightboxSocialUrl] = useState<string | null>(null)
+
+  // ── Tab Imagen — Galería ──────────────────────────────────────────────────
+  type ImagenGaleria = { url: string; formato: string }
+  const [galeriaImagenes, setGaleriaImagenes] = useState<ImagenGaleria[]>([])
+  const [lightboxImagenUrl, setLightboxImagenUrl] = useState<string | null>(null)
+  const [confirmEliminarIdx, setConfirmEliminarIdx] = useState<number | null>(null)
+  const [promptImagen, setPromptImagen] = useState('')
+  const [generandoPromptIA, setGenerandoPromptIA] = useState(false)
+  const [errorPromptIA, setErrorPromptIA] = useState<string | null>(null)
+  const [formatoImagen, setFormatoImagen] = useState<'1200x630' | '1200x800' | '1920x1080'>('1200x630')
+  const [variantesImagen, setVariantesImagen] = useState<1 | 2 | 3>(1)
+  const [generandoImagen, setGenerandoImagen] = useState(false)
+  const [errorImagen, setErrorImagen] = useState<string | null>(null)
 
   const redactorNombre = autores.find((a) => a.id === contenido.redactor_id)?.nombre
 
@@ -625,11 +678,14 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          system: SYSTEM_REDACTOR,
-          messages: [{ role: 'user', content: userContent }],
-          modo: 'json',
-          max_tokens: 4000,
-          proyecto_id: contenido.proyecto_id ?? null,
+          system         : SYSTEM_REDACTOR,
+          messages       : [{ role: 'user', content: userContent }],
+          modo           : 'json',
+          max_tokens     : 4000,
+          proyecto_id    : contenido.proyecto_id ?? null,
+          contenido_id   : contenido.id,
+          tipo_operacion : 'borrador',
+          agente         : 'claude_api',
         }),
       })
       const data = await res.json()
@@ -711,6 +767,137 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
     } finally { setCambiandoEstado(false) }
   }
 
+  async function handleGenerarSocial() {
+    if (!cliente?.id) { setErrorSocial('No hay cliente asociado a este contenido'); return }
+    if (!briefSocial.trim()) { setErrorSocial('El brief es obligatorio'); return }
+    if (formatosSocial.length === 0) { setErrorSocial('Selecciona al menos un formato'); return }
+    setGenerandoSocial(true)
+    setErrorSocial(null)
+
+    // FIX 5 — Enriquecer brief con texto del artículo en modo orgánico informativo
+    const briefEnriquecido = intentSocial === 'organic_informative' && texto.trim()
+      ? briefSocial.trim() + '\n\nCONTEXTO DEL ARTÍCULO:\n' + texto.substring(0, 1500)
+      : briefSocial.trim()
+
+    try {
+      const res = await fetch('/api/ad-creatives/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id         : cliente.id,
+          brief             : briefEnriquecido,
+          publication_intent: intentSocial,
+          formats           : formatosSocial,
+          campaign_name     : nombreCampana.trim() || contenido.titulo,
+          contenido_id      : contenido.id,
+          variants          : variantesSocial,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al generar piezas sociales')
+      const nuevas: PiezaSocial[] = (data.creatives ?? []).map((c: Record<string, unknown>) => ({
+        id                : c.id as string,
+        image_url         : c.image_url as string | null,
+        format            : c.format as string,
+        status            : c.status as string,
+        created_at        : c.created_at as string,
+        copy              : (c.copy ?? null) as Record<string, string> | null,
+        publication_intent: c.publication_intent as string,
+      }))
+      setPiezasNuevas(prev => [...nuevas, ...prev])
+      router.refresh()
+    } catch (e) {
+      setErrorSocial(e instanceof Error ? e.message : 'Error inesperado')
+    } finally {
+      setGenerandoSocial(false)
+    }
+  }
+
+  async function handleCambiarEstadoPieza(piezaId: string, nuevoStatus: 'approved' | 'rejected') {
+    try {
+      await fetch(`/api/ad-creatives/${piezaId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nuevoStatus }),
+      })
+      setPiezasNuevas(prev => prev.map(p => p.id === piezaId ? { ...p, status: nuevoStatus } : p))
+      router.refresh()
+    } catch {
+      // handle silently
+    }
+  }
+
+  async function handleGenerarPromptIA() {
+    // FIX 3 — Debug logs y mejor manejo de errores
+    console.log('[PROMPT IMG] texto longitud:', texto?.length)
+    if (!texto.trim()) {
+      setErrorPromptIA('Primero genera el contenido del artículo en el tab Contenido')
+      return
+    }
+    setGenerandoPromptIA(true)
+    setErrorPromptIA(null)
+    try {
+      const res = await fetch('/api/claude', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          system: `Eres un experto en prompts para generación de imágenes con IA. Analiza el texto del artículo y genera un prompt en inglés para crear una imagen fotorrealista y profesional. El prompt debe:
+- Describir una escena visual relevante al tema del artículo
+- Especificar estilo fotográfico profesional (iluminación, composición, profundidad de campo)
+- Ser visualmente impactante y coherente con el contenido
+- NO incluir texto, letras ni palabras en la imagen
+- NO incluir personas reconocibles o rostros identificables
+- Máximo 150 palabras
+Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
+          messages      : [{ role: 'user', content: texto.substring(0, 2000) }],
+          modo          : 'json',
+          max_tokens    : 300,
+          proyecto_id   : contenido.proyecto_id ?? null,
+          contenido_id  : contenido.id,
+          tipo_operacion: 'prompt_imagen',
+          agente        : 'claude_api',
+        }),
+      })
+      const data = await res.json()
+      console.log('[PROMPT IMG] respuesta Claude:', data)
+      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con Claude')
+      const prompt = data.contenido ?? data.texto ?? ''
+      if (!prompt.trim()) throw new Error('Claude no devolvió un prompt. Inténtalo de nuevo.')
+      setPromptImagen(prompt.trim())
+    } catch (e) {
+      setErrorPromptIA(e instanceof Error ? e.message : 'Error inesperado')
+    } finally {
+      setGenerandoPromptIA(false)
+    }
+  }
+
+  async function handleGenerarImagenDestacada() {
+    if (!promptImagen.trim()) return
+    setGenerandoImagen(true)
+    setErrorImagen(null)
+    try {
+      const res = await fetch('/api/imagen-destacada/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt      : promptImagen.trim(),
+          formato     : formatoImagen,
+          variantes   : variantesImagen,
+          contenido_id: contenido.id,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al generar')
+      const urls: string[] = data.urls ?? []
+      setGaleriaImagenes((prev) => {
+        const combined = [...urls.map((url) => ({ url, formato: formatoImagen })), ...prev]
+        return combined.slice(0, 4)
+      })
+    } catch (e) {
+      setErrorImagen(e instanceof Error ? e.message : 'Error al generar la imagen')
+    } finally { setGenerandoImagen(false) }
+  }
+
   return (
     <div className="space-y-6 max-w-5xl">
       {/* Breadcrumb */}
@@ -754,6 +941,40 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
             {contenido.keyword_principal && (
               <span className="text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full font-medium">{contenido.keyword_principal}</span>
             )}
+            {/* Badge de coste con tooltip */}
+            {costes !== null && (
+              <div className="relative group">
+                <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full font-medium cursor-default select-none">
+                  💰 ${(costes.coste_total).toFixed(4)}
+                </span>
+                {/* Tooltip */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 hidden group-hover:block pointer-events-none">
+                  <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2.5 shadow-xl whitespace-nowrap min-w-[160px]">
+                    <p className="font-semibold mb-1.5 text-gray-100">Desglose de coste</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between gap-4">
+                        <span className="text-gray-400">Texto (Claude)</span>
+                        <span className="font-mono">${(costes.coste_texto).toFixed(4)}</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-gray-400">Imágenes (FLUX)</span>
+                        <span className="font-mono">${(costes.coste_imagenes).toFixed(4)}</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-gray-400">Embeddings RAG</span>
+                        <span className="font-mono">${(costes.coste_rag).toFixed(4)}</span>
+                      </div>
+                    </div>
+                    <div className="border-t border-gray-700 mt-1.5 pt-1.5 flex justify-between gap-4">
+                      <span className="font-semibold text-gray-100">Total</span>
+                      <span className="font-mono font-bold">${(costes.coste_total).toFixed(4)}</span>
+                    </div>
+                  </div>
+                  {/* Flecha del tooltip */}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45 -mt-1" />
+                </div>
+              </div>
+            )}
             {redactorNombre && (
               <span className="text-xs text-gray-500">{redactorNombre}</span>
             )}
@@ -769,7 +990,7 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
           {proyecto?.cliente_id && (
             <Button size="sm" variant="outline" className="gap-2" asChild>
               <Link
-                href={`/clientes/${proyecto.cliente_id}/ad-creatives?open=1&intent=organic_informative&source=${encodeURIComponent((texto ?? '').slice(0, 800))}`}
+                href={`/clientes/${proyecto.cliente_id}/ad-creatives?open=1&intent=organic_informative&source=${encodeURIComponent((texto ?? '').slice(0, 800))}&contenido_id=${contenido.id}`}
               >
                 <LayoutGrid className="h-4 w-4" />
                 Generar social
@@ -958,6 +1179,14 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
           <TabsTrigger value="brief">Brief SEO</TabsTrigger>
           <TabsTrigger value="contenido">Contenido</TabsTrigger>
           <TabsTrigger value="revisiones">Revisiones ({conversaciones.length})</TabsTrigger>
+          <TabsTrigger value="social">
+            Social{(socialPiezas.length + piezasNuevas.filter(p => !socialPiezas.some(s => s.id === p.id)).length) > 0
+              ? ` (${socialPiezas.length + piezasNuevas.filter(p => !socialPiezas.some(s => s.id === p.id)).length})`
+              : ''}
+          </TabsTrigger>
+          <TabsTrigger value="imagen">
+            Imagen{galeriaImagenes.length > 0 ? ` (${galeriaImagenes.length})` : ''}
+          </TabsTrigger>
           <TabsTrigger value="entrega">Entrega</TabsTrigger>
         </TabsList>
 
@@ -1232,7 +1461,455 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
           )}
         </TabsContent>
 
-        {/* ── Tab 3: Revisiones ── */}
+        {/* ── Tab Social ── */}
+        <TabsContent value="social">
+          {(() => {
+            const piezasMostradas = [
+              ...piezasNuevas.filter(p => !socialPiezas.some(s => s.id === p.id)),
+              ...socialPiezas,
+            ].filter(p => p.status !== 'rejected')
+            return (
+              <div className="space-y-4">
+                {/* Formulario de generación */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Generar contenido social</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+
+                    {/* Nombre de campaña */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-gray-600">Nombre de campaña</label>
+                      <Input
+                        value={nombreCampana}
+                        onChange={(e) => setNombreCampana(e.target.value)}
+                        placeholder="Nombre de la campaña…"
+                        className="text-sm"
+                      />
+                    </div>
+
+                    {/* Brief */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-gray-600">Brief de la campaña</label>
+                      <textarea
+                        value={briefSocial}
+                        onChange={(e) => setBriefSocial(e.target.value)}
+                        rows={3}
+                        className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white resize-none"
+                        placeholder="Describe el objetivo de las piezas sociales..."
+                      />
+                    </div>
+
+                    {/* Intención */}
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-gray-600">Intención de publicación</p>
+                      <div className="flex gap-2 flex-wrap">
+                        {([
+                          { value: 'organic_informative', label: 'Orgánico informativo' },
+                          { value: 'organic_brand',       label: 'Orgánico marca' },
+                          { value: 'paid_campaign',       label: 'Campaña pagada' },
+                        ] as const).map((intent) => (
+                          <button
+                            key={intent.value}
+                            onClick={() => setIntentSocial(intent.value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                              intentSocial === intent.value
+                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                            }`}
+                          >
+                            {intent.label}
+                          </button>
+                        ))}
+                      </div>
+                      {intentSocial === 'organic_informative' && texto.trim() && (
+                        <p className="text-[11px] text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg">
+                          ✓ El texto del artículo se añadirá automáticamente al brief para enriquecer las piezas.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Variantes */}
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-gray-600">Variantes por formato</p>
+                      <div className="flex gap-2">
+                        {([1, 2, 3] as const).map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => setVariantesSocial(n)}
+                            className={`h-9 w-9 rounded-lg text-sm font-bold border transition-colors ${
+                              variantesSocial === n
+                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Formatos */}
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-gray-600">Formatos</p>
+                      <div className="flex gap-4">
+                        {(['1x1', '9x16', '1.91x1'] as const).map((f) => (
+                          <label key={f} className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formatosSocial.includes(f)}
+                              onChange={(e) => setFormatosSocial((prev) =>
+                                e.target.checked ? [...prev, f] : prev.filter((x) => x !== f)
+                              )}
+                              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-sm text-gray-700">{f}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Errores / avisos */}
+                    {errorSocial && (
+                      <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        {errorSocial}
+                      </p>
+                    )}
+                    {!cliente?.id && (
+                      <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        No hay cliente asociado — no se puede generar contenido social.
+                      </p>
+                    )}
+
+                    <Button
+                      onClick={handleGenerarSocial}
+                      disabled={generandoSocial || !cliente?.id || formatosSocial.length === 0 || !briefSocial.trim()}
+                      className="w-full gap-2"
+                    >
+                      {generandoSocial ? (
+                        <><Loader2 className="h-4 w-4 animate-spin" />Generando piezas sociales… (1–2 minutos)</>
+                      ) : (
+                        <><LayoutGrid className="h-4 w-4" />Generar piezas sociales</>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {/* Grid de piezas */}
+                {piezasMostradas.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                      Piezas generadas ({piezasMostradas.length})
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {piezasMostradas.map((p) => (
+                        <div key={p.id} className={`rounded-xl border overflow-hidden bg-white transition-colors ${
+                          p.status === 'approved' ? 'border-green-300' : 'border-gray-200'
+                        }`}>
+                          {p.image_url ? (
+                            <button
+                              className="block w-full"
+                              onClick={() => setLightboxSocialUrl(p.image_url)}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={p.image_url} alt="" className="w-full aspect-square object-contain bg-gray-50" />
+                            </button>
+                          ) : (
+                            <div className="w-full aspect-square bg-gray-100 flex items-center justify-center">
+                              <LayoutGrid className="h-8 w-8 text-gray-300" />
+                            </div>
+                          )}
+                          <div className="p-2.5 space-y-1.5">
+                            {p.copy?.headline && (
+                              <p className="text-xs font-medium text-gray-800 truncate">{p.copy.headline}</p>
+                            )}
+                            <div className="flex items-center gap-1">
+                              <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+                                {p.format}
+                              </span>
+                              <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                p.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                              }`}>
+                                {p.status === 'approved' ? 'Aprobado' : 'Borrador'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                              {p.status !== 'approved' && (
+                                <button
+                                  onClick={() => handleCambiarEstadoPieza(p.id, 'approved')}
+                                  className="text-[10px] font-semibold text-green-700 bg-green-50 hover:bg-green-100 px-2 py-1 rounded-md transition-colors"
+                                >
+                                  Guardar
+                                </button>
+                              )}
+                              {p.image_url && (
+                                <a
+                                  href={p.image_url}
+                                  download
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-md transition-colors"
+                                >
+                                  ⬇
+                                </a>
+                              )}
+                              <button
+                                onClick={() => handleCambiarEstadoPieza(p.id, 'rejected')}
+                                className="text-[10px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-md transition-colors"
+                              >
+                                Rechazar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {piezasMostradas.length === 0 && !generandoSocial && (
+                  <div className="text-center py-8 text-gray-400">
+                    <LayoutGrid className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                    <p className="text-sm">Las piezas generadas aparecerán aquí</p>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+        </TabsContent>
+
+        {/* Lightbox Social */}
+        {lightboxSocialUrl && (
+          <Dialog open={!!lightboxSocialUrl} onOpenChange={() => setLightboxSocialUrl(null)}>
+            <DialogContent className="max-w-3xl p-2 bg-black border-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={lightboxSocialUrl} alt="" className="w-full max-h-[80vh] object-contain rounded-lg" />
+            </DialogContent>
+          </Dialog>
+        )}
+
+        {/* ── Tab Imagen ── */}
+        <TabsContent value="imagen">
+          <div className="space-y-4">
+
+            {/* Galería de imágenes generadas */}
+            {galeriaImagenes.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    Galería de imágenes
+                    <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                      {galeriaImagenes.length} / 4
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className={`grid gap-3 ${galeriaImagenes.length === 1 ? 'grid-cols-1 max-w-sm' : 'grid-cols-2'}`}>
+                    {galeriaImagenes.map((img, i) => (
+                      <div key={i} className="rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
+                        {/* Thumbnail — click abre lightbox */}
+                        <button
+                          className="block w-full"
+                          onClick={() => setLightboxImagenUrl(img.url)}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={img.url}
+                            alt={`Imagen ${i + 1}`}
+                            className="w-full aspect-video object-contain bg-gray-50"
+                          />
+                        </button>
+                        {/* Footer */}
+                        <div className="px-3 py-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 shrink-0">
+                              {img.formato}px
+                            </span>
+                            <span className="text-[10px] text-gray-400 truncate">Imagen {i + 1}</span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {/* Descargar */}
+                            <a
+                              href={img.url}
+                              download
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-md transition-colors"
+                            >
+                              ⬇
+                            </a>
+                            {/* Eliminar */}
+                            {confirmEliminarIdx === i ? (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setGaleriaImagenes((prev) => prev.filter((_, idx) => idx !== i))
+                                    setConfirmEliminarIdx(null)
+                                  }}
+                                  className="text-[10px] font-semibold text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded-md transition-colors"
+                                >
+                                  Confirmar
+                                </button>
+                                <button
+                                  onClick={() => setConfirmEliminarIdx(null)}
+                                  className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-md transition-colors"
+                                >
+                                  Cancelar
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmEliminarIdx(i)}
+                                className="text-[10px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-md transition-colors"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {galeriaImagenes.length >= 4 && (
+                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
+                      Límite de 4 imágenes alcanzado. Elimina alguna para generar más.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Generador */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Generar imagen con IA</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+
+                {/* Aviso si no hay texto */}
+                {!texto.trim() && (
+                  <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm">
+                    <span className="text-amber-500 mt-0.5">⚠</span>
+                    <p className="text-amber-800">
+                      El botón &ldquo;Generar prompt desde el artículo&rdquo; requiere que haya texto en la pestaña Contenido.
+                    </p>
+                  </div>
+                )}
+
+                {/* Generador de prompt */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <p className="text-xs font-semibold text-gray-600">Prompt para la imagen</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleGenerarPromptIA}
+                      disabled={generandoPromptIA || !texto.trim()}
+                      className="text-xs h-7 gap-1.5"
+                    >
+                      {generandoPromptIA
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Sparkles className="h-3 w-3" />}
+                      {generandoPromptIA ? 'Generando prompt…' : 'Generar desde el artículo'}
+                    </Button>
+                  </div>
+                  {errorPromptIA && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {errorPromptIA}
+                    </p>
+                  )}
+                  <textarea
+                    value={promptImagen}
+                    onChange={(e) => setPromptImagen(e.target.value)}
+                    placeholder="Describe la imagen que quieres generar, o usa el botón para generarla automáticamente a partir del texto del artículo..."
+                    rows={4}
+                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white resize-y transition-colors"
+                  />
+                </div>
+
+                {/* Formato */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-600">Formato</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {([
+                      { value: '1200x630',  label: '1200×630',  desc: 'Web / Blog' },
+                      { value: '1200x800',  label: '1200×800',  desc: 'Blog extendido' },
+                      { value: '1920x1080', label: '1920×1080', desc: 'Cabecera' },
+                    ] as const).map((f) => (
+                      <button
+                        key={f.value}
+                        onClick={() => setFormatoImagen(f.value)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          formatoImagen === f.value
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        {f.label}px
+                        <span className={`ml-1 ${formatoImagen === f.value ? 'opacity-75' : 'text-gray-400'}`}>
+                          — {f.desc}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Variantes */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-600">Variantes</p>
+                  <div className="flex gap-2">
+                    {([1, 2, 3] as const).map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setVariantesImagen(n)}
+                        className={`h-9 w-9 rounded-lg text-sm font-bold border transition-colors ${
+                          variantesImagen === n
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Error generación */}
+                {errorImagen && (
+                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {errorImagen}
+                  </p>
+                )}
+
+                {/* Botón generar */}
+                <Button
+                  onClick={handleGenerarImagenDestacada}
+                  disabled={generandoImagen || !promptImagen.trim() || galeriaImagenes.length >= 4}
+                  className="w-full gap-2"
+                >
+                  {generandoImagen ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />Generando imagen{variantesImagen > 1 ? 's' : ''}…</>
+                  ) : (
+                    <><Wand2 className="h-4 w-4" />Generar imagen{variantesImagen > 1 ? `s (${variantesImagen})` : ''}</>
+                  )}
+                </Button>
+
+              </CardContent>
+            </Card>
+
+          </div>
+
+          {/* Lightbox Imagen */}
+          {lightboxImagenUrl && (
+            <Dialog open={!!lightboxImagenUrl} onOpenChange={() => setLightboxImagenUrl(null)}>
+              <DialogContent className="max-w-4xl p-2 bg-black border-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={lightboxImagenUrl} alt="" className="w-full max-h-[85vh] object-contain rounded-lg" />
+              </DialogContent>
+            </Dialog>
+          )}
+        </TabsContent>
+
         <TabsContent value="revisiones">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">

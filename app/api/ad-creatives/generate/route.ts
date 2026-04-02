@@ -25,6 +25,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { downloadFromDrive } from '@/lib/google-drive'
 import { composeCreative } from '@/lib/ad-creatives/compose'
 import { ensureAdCreativesBucket, uploadAdCreative } from '@/lib/ad-creatives/storage'
+import { guardarRegistroCoste } from '@/lib/costes'
 
 export const maxDuration = 300
 
@@ -36,14 +37,15 @@ type PublicationIntent = 'organic_informative' | 'organic_brand' | 'paid_campaig
 type AdFormat          = '1x1' | '9x16' | '1.91x1'
 
 interface GenerateBody {
-  client_id:          string
-  brief:              string
-  publication_intent: PublicationIntent
-  formats:            AdFormat[]
-  source_content?:    string
-  campaign_name?:     string
-  variation_count?:   number
+  client_id:           string
+  brief:               string
+  publication_intent:  PublicationIntent
+  formats:             AdFormat[]
+  source_content?:     string
+  campaign_name?:      string
+  variation_count?:    number
   source_creative_id?: string
+  contenido_id?:       string
 }
 
 interface CopyVariation {
@@ -445,6 +447,7 @@ export async function POST(request: NextRequest) {
   const {
     client_id, brief, publication_intent, formats,
     source_content, campaign_name, variation_count, source_creative_id,
+    contenido_id,
   } = body
 
   const batchId = crypto.randomUUID()
@@ -466,6 +469,17 @@ export async function POST(request: NextRequest) {
   fal.config({ credentials: process.env.FAL_KEY ?? process.env.FAL_API_KEY })
 
   const supabase = createAdminClient()
+
+  // ── Obtener proyecto_id desde el contenido (para registros de coste) ──────
+  let proyectoId: string | null = null
+  if (contenido_id) {
+    const { data: contData } = await supabase
+      .from('contenidos')
+      .select('proyecto_id')
+      .eq('id', contenido_id)
+      .maybeSingle()
+    proyectoId = contData?.proyecto_id ?? null
+  }
 
   // ── Asegurar bucket de Storage ─────────────────────────────────────────────
   await ensureAdCreativesBucket()
@@ -673,6 +687,7 @@ export async function POST(request: NextRequest) {
               status:            'draft',
               batch_id:          batchId,
               campaign_name:     campaign_name ?? null,
+              contenido_id:      contenido_id ?? null,
               generation_meta: {
                 ...imageMeta,
                 image_prompt:         imagePrompt,
@@ -718,6 +733,30 @@ export async function POST(request: NextRequest) {
   )
 
   console.log(`[ad-creatives] ${allCreatives.length} creativos generados y guardados`)
+
+  // ── Registrar costes FLUX (fire & forget, una entrada por imagen) ─────────
+  const modelKey = selectModel(publication_intent)
+  const creativosConImagen = allCreatives.filter((c) => c.image_url !== null)
+  if (creativosConImagen.length > 0) {
+    Promise.all(
+      creativosConImagen.map((c) =>
+        guardarRegistroCoste({
+          contenido_id   : contenido_id ?? null,
+          proyecto_id    : proyectoId,
+          tipo_operacion : 'ad_creative',
+          agente         : 'flux_pro',
+          modelo         : FAL_MODELS[modelKey],
+          unidades       : 1,
+          coste_usd      : 0.055,
+          metadatos      : {
+            formato           : c.format,
+            campaign_name     : campaign_name ?? null,
+            publication_intent,
+          },
+        }),
+      ),
+    ).catch((e) => console.error('[Costes] Error registrando costes ad_creative:', e))
+  }
 
   return NextResponse.json({
     success:   true,

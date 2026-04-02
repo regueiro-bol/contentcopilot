@@ -2,10 +2,17 @@ import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { buscarContextoRAG } from '@/lib/rag'
+import {
+  calcularCosteClaudeUSD,
+  guardarRegistroCoste,
+  type TipoOperacion,
+} from '@/lib/costes'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
+
+const MODELO_CLAUDE = 'claude-sonnet-4-5'
 
 const SISTEMA_COPILOTO_DEFAULT = `Eres ContentCopilot, un experto en copywriting y estrategia de contenido digital.
 Tu misión es ayudar a agencias de marketing a crear contenido de alta calidad para sus clientes.
@@ -15,11 +22,14 @@ Cuando generes contenido, hazlo directamente sin explicaciones previas a menos q
 /**
  * POST /api/claude
  * Body:
- *   mensajes     array    — historial de mensajes
- *   modo         string   — 'stream' (default) | 'json'
- *   sistema      string?  — system prompt override
- *   max_tokens   number?  — max tokens override
- *   proyecto_id  string?  — si se envía, busca contexto RAG e inyecta en system prompt
+ *   mensajes        array    — historial de mensajes
+ *   modo            string   — 'stream' (default) | 'json'
+ *   sistema         string?  — system prompt override
+ *   max_tokens      number?  — max tokens override
+ *   proyecto_id     string?  — si se envía, busca contexto RAG
+ *   contenido_id    string?  — para registrar el coste asociado al contenido
+ *   tipo_operacion  string?  — tipo de operación para el registro de costes
+ *   agente          string?  — identificador del agente (default: 'claude_api')
  */
 export async function POST(request: NextRequest) {
   const { userId } = await auth()
@@ -38,6 +48,10 @@ export async function POST(request: NextRequest) {
       sistema,
       max_tokens,
       proyecto_id,
+      // Trazabilidad de costes
+      contenido_id,
+      tipo_operacion,
+      agente,
     } = body
 
     const mensajesResueltos = messages ?? mensajes
@@ -51,14 +65,11 @@ export async function POST(request: NextRequest) {
       : SISTEMA_COPILOTO_DEFAULT
 
     // ── Inyección RAG ─────────────────────────────────────────────────────────
-    // Si llega proyecto_id, buscamos los chunks más relevantes para la consulta
-    // y los añadimos al final del system prompt para que Claude los use.
     let systemPrompt = baseSystem
 
     console.log('[RAG] proyecto_id recibido:', proyecto_id ?? '(no enviado)')
 
     if (typeof proyecto_id === 'string' && proyecto_id.trim()) {
-      // La query para RAG es el último mensaje del usuario
       const lastUser = [...mensajesResueltos].reverse().find((m: { role: string }) => m.role === 'user')
       const query = typeof lastUser?.content === 'string'
         ? lastUser.content.substring(0, 1000)
@@ -69,7 +80,6 @@ export async function POST(request: NextRequest) {
       if (query) {
         const contextoRAG = await buscarContextoRAG(proyecto_id.trim(), query, 3)
         console.log('[RAG] contexto devuelto (chars):', contextoRAG?.length ?? 0)
-        console.log('[RAG] primeros 200 chars:', contextoRAG?.substring(0, 200) ?? '(vacío)')
 
         if (contextoRAG) {
           systemPrompt = `${baseSystem}\n\n${contextoRAG}`
@@ -77,11 +87,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Helper para guardar coste (fire & forget, nunca bloquea la respuesta)
+    const tipoOp: TipoOperacion = (tipo_operacion as TipoOperacion) ?? 'copiloto'
+    const agenteId: string = agente ?? 'claude_api'
+
     // ── Modo JSON: respuesta completa sin streaming ───────────────────────────
     if (modo === 'json') {
       const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 1024
       const respuesta = await anthropic.messages.create({
-        model     : 'claude-sonnet-4-5',
+        model     : MODELO_CLAUDE,
         max_tokens: maxTok,
         system    : systemPrompt,
         messages  : mensajesResueltos,
@@ -89,6 +103,20 @@ export async function POST(request: NextRequest) {
 
       const bloque = respuesta.content[0]
       const contenido = bloque.type === 'text' ? bloque.text : ''
+
+      // ── Registrar coste ──
+      const usage = respuesta.usage
+      guardarRegistroCoste({
+        contenido_id  : contenido_id ?? null,
+        proyecto_id   : proyecto_id  ?? null,
+        tipo_operacion: tipoOp,
+        agente        : agenteId,
+        modelo        : MODELO_CLAUDE,
+        tokens_input  : usage.input_tokens,
+        tokens_output : usage.output_tokens,
+        coste_usd     : calcularCosteClaudeUSD(usage.input_tokens, usage.output_tokens),
+      }).catch((e) => console.error('[Costes] Error (json mode):', e))
+
       return NextResponse.json({ contenido })
     }
 
@@ -100,7 +128,7 @@ export async function POST(request: NextRequest) {
       async start(controller) {
         try {
           const streamAnthropic = anthropic.messages.stream({
-            model     : 'claude-sonnet-4-5',
+            model     : MODELO_CLAUDE,
             max_tokens: maxTokStream,
             system    : systemPrompt,
             messages  : mensajesResueltos,
@@ -118,6 +146,26 @@ export async function POST(request: NextRequest) {
 
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
+
+          // ── Registrar coste tras completar el stream ──
+          // No bloquea la respuesta al cliente — el controller ya está cerrado
+          try {
+            const finalMsg = await streamAnthropic.finalMessage()
+            const usage = finalMsg.usage
+            await guardarRegistroCoste({
+              contenido_id  : contenido_id ?? null,
+              proyecto_id   : proyecto_id  ?? null,
+              tipo_operacion: tipoOp,
+              agente        : agenteId,
+              modelo        : MODELO_CLAUDE,
+              tokens_input  : usage.input_tokens,
+              tokens_output : usage.output_tokens,
+              coste_usd     : calcularCosteClaudeUSD(usage.input_tokens, usage.output_tokens),
+            })
+          } catch (e) {
+            console.error('[Costes] Error al registrar coste (stream):', e)
+          }
+
         } catch (error) {
           console.error('Error en stream de Claude:', error)
           controller.error(error)
