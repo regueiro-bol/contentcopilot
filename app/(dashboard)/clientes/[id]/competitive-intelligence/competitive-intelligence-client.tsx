@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Plus, Trash2, RefreshCw, BarChart2, ExternalLink,
@@ -579,12 +579,18 @@ export default function CompetitiveIntelligenceClient({
   latestReport,
 }: Props) {
   const router = useRouter()
-  const [competitors, setCompetitors] = useState<Competitor[]>(initialCompetitors)
-  const [ads, setAds]                 = useState<CompetitorAdRow[]>(initialAds)
-  const [report, setReport]           = useState<CiReportRow | null>(latestReport)
+  const [competitors, setCompetitors]       = useState<Competitor[]>(initialCompetitors)
+  const [ads, setAds]                       = useState<CompetitorAdRow[]>(initialAds)
+  const [report, setReport]                 = useState<CiReportRow | null>(latestReport)
   const [scanning, setScanning]             = useState(false)
   const [scanningGoogle, setScanningGoogle] = useState(false)
   const [toasts, setToasts]                 = useState<Toast[]>([])
+
+  // Sincroniza el estado local cuando router.refresh() trae nuevas props del servidor.
+  // useState no se reinicializa con cambios de props — useEffect lo resuelve.
+  useEffect(() => { setCompetitors(initialCompetitors) }, [initialCompetitors])
+  useEffect(() => { setAds(initialAds) },                 [initialAds])
+  useEffect(() => { setReport(latestReport) },            [latestReport])
 
   function addToast(message: string, type: Toast['type'], id?: string): string {
     const tid = id ?? crypto.randomUUID()
@@ -678,8 +684,14 @@ export default function CompetitiveIntelligenceClient({
       <CompetidoresSection
         clientId={clientId}
         competitors={competitors}
-        onAdd={(c) => setCompetitors((prev) => [...prev, c])}
-        onDelete={(id) => setCompetitors((prev) => prev.filter((c) => c.id !== id))}
+        onAdd={(c) => {
+          setCompetitors((prev) => [...prev, c])  // actualización optimista inmediata
+          router.refresh()                         // sincroniza con el servidor
+        }}
+        onDelete={(id) => {
+          setCompetitors((prev) => prev.filter((c) => c.id !== id))
+          router.refresh()
+        }}
         onScan={handleScan}
         onScanGoogle={handleScanGoogle}
         scanning={scanning}
