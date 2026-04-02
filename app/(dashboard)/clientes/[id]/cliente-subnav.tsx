@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { ChevronRight, CheckCircle2, XCircle, Clock, Image, LayoutGrid } from 'lucide-react'
+import { ChevronRight, CheckCircle2, XCircle, Clock, Image, LayoutGrid, BarChart2 } from 'lucide-react'
 import type { GenerationStatus } from '@/types/brand-assets'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,9 +32,10 @@ interface Props {
 export default function ClienteSubNav({ clientId, clientNombre, generationStatus }: Props) {
   const pathname = usePathname()
   const base = `/clientes/${clientId}`
-  const isBrandAssets  = pathname.startsWith(`${base}/brand-assets`)
-  const isAdCreatives  = pathname.startsWith(`${base}/ad-creatives`)
-  const isFicha        = !isBrandAssets && !isAdCreatives
+  const isBrandAssets       = pathname.startsWith(`${base}/brand-assets`)
+  const isAdCreatives       = pathname.startsWith(`${base}/ad-creatives`)
+  const isCompetencia       = pathname.startsWith(`${base}/competitive-intelligence`)
+  const isFicha             = !isBrandAssets && !isAdCreatives && !isCompetencia
 
   const navItems = [
     { label: 'Ficha',        href: base,                    active: isFicha,       icon: null },
@@ -49,6 +50,12 @@ export default function ClienteSubNav({ clientId, clientNombre, generationStatus
       href:  `${base}/ad-creatives`,
       active: isAdCreatives,
       icon: <LayoutGrid className="h-3.5 w-3.5 text-gray-400" />,
+    },
+    {
+      label: 'Competencia',
+      href:  `${base}/competitive-intelligence`,
+      active: isCompetencia,
+      icon: <BarChart2 className="h-3.5 w-3.5 text-gray-400" />,
     },
   ]
 
