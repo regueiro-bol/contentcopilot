@@ -53,7 +53,7 @@ async function fetchGoogleAds(competitorName: string): Promise<{
     engine:   'google_ads_transparency_center',
     api_key:  apiKey,
     text:     competitorName,
-    region:   'ES',
+    region:   '2724',  // España — código numérico de SerpApi (no 'ES')
     num:      '20',
   })
 
