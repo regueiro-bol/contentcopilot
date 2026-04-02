@@ -6,16 +6,8 @@ import JSZip from 'jszip'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // ─── Route segment config ─────────────────────────────────────────────────────
-// Aumenta el tiempo máximo de ejecución (necesario para archivos grandes)
-export const maxDuration = 60        // segundos (máx. en Vercel Pro)
-// Tamaño máximo del body para este route handler
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb',
-    },
-  },
-}
+// Tiempo máximo de ejecución (App Router — Vercel Pro admite hasta 60s)
+export const maxDuration = 60
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
