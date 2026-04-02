@@ -18,23 +18,29 @@ const SERPAPI_BASE = 'https://serpapi.com/search.json'
 
 interface SerpApiAd {
   advertiser_id?:   string
-  advertiser_name?: string
+  advertiser?:      string    // campo real de la API (no advertiser_name)
+  ad_creative_id?:  string
   format?:          string
-  first_shown?:     number   // Unix timestamp
+  first_shown?:     number    // Unix timestamp
   last_shown?:      number
   image_url?:       string
   video_url?:       string
   description?:     string
   headline?:        string
-  link?:            string   // adstransparency.google.com URL
+  link?:            string    // adstransparency.google.com URL
   impressions_min?: number
   impressions_max?: number
 }
 
 interface SerpApiResponse {
-  error?:       string
-  ad_creatives?: SerpApiAd[]
+  error?:              string
+  ad_creatives?:       SerpApiAd[]
   search_information?: { total_results?: number }
+}
+
+/** Detecta si el page_name es un dominio web (contiene un punto) */
+function isDomain(name: string): boolean {
+  return name.includes('.') && !name.includes(' ')
 }
 
 async function fetchGoogleAds(competitorName: string): Promise<{
@@ -49,19 +55,28 @@ async function fetchGoogleAds(competitorName: string): Promise<{
     }
   }
 
+  // Modo dominio (p.ej. 'academia-geopol.es') o nombre (p.ej. 'Adams Formación')
+  // En ambos casos se usa el parámetro 'text' — SerpApi acepta nombres y dominios.
+  // Región 2724 = España (código numérico de SerpApi Google Ads Transparency Center)
+  const searchMode = isDomain(competitorName) ? 'dominio' : 'nombre'
+  console.log(`[ci-scan-google] Buscando "${competitorName}" por ${searchMode}`)
+
   const params = new URLSearchParams({
-    engine:   'google_ads_transparency_center',
-    api_key:  apiKey,
-    text:     competitorName,
-    region:   '2724',  // España — código numérico de SerpApi (no 'ES')
-    num:      '20',
+    engine:  'google_ads_transparency_center',
+    api_key: apiKey,
+    text:    competitorName,
+    region:  '2724',  // España
+    num:     '20',
   })
 
   try {
     const res  = await fetch(`${SERPAPI_BASE}?${params.toString()}`)
     const json = await res.json() as SerpApiResponse
 
+    // "no results" no es un error — es simplemente 0 anuncios
     if (json.error) {
+      const noResults = json.error.toLowerCase().includes("hasn't returned any results")
+      if (noResults) return { ads: [], error: null }
       return { ads: [], error: `SerpApi error: ${json.error}` }
     }
 
@@ -74,6 +89,13 @@ async function fetchGoogleAds(competitorName: string): Promise<{
 function extractCopyText(ad: SerpApiAd): string | null {
   const parts = [ad.headline, ad.description].filter(Boolean)
   return parts.length > 0 ? parts.join(' — ') : null
+}
+
+/** ID externo estable: usa ad_creative_id de Google si existe, sino construye uno */
+function buildAdIdExternal(ad: SerpApiAd, competitorName: string): string {
+  if (ad.ad_creative_id) return ad.ad_creative_id
+  const base = `${ad.advertiser_id ?? competitorName}_${ad.first_shown ?? Date.now()}`
+  return base.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 120)
 }
 
 export async function POST(request: NextRequest) {
@@ -143,12 +165,8 @@ export async function POST(request: NextRequest) {
     let newForComp = 0
 
     for (const ad of ads) {
-      // Crear un ID externo estable a partir del link o advertiser_id + first_shown
-      const adIdExternal = ad.link
-        ? ad.link.replace('https://adstransparency.google.com/advertiser/', '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 120)
-        : `${ad.advertiser_id ?? comp.page_name}_${ad.first_shown ?? Date.now()}`
-
-      const copyText = extractCopyText(ad)
+      const adIdExternal = buildAdIdExternal(ad, comp.page_name)
+      const copyText     = extractCopyText(ad)
 
       const { error: upsertError, data: upserted } = await supabase
         .from('competitor_ads')
