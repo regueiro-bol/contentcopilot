@@ -162,7 +162,9 @@ function AssetCard({
   const ext = asset.file_name?.split('.').pop()?.toUpperCase() ?? ''
   const shortName = asset.file_name ?? asset.drive_file_id
   const showImage = isPreviewableImage(asset.mime_type) && !imgError
-  const previewUrl = `/api/brand-assets/${asset.id}/preview`
+  const previewUrl = asset.drive_file_id
+    ? `/api/brand-assets/image/${asset.drive_file_id}`
+    : `/api/brand-assets/${asset.id}/preview`
 
   return (
     <div className="rounded-lg border bg-white overflow-hidden">

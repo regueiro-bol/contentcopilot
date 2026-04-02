@@ -484,12 +484,11 @@ export async function POST(request: NextRequest) {
 
   // ── Imagen de referencia para Fal.ai ──────────────────────────────────────
   const referenceImageUrl: string | null = (() => {
-    if (!productAsset) return null
-    const driveUrl = productAsset.drive_url ?? ''
-    if (!driveUrl.includes('drive.google.com')) return driveUrl || null
-    const vercelUrl = process.env.VERCEL_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? ''
-    if (!vercelUrl) return null
-    return `https://${vercelUrl.replace(/^https?:\/\//, '')}/api/brand-assets/${productAsset.id}/preview`
+    if (!productAsset?.drive_file_id) return null
+    // Usamos la URL pública de producción para que Fal.ai pueda acceder a la imagen
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+    if (!appUrl) return null
+    return `${appUrl.replace(/\/$/, '')}/api/brand-assets/image/${productAsset.drive_file_id}`
   })()
 
   // ── Detección de institución ───────────────────────────────────────────────
