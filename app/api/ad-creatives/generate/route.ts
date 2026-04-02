@@ -342,6 +342,44 @@ function buildImagePrompt(params: {
 // Generación de imagen con Fal.ai (solo fondo)
 // ─────────────────────────────────────────────────────────────────────────────
 
+async function callFalai(params: {
+  prompt:            string
+  modelKey:          FalModelKey
+  format:            AdFormat
+  referenceImageUrl?: string | null
+}): Promise<FalImageResult> {
+  const { prompt, modelKey, format, referenceImageUrl } = params
+  const endpoint = FAL_MODELS[modelKey]
+
+  if (modelKey === 'flux') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (await (fal as any).subscribe(endpoint, {
+      input: {
+        prompt,
+        aspect_ratio:     FLUX_ASPECT_RATIO[format],
+        num_images:       1,
+        output_format:    'jpeg',
+        safety_tolerance: '4',
+        enhance_prompt:   true,
+        ...(referenceImageUrl ? { image_url: referenceImageUrl, strength: 0.2 } : {}),
+      },
+    })) as FalImageResult
+  } else {
+    // Nano Banana Pro
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (await (fal as any).subscribe(endpoint, {
+      input: {
+        prompt,
+        aspect_ratio:  NANO_BANANA_ASPECT_RATIO[format],
+        num_images:    1,
+        resolution:    '2K',
+        output_format: 'jpeg',
+        ...(referenceImageUrl ? { image_url: referenceImageUrl } : {}),
+      },
+    })) as FalImageResult
+  }
+}
+
 async function generateBackgroundImage(params: {
   prompt:            string
   modelKey:          FalModelKey
@@ -351,44 +389,40 @@ async function generateBackgroundImage(params: {
   const { prompt, modelKey, format, referenceImageUrl } = params
   const endpoint = FAL_MODELS[modelKey]
 
-  try {
-    let result: FalImageResult
-
-    if (modelKey === 'flux') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      result = (await (fal as any).subscribe(endpoint, {
-        input: {
-          prompt,
-          aspect_ratio:     FLUX_ASPECT_RATIO[format],
-          num_images:       1,
-          output_format:    'jpeg',
-          safety_tolerance: '4',
-          enhance_prompt:   true,
-          ...(referenceImageUrl ? { image_url: referenceImageUrl, strength: 0.2 } : {}),
-        },
-      })) as FalImageResult
-    } else {
-      // Nano Banana Pro
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      result = (await (fal as any).subscribe(endpoint, {
-        input: {
-          prompt,
-          aspect_ratio:  NANO_BANANA_ASPECT_RATIO[format],
-          num_images:    1,
-          resolution:    '2K',
-          output_format: 'jpeg',
-          ...(referenceImageUrl ? { image_url: referenceImageUrl } : {}),
-        },
-      })) as FalImageResult
+  // Intento 1: con imagen de referencia (si existe)
+  if (referenceImageUrl) {
+    try {
+      const result = await callFalai(params)
+      const output   = (result as unknown as { data: FalImageResult })?.data ?? result
+      const imageUrl = output?.images?.[0]?.url ?? output?.image?.url ?? null
+      if (imageUrl) {
+        console.log(`[ad-creatives] Fal.ai OK con referencia (${format})`)
+        return { url: imageUrl, meta: { model: endpoint, format } }
+      }
+    } catch (err) {
+      // La URL de referencia puede ser inaccesible (auth, timeout…) — reintentar sin ella
+      console.warn(
+        `[ad-creatives] Fal.ai falló con referencia (${format}), reintentando sin ella:`,
+        err instanceof Error ? err.message : String(err),
+      )
     }
+  }
 
+  // Intento 2: sin imagen de referencia
+  try {
+    const result   = await callFalai({ prompt, modelKey, format, referenceImageUrl: null })
     const output   = (result as unknown as { data: FalImageResult })?.data ?? result
     const imageUrl = output?.images?.[0]?.url ?? output?.image?.url ?? null
 
+    if (!imageUrl) {
+      console.error(`[ad-creatives] Fal.ai devolvió respuesta vacía (${endpoint}, ${format})`)
+    } else {
+      console.log(`[ad-creatives] Fal.ai OK sin referencia (${format})`)
+    }
     return { url: imageUrl, meta: { model: endpoint, format } }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err)
-    console.error(`[ad-creatives] Fal.ai error (${endpoint}, ${format}):`, errorMsg)
+    console.error(`[ad-creatives] Fal.ai error definitivo (${endpoint}, ${format}):`, errorMsg)
     return { url: null, meta: { model: endpoint, format, error: errorMsg } }
   }
 }
@@ -465,9 +499,10 @@ export async function POST(request: NextRequest) {
   const styleKeywords = (contextData?.style_keywords as string[] | null)            ?? []
   const restrictions  = (contextData?.restrictions   as string | null)              ?? null
 
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[AD-GEN] Brand context colores:', contextData?.colors ?? '(sin brand_context)')
-  }
+  // Logging defensivo — siempre visible en producción para diagnosticar fallos
+  console.log(
+    `[ad-creatives] Cliente: "${clienteData.nombre}" | brand_context: ${contextData ? 'sí' : 'NO (usando defaults)'} | colores: ${colors.length} | assets: ${(assetsData ?? []).length}`,
+  )
 
   // ── Descargar logo y fuente desde Drive ───────────────────────────────────
   const logoAsset    = (assetsData ?? []).find((a) => a.asset_type === 'logo')
@@ -569,6 +604,10 @@ export async function POST(request: NextRequest) {
           // 3. Componer PNG final con sharp
           let finalImageUrl: string | null = null
 
+          if (!bgUrl) {
+            console.error(`[ad-creatives] bgUrl null — Fal.ai no generó imagen para v${variationIdx} ${format}. Creativo guardado sin imagen.`)
+          }
+
           if (bgUrl) {
             try {
               const composedBuffer = await composeCreative({
@@ -592,13 +631,20 @@ export async function POST(request: NextRequest) {
                 variationIndex: variationIdx,
               })
 
-              finalImageUrl = storageUrl ?? bgUrl  // fallback a URL de Fal.ai si falla el upload
+              if (storageUrl) {
+                finalImageUrl = storageUrl
+                console.log(`[ad-creatives] Subido a Storage: v${variationIdx} ${format}`)
+              } else {
+                // Upload falló — usar URL de Fal.ai como fallback (expira, pero muestra algo)
+                finalImageUrl = bgUrl
+                console.warn(`[ad-creatives] Upload Storage falló v${variationIdx} ${format} — usando URL Fal.ai`)
+              }
             } catch (composeErr) {
               console.error(
-                `[ad-creatives] Error componiendo creativo v${variationIdx} ${format}:`,
-                composeErr instanceof Error ? composeErr.message : composeErr,
+                `[ad-creatives] Error sharp v${variationIdx} ${format}:`,
+                composeErr instanceof Error ? composeErr.message : String(composeErr),
               )
-              finalImageUrl = bgUrl  // fallback: URL de Fal.ai (expira pero es mejor que null)
+              finalImageUrl = bgUrl  // fallback: URL de Fal.ai
             }
           }
 
