@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@clerk/nextjs'
 import { ChevronRight, ChevronDown, Sparkles, ExternalLink, FileText, Clock, MessageSquare, RefreshCw, Loader2, PenLine, Wand2, Bot, LayoutGrid, X } from 'lucide-react'
@@ -564,6 +564,9 @@ export default function ContenidoDetalleClient({
   const [notasRevision, setNotasRevision] = useState(contenido.notas_revision ?? '')
 
   // ── Tab Social ────────────────────────────────────────────────────────────
+  type VideoGenerado = { id?: string; url: string; tipo: 'reel' | 'story'; duracion: number; num_slides: number; status?: string }
+  type SlideForm     = { texto_principal: string; texto_secundario: string; imagen_prompt: string }
+
   const [nombreCampana, setNombreCampana] = useState(contenido.titulo)
   const [briefSocial, setBriefSocial] = useState(
     [contenido.titulo, contenido.keyword_principal ? `Keyword: ${contenido.keyword_principal}` : '']
@@ -577,9 +580,66 @@ export default function ContenidoDetalleClient({
   const [piezasNuevas, setPiezasNuevas] = useState<PiezaSocial[]>([])
   const [lightboxSocialUrl, setLightboxSocialUrl] = useState<string | null>(null)
 
+  // ── Tab Social — Vídeos ───────────────────────────────────────────────────
+  const [tipoVideo,             setTipoVideo]             = useState<'reel' | 'story'>('reel')
+  const [slidesVideo,           setSlidesVideo]           = useState<SlideForm[]>([
+    { texto_principal: '', texto_secundario: '', imagen_prompt: '' },
+  ])
+  const [duracionSlide,         setDuracionSlide]         = useState<3 | 4 | 5 | 6>(4)
+  const [generandoVideo,        setGenerandoVideo]        = useState(false)
+  const [progresoVideo,         setProgresoVideo]         = useState('')
+  const [errorVideo,            setErrorVideo]            = useState<string | null>(null)
+  const [galeriaVideos,         setGaleriaVideos]         = useState<VideoGenerado[]>([])
+  const [videoPreviewUrl,       setVideoPreviewUrl]       = useState<string | null>(null)
+  const [extrayendoPuntos,       setExtrayendoPuntos]       = useState(false)
+  const [confirmEliminarVideoId, setConfirmEliminarVideoId] = useState<string | null>(null)
+  const [savingVideoId,          setSavingVideoId]          = useState<string | null>(null)
+
+  // ── Coste reactivo ────────────────────────────────────────────────────────
+  const [costesState, setCostesState] = useState<CostesContenido | null>(costes ?? null)
+
+  const refreshCoste = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/costes/contenido/${contenido.id}`)
+      if (!res.ok) return
+      const { costes: c } = await res.json() as { costes: CostesContenido | null }
+      if (c) setCostesState(c)
+    } catch { /* silently — el badge simplemente no se actualiza */ }
+  }, [contenido.id])
+
   // ── Tab Imagen — Galería ──────────────────────────────────────────────────
-  type ImagenGaleria = { url: string; formato: string }
+  type ImagenGaleria = { id?: string; url: string; formato: string }
   const [galeriaImagenes, setGaleriaImagenes] = useState<ImagenGaleria[]>([])
+
+  // Cargar imágenes guardadas al montar el componente
+  useEffect(() => {
+    async function cargarImagenesGuardadas() {
+      try {
+        const res = await fetch(
+          `/api/ad-creatives?contenido_id=${contenido.id}&campaign_name=${encodeURIComponent('Imagen destacada')}`
+        )
+        if (!res.ok) return
+        const { imagenes } = await res.json() as { imagenes: ImagenGaleria[] }
+        if (Array.isArray(imagenes) && imagenes.length > 0) {
+          setGaleriaImagenes(imagenes.slice(0, 4))
+        }
+      } catch { /* sin persistencia previa — galería vacía */ }
+    }
+    cargarImagenesGuardadas()
+  }, [contenido.id])
+  // Cargar vídeos guardados al montar el componente
+  useEffect(() => {
+    async function cargarVideos() {
+      try {
+        const res = await fetch(`/api/video?contenido_id=${contenido.id}`)
+        if (!res.ok) return
+        const { videos } = await res.json() as { videos: VideoGenerado[] }
+        if (Array.isArray(videos)) setGaleriaVideos(videos)
+      } catch { /* sin vídeos previos */ }
+    }
+    cargarVideos()
+  }, [contenido.id])
+
   const [lightboxImagenUrl, setLightboxImagenUrl] = useState<string | null>(null)
   const [confirmEliminarIdx, setConfirmEliminarIdx] = useState<number | null>(null)
   const [promptImagen, setPromptImagen] = useState('')
@@ -589,6 +649,7 @@ export default function ContenidoDetalleClient({
   const [variantesImagen, setVariantesImagen] = useState<1 | 2 | 3>(1)
   const [generandoImagen, setGenerandoImagen] = useState(false)
   const [errorImagen, setErrorImagen] = useState<string | null>(null)
+  const [savingImagenIdx, setSavingImagenIdx] = useState<number | null>(null)
 
   const redactorNombre = autores.find((a) => a.id === contenido.redactor_id)?.nombre
 
@@ -706,6 +767,8 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
       setShowWelcome(false)
       // Guardar automáticamente en Supabase (sin el bloque de notas)
       await actualizarTextoContenido(contenido.id, textoBorradorLimpio)
+      // Actualizar badge de coste
+      await refreshCoste()
       // Abrir copiloto para revisar/editar el borrador generado
       router.push(`/copiloto?contenido=${contenido.id}`)
     } catch (e) {
@@ -806,6 +869,8 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
       }))
       setPiezasNuevas(prev => [...nuevas, ...prev])
       router.refresh()
+      // Actualizar badge de coste (ad creatives FLUX + copy Claude)
+      refreshCoste()
     } catch (e) {
       setErrorSocial(e instanceof Error ? e.message : 'Error inesperado')
     } finally {
@@ -889,13 +954,178 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error al generar')
       const urls: string[] = data.urls ?? []
+      if (urls.length === 0) throw new Error('No se generaron imágenes')
+
+      // Añadir a la galería SIN guardar en BD — el usuario usará el botón "Guardar"
       setGaleriaImagenes((prev) => {
-        const combined = [...urls.map((url) => ({ url, formato: formatoImagen })), ...prev]
-        return combined.slice(0, 4)
+        const nuevas: ImagenGaleria[] = urls.map((url) => ({ url, formato: formatoImagen }))
+        return [...nuevas, ...prev].slice(0, 4)
       })
     } catch (e) {
       setErrorImagen(e instanceof Error ? e.message : 'Error al generar la imagen')
     } finally { setGenerandoImagen(false) }
+  }
+
+  async function handleGuardarImagen(idx: number) {
+    const img = galeriaImagenes[idx]
+    console.log('[IMG SAVE] Intentando guardar imagen:', img.url)
+    console.log('[IMG SAVE] contenido.id:', contenido.id)
+    console.log('[IMG SAVE] contenido.cliente_id:', (contenido as Record<string, unknown>).cliente_id ?? 'no disponible en prop')
+    console.log('[IMG SAVE] cliente?.id:', cliente?.id ?? 'undefined — sin cliente asociado')
+    console.log('[IMG SAVE] img.id (ya guardada?):', img.id ?? 'undefined — no guardada')
+
+    if (img.id) {
+      console.log('[IMG SAVE] SALIDA TEMPRANA: imagen ya tiene id, ya está guardada')
+      return
+    }
+    if (!cliente?.id) {
+      console.log('[IMG SAVE] SALIDA TEMPRANA: cliente es null o sin id — no se puede guardar')
+      return
+    }
+
+    setSavingImagenIdx(idx)
+    const datos = {
+      contenido_id      : contenido.id,
+      client_id         : cliente.id,
+      image_url         : img.url,
+      format            : img.formato,
+      status            : 'draft',
+      campaign_name     : `Imagen destacada — ${contenido.titulo}`,
+      publication_intent: 'organic_informative',
+      copy              : { headline: contenido.titulo, body: '', cta: '' },
+    }
+    console.log('[IMG SAVE] Datos a insertar:', JSON.stringify(datos))
+    try {
+      const res = await fetch('/api/ad-creatives', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify(datos),
+      })
+      const result = await res.json()
+      console.log('[IMG SAVE] Resultado:', JSON.stringify(result))
+      console.log('[IMG SAVE] res.ok:', res.ok, '— status:', res.status)
+      if (!res.ok) throw new Error(result?.error ?? 'Error al guardar')
+      const { id } = result as { id: string }
+      setGaleriaImagenes((prev) =>
+        prev.map((item, i) => i === idx ? { ...item, id } : item)
+      )
+      await refreshCoste()
+    } catch (e) {
+      console.error('[IMG SAVE] Error capturado:', e)
+      // guardar falló — el botón vuelve a estar disponible
+    } finally { setSavingImagenIdx(null) }
+  }
+
+  // ── Handlers de vídeo ────────────────────────────────────────────────────
+
+  /** Llama a Claude para extraer los puntos clave del artículo y rellenar slides. */
+  async function handleExtraerPuntosClaveVideo() {
+    if (!texto.trim()) return
+    setExtrayendoPuntos(true)
+    try {
+      const maxSlides = tipoVideo === 'story' ? 2 : 5
+      const res = await fetch('/api/claude', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          system: `Extrae los ${maxSlides} puntos más impactantes de este artículo para usar en un ${tipoVideo === 'reel' ? 'Reel' : 'Story'} de Instagram. Para cada punto devuelve: - texto_principal: frase corta impactante (máx 8 palabras) - texto_secundario: frase complementaria (máx 12 palabras). Solo devuelve un JSON array con objetos {texto_principal, texto_secundario}, sin explicaciones ni markdown.`,
+          messages      : [{ role: 'user', content: texto.slice(0, 3000) }],
+          modo          : 'json',
+          max_tokens    : 600,
+          proyecto_id   : contenido.proyecto_id ?? null,
+          contenido_id  : contenido.id,
+          tipo_operacion: 'copiloto',
+          agente        : 'claude_api',
+        }),
+      })
+      const data = await res.json()
+      const raw: string = data.contenido ?? data.texto ?? ''
+      const jsonMatch = raw.match(/\[[\s\S]*?\]/)
+      if (!jsonMatch) throw new Error('No se pudo parsear la respuesta')
+      const puntos = JSON.parse(jsonMatch[0]) as Array<{ texto_principal: string; texto_secundario?: string }>
+      const basePrompt = promptImagen.trim() || contenido.titulo
+      setSlidesVideo(
+        puntos.slice(0, maxSlides).map((p) => ({
+          texto_principal : p.texto_principal?.trim()  ?? '',
+          texto_secundario: p.texto_secundario?.trim() ?? '',
+          imagen_prompt   : basePrompt,
+        }))
+      )
+    } catch (e) {
+      console.error('[Puntos clave vídeo]', e)
+    } finally { setExtrayendoPuntos(false) }
+  }
+
+  /** Llama a /api/video/generate y añade el vídeo a la galería. */
+  async function handleGenerarVideo() {
+    if (!cliente?.id) return
+    const slidesValidos = slidesVideo.filter(
+      (s) => s.texto_principal.trim() && s.imagen_prompt.trim()
+    )
+    if (slidesValidos.length === 0) return
+
+    setGenerandoVideo(true)
+    setErrorVideo(null)
+    setProgresoVideo('Generando imágenes con IA…')
+
+    try {
+      const res = await fetch('/api/video/generate', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          contenido_id  : contenido.id,
+          cliente_id    : cliente.id,
+          tipo          : tipoVideo,
+          slides        : slidesValidos,
+          duracion_slide: duracionSlide,
+        }),
+      })
+      setProgresoVideo('Componiendo vídeo…')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al generar el vídeo')
+
+      const nuevo: VideoGenerado = {
+        id        : data.id ?? undefined,
+        url       : data.video_url,
+        tipo      : tipoVideo,
+        duracion  : data.duracion,
+        num_slides: slidesValidos.length,
+        status    : 'draft',
+      }
+      setGaleriaVideos((prev) => [nuevo, ...prev])
+      await refreshCoste()
+    } catch (e) {
+      setErrorVideo(e instanceof Error ? e.message : 'Error al generar el vídeo')
+    } finally {
+      setGenerandoVideo(false)
+      setProgresoVideo('')
+    }
+  }
+
+  /** Marca un vídeo como 'approved' — equivalente a "Guardar". */
+  async function handleGuardarVideo(id: string) {
+    setSavingVideoId(id)
+    try {
+      const res = await fetch(`/api/video/${id}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ status: 'approved' }),
+      })
+      if (!res.ok) throw new Error('Error al guardar')
+      setGaleriaVideos((prev) =>
+        prev.map((v) => v.id === id ? { ...v, status: 'approved' } : v)
+      )
+    } catch { /* botón vuelve a estar disponible */ }
+    finally { setSavingVideoId(null) }
+  }
+
+  /** Elimina un vídeo de la BD + Storage. */
+  async function handleEliminarVideo(id: string) {
+    try {
+      await fetch(`/api/video/${id}`, { method: 'DELETE' })
+      setGaleriaVideos((prev) => prev.filter((v) => v.id !== id))
+    } catch { /* silently fail */ }
+    setConfirmEliminarVideoId(null)
   }
 
   return (
@@ -941,11 +1171,11 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
             {contenido.keyword_principal && (
               <span className="text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full font-medium">{contenido.keyword_principal}</span>
             )}
-            {/* Badge de coste con tooltip */}
-            {costes !== null && (
+            {/* Badge de coste con tooltip — solo visible si hay coste registrado */}
+            {costesState !== null && costesState.coste_total > 0 && (
               <div className="relative group">
                 <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full font-medium cursor-default select-none">
-                  💰 ${(costes.coste_total).toFixed(4)}
+                  💰 ${costesState.coste_total.toFixed(4)}
                 </span>
                 {/* Tooltip */}
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 hidden group-hover:block pointer-events-none">
@@ -954,20 +1184,20 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                     <div className="space-y-1">
                       <div className="flex justify-between gap-4">
                         <span className="text-gray-400">Texto (Claude)</span>
-                        <span className="font-mono">${(costes.coste_texto).toFixed(4)}</span>
+                        <span className="font-mono">${costesState.coste_texto.toFixed(4)}</span>
                       </div>
                       <div className="flex justify-between gap-4">
                         <span className="text-gray-400">Imágenes (FLUX)</span>
-                        <span className="font-mono">${(costes.coste_imagenes).toFixed(4)}</span>
+                        <span className="font-mono">${costesState.coste_imagenes.toFixed(4)}</span>
                       </div>
                       <div className="flex justify-between gap-4">
                         <span className="text-gray-400">Embeddings RAG</span>
-                        <span className="font-mono">${(costes.coste_rag).toFixed(4)}</span>
+                        <span className="font-mono">${costesState.coste_rag.toFixed(4)}</span>
                       </div>
                     </div>
                     <div className="border-t border-gray-700 mt-1.5 pt-1.5 flex justify-between gap-4">
                       <span className="font-semibold text-gray-100">Total</span>
-                      <span className="font-mono font-bold">${(costes.coste_total).toFixed(4)}</span>
+                      <span className="font-mono font-bold">${costesState.coste_total.toFixed(4)}</span>
                     </div>
                   </div>
                   {/* Flecha del tooltip */}
@@ -1673,6 +1903,327 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                     <p className="text-sm">Las piezas generadas aparecerán aquí</p>
                   </div>
                 )}
+
+                {/* ── Sección Vídeos ── */}
+                <div className="pt-2">
+                  <Separator className="mb-5" />
+
+                  {/* Encabezado */}
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-base">🎬</span>
+                    <p className="text-sm font-bold text-gray-800">Generador de Reels y Stories</p>
+                  </div>
+
+                  <Card>
+                    <CardContent className="pt-5 space-y-4">
+
+                      {/* Tipo de vídeo */}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-gray-600">Tipo de vídeo</p>
+                        <div className="flex gap-2">
+                          {([
+                            { value: 'reel',  label: 'Reel',  desc: '15–30s · 2–5 slides' },
+                            { value: 'story', label: 'Story', desc: '7–10s · 1–2 slides'  },
+                          ] as const).map((t) => (
+                            <button
+                              key={t.value}
+                              onClick={() => {
+                                setTipoVideo(t.value)
+                                // Ajustar slides al rango válido
+                                setSlidesVideo((prev) => {
+                                  const max = t.value === 'story' ? 2 : 5
+                                  const min = 1
+                                  const adjusted = prev.slice(0, max)
+                                  return adjusted.length >= min ? adjusted : [
+                                    { texto_principal: '', texto_secundario: '', imagen_prompt: '' }
+                                  ]
+                                })
+                              }}
+                              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border transition-colors text-left ${
+                                tipoVideo === t.value
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                              }`}
+                            >
+                              <div className="font-bold">{t.label}</div>
+                              <div className={`text-[10px] mt-0.5 ${tipoVideo === t.value ? 'opacity-75' : 'text-gray-400'}`}>{t.desc}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Slides */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-semibold text-gray-600">
+                            Slides ({slidesVideo.length}/{tipoVideo === 'story' ? 2 : 5})
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={handleExtraerPuntosClaveVideo}
+                              disabled={extrayendoPuntos || !texto.trim()}
+                              className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1"
+                            >
+                              {extrayendoPuntos ? (
+                                <><Loader2 className="h-3 w-3 animate-spin" />Extrayendo…</>
+                              ) : (
+                                <><Sparkles className="h-3 w-3" />Extraer puntos clave</>
+                              )}
+                            </button>
+                            {slidesVideo.length < (tipoVideo === 'story' ? 2 : 5) && (
+                              <button
+                                onClick={() => setSlidesVideo((prev) => [
+                                  ...prev,
+                                  { texto_principal: '', texto_secundario: '', imagen_prompt: promptImagen || contenido.titulo },
+                                ])}
+                                className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-md transition-colors"
+                              >
+                                + Slide
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {slidesVideo.map((slide, i) => (
+                          <div key={i} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                                Slide {i + 1}
+                              </span>
+                              {slidesVideo.length > 1 && (
+                                <button
+                                  onClick={() => setSlidesVideo((prev) => prev.filter((_, idx) => idx !== i))}
+                                  className="text-[10px] text-red-500 hover:text-red-700"
+                                >
+                                  ✕ Eliminar
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Texto principal */}
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-semibold text-gray-500">
+                                Texto principal <span className="text-gray-400">(máx 8 palabras)</span>
+                              </label>
+                              <Input
+                                value={slide.texto_principal}
+                                onChange={(e) => setSlidesVideo((prev) =>
+                                  prev.map((s, idx) => idx === i ? { ...s, texto_principal: e.target.value } : s)
+                                )}
+                                placeholder="Frase impactante corta…"
+                                className="text-xs h-8"
+                              />
+                            </div>
+
+                            {/* Texto secundario */}
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-semibold text-gray-500">
+                                Texto secundario <span className="text-gray-400">(máx 12 palabras, opcional)</span>
+                              </label>
+                              <Input
+                                value={slide.texto_secundario}
+                                onChange={(e) => setSlidesVideo((prev) =>
+                                  prev.map((s, idx) => idx === i ? { ...s, texto_secundario: e.target.value } : s)
+                                )}
+                                placeholder="Frase complementaria opcional…"
+                                className="text-xs h-8"
+                              />
+                            </div>
+
+                            {/* Prompt de imagen */}
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-semibold text-gray-500">
+                                Prompt de imagen <span className="text-gray-400">(en inglés para FLUX)</span>
+                              </label>
+                              <textarea
+                                value={slide.imagen_prompt}
+                                onChange={(e) => setSlidesVideo((prev) =>
+                                  prev.map((s, idx) => idx === i ? { ...s, imagen_prompt: e.target.value } : s)
+                                )}
+                                rows={2}
+                                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                                placeholder="Professional photo of… cinematic lighting…"
+                              />
+                            </div>
+
+                            {/* Vista previa del slide */}
+                            {(slide.texto_principal || slide.texto_secundario) && (
+                              <div className="relative rounded-lg overflow-hidden bg-gradient-to-b from-gray-700 to-gray-900 aspect-[9/16] max-w-[80px] flex items-end pb-2 px-1.5">
+                                <div className="space-y-0.5 w-full">
+                                  {slide.texto_principal && (
+                                    <p className="text-white text-[6px] font-bold text-center leading-tight line-clamp-2">
+                                      {slide.texto_principal}
+                                    </p>
+                                  )}
+                                  {slide.texto_secundario && (
+                                    <p className="text-gray-300 text-[5px] text-center leading-tight line-clamp-2">
+                                      {slide.texto_secundario}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Duración por slide */}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-gray-600">Duración por slide</p>
+                        <div className="flex gap-2">
+                          {([3, 4, 5, 6] as const).map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => setDuracionSlide(s)}
+                              className={`h-9 px-3 rounded-lg text-sm font-bold border transition-colors ${
+                                duracionSlide === s
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                              }`}
+                            >
+                              {s}s
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-gray-400">
+                          Duración total estimada: {slidesVideo.length * duracionSlide}s
+                        </p>
+                      </div>
+
+                      {/* Error */}
+                      {errorVideo && (
+                        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                          {errorVideo}
+                        </p>
+                      )}
+
+                      {/* Aviso sin cliente */}
+                      {!cliente?.id && (
+                        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          No hay cliente asociado — no se puede generar el vídeo.
+                        </p>
+                      )}
+
+                      {/* Botón Generar */}
+                      <Button
+                        onClick={handleGenerarVideo}
+                        disabled={
+                          generandoVideo ||
+                          !cliente?.id ||
+                          slidesVideo.every((s) => !s.texto_principal.trim() || !s.imagen_prompt.trim())
+                        }
+                        className="w-full gap-2"
+                      >
+                        {generandoVideo ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            {progresoVideo || 'Generando vídeo… (1–2 minutos)'}
+                          </>
+                        ) : (
+                          <>
+                            <span>🎬</span>
+                            Generar vídeo
+                          </>
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
+
+                  {/* Galería de vídeos generados */}
+                  {galeriaVideos.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                        Vídeos generados ({galeriaVideos.length})
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {galeriaVideos.map((v, i) => {
+                          const isGuardado  = v.status === 'approved'
+                          const isSaving    = savingVideoId === v.id
+                          return (
+                            <div
+                              key={v.id ?? i}
+                              className={`rounded-xl border overflow-hidden bg-white transition-colors ${
+                                isGuardado ? 'border-green-300' : 'border-gray-200'
+                              }`}
+                            >
+                              {/* Miniatura / placeholder */}
+                              <div className="relative aspect-[9/16] bg-gradient-to-b from-gray-800 to-gray-950 flex flex-col items-center justify-center gap-2">
+                                <span className="text-2xl">{v.tipo === 'reel' ? '🎬' : '📱'}</span>
+                                <span className="text-[10px] text-gray-300 font-semibold uppercase tracking-wide">
+                                  {v.tipo === 'reel' ? 'Reel' : 'Story'}
+                                </span>
+                                <span className="text-[10px] text-gray-400">{v.duracion}s · {v.num_slides} slides</span>
+                                {/* Badge "Guardado" */}
+                                {isGuardado && (
+                                  <span className="absolute top-2 left-2 text-[9px] font-bold text-white bg-green-500 px-1.5 py-0.5 rounded-full">
+                                    ✓ Guardado
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Acciones */}
+                              <div className="p-2 space-y-1.5">
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  <button
+                                    onClick={() => setVideoPreviewUrl(v.url)}
+                                    className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-md transition-colors"
+                                  >
+                                    ▶ Previsualizar
+                                  </button>
+                                  <a
+                                    href={v.url}
+                                    download
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-md transition-colors"
+                                  >
+                                    ⬇ Descargar
+                                  </a>
+                                  {/* Botón Guardar — solo si no está guardado */}
+                                  {v.id && !isGuardado && (
+                                    <button
+                                      onClick={() => handleGuardarVideo(v.id!)}
+                                      disabled={isSaving}
+                                      className="text-[10px] font-semibold text-green-700 bg-green-50 hover:bg-green-100 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                                    >
+                                      {isSaving ? '…' : 'Guardar'}
+                                    </button>
+                                  )}
+                                  {v.id && (
+                                    confirmEliminarVideoId === v.id ? (
+                                      <div className="flex gap-1 w-full mt-1">
+                                        <button
+                                          onClick={() => handleEliminarVideo(v.id!)}
+                                          className="flex-1 text-[10px] font-semibold text-white bg-red-500 hover:bg-red-600 py-1 rounded-md"
+                                        >
+                                          Confirmar
+                                        </button>
+                                        <button
+                                          onClick={() => setConfirmEliminarVideoId(null)}
+                                          className="flex-1 text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 py-1 rounded-md"
+                                        >
+                                          Cancelar
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => setConfirmEliminarVideoId(v.id!)}
+                                        className="text-[10px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-md transition-colors"
+                                      >
+                                        🗑
+                                      </button>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
               </div>
             )
           })()}
@@ -1684,6 +2235,23 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
             <DialogContent className="max-w-3xl p-2 bg-black border-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={lightboxSocialUrl} alt="" className="w-full max-h-[80vh] object-contain rounded-lg" />
+            </DialogContent>
+          </Dialog>
+        )}
+
+        {/* Modal preview de vídeo */}
+        {videoPreviewUrl && (
+          <Dialog open={!!videoPreviewUrl} onOpenChange={() => setVideoPreviewUrl(null)}>
+            <DialogContent className="max-w-sm p-2 bg-black border-0">
+              <div className="relative">
+                <video
+                  src={videoPreviewUrl}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="w-full rounded-lg max-h-[80vh]"
+                />
+              </div>
             </DialogContent>
           </Dialog>
         )}
@@ -1705,70 +2273,98 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                 </CardHeader>
                 <CardContent>
                   <div className={`grid gap-3 ${galeriaImagenes.length === 1 ? 'grid-cols-1 max-w-sm' : 'grid-cols-2'}`}>
-                    {galeriaImagenes.map((img, i) => (
-                      <div key={i} className="rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
-                        {/* Thumbnail — click abre lightbox */}
-                        <button
-                          className="block w-full"
-                          onClick={() => setLightboxImagenUrl(img.url)}
+                    {galeriaImagenes.map((img, i) => {
+                      const isGuardada = !!img.id
+                      const isSaving   = savingImagenIdx === i
+                      return (
+                        <div
+                          key={img.id ?? `tmp-${i}`}
+                          className={`rounded-xl border overflow-hidden bg-white shadow-sm transition-colors ${
+                            isGuardada ? 'border-green-300' : 'border-gray-200'
+                          }`}
                         >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={img.url}
-                            alt={`Imagen ${i + 1}`}
-                            className="w-full aspect-video object-contain bg-gray-50"
-                          />
-                        </button>
-                        {/* Footer */}
-                        <div className="px-3 py-2 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 shrink-0">
-                              {img.formato}px
-                            </span>
-                            <span className="text-[10px] text-gray-400 truncate">Imagen {i + 1}</span>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {/* Descargar */}
-                            <a
-                              href={img.url}
-                              download
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-md transition-colors"
-                            >
-                              ⬇
-                            </a>
-                            {/* Eliminar */}
-                            {confirmEliminarIdx === i ? (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    setGaleriaImagenes((prev) => prev.filter((_, idx) => idx !== i))
-                                    setConfirmEliminarIdx(null)
-                                  }}
-                                  className="text-[10px] font-semibold text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded-md transition-colors"
-                                >
-                                  Confirmar
-                                </button>
-                                <button
-                                  onClick={() => setConfirmEliminarIdx(null)}
-                                  className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-md transition-colors"
-                                >
-                                  Cancelar
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() => setConfirmEliminarIdx(i)}
-                                className="text-[10px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-md transition-colors"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
+                          {/* Thumbnail — click abre lightbox */}
+                          <button
+                            className="block w-full relative"
+                            onClick={() => setLightboxImagenUrl(img.url)}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={img.url}
+                              alt={`Imagen ${i + 1}`}
+                              className="w-full aspect-video object-contain bg-gray-50"
+                            />
+                            {/* Badge "Guardada" superpuesto */}
+                            {isGuardada && (
+                              <span className="absolute top-2 right-2 text-[10px] font-semibold text-green-700 bg-green-100 border border-green-300 px-1.5 py-0.5 rounded-full pointer-events-none">
+                                ✓ Guardada
+                              </span>
                             )}
+                          </button>
+                          {/* Footer */}
+                          <div className="px-3 py-2 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 shrink-0">
+                                {img.formato}px
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {/* Botón Guardar — solo en imágenes no persistidas */}
+                              {!isGuardada && (
+                                <button
+                                  onClick={() => handleGuardarImagen(i)}
+                                  disabled={isSaving || !cliente?.id}
+                                  className="text-[10px] font-semibold text-green-700 bg-green-50 hover:bg-green-100 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                                >
+                                  {isSaving ? '…' : 'Guardar'}
+                                </button>
+                              )}
+                              {/* Descargar */}
+                              <a
+                                href={img.url}
+                                download
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-md transition-colors"
+                              >
+                                ⬇
+                              </a>
+                              {/* Eliminar */}
+                              {confirmEliminarIdx === i ? (
+                                <>
+                                  <button
+                                    onClick={async () => {
+                                      if (img.id) {
+                                        try { await fetch(`/api/ad-creatives/${img.id}`, { method: 'DELETE' }) }
+                                        catch { /* continuar */ }
+                                      }
+                                      setGaleriaImagenes((prev) => prev.filter((_, idx) => idx !== i))
+                                      setConfirmEliminarIdx(null)
+                                    }}
+                                    className="text-[10px] font-semibold text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded-md transition-colors"
+                                  >
+                                    Confirmar
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmEliminarIdx(null)}
+                                    className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-md transition-colors"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  onClick={() => setConfirmEliminarIdx(i)}
+                                  className="text-[10px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-md transition-colors"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                   {galeriaImagenes.length >= 4 && (
                     <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">

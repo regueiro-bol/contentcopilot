@@ -31,6 +31,8 @@ export type TipoOperacion =
   | 'rag_embedding'  // embeddings para el índice RAG
   | 'imagen_flux'    // imagen destacada con FLUX
   | 'ad_creative'    // pieza social con FLUX
+  | 'video_reel'     // reel generado con FLUX + FFmpeg
+  | 'video_story'    // story generado con FLUX + FFmpeg
 
 // ─── Cálculo ─────────────────────────────────────────────────────────────────
 
