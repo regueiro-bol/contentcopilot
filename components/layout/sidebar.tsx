@@ -13,6 +13,7 @@ import {
   Sparkles,
   ClipboardList,
   Calculator,
+  TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -51,6 +52,11 @@ const navItems = [
     titulo: 'Agentes',
     href: '/agentes',
     icono: Cpu,
+  },
+  {
+    titulo: 'Estrategia',
+    href: '/strategy',
+    icono: TrendingUp,
   },
   {
     titulo: 'Costes',
