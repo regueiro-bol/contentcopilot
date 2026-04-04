@@ -40,7 +40,7 @@ export default async function MapaPage({ params }: PageProps) {
   // ── Cargar el mapa más reciente para la sesión ─────────────
   const { data: map } = await supabase
     .from('content_maps')
-    .select('id, nombre, status, created_at, config')
+    .select('id, nombre, status, created_at, config, client_id')
     .eq('session_id', params.sessionId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -100,6 +100,7 @@ export default async function MapaPage({ params }: PageProps) {
           client_nombre : String(session.client_nombre ?? '—'),
           status        : String(session.status ?? 'draft'),
         }}
+        clientId={map ? String(map.client_id) : null}
         map={map ? {
           id       : String(map.id),
           nombre   : String(map.nombre ?? ''),

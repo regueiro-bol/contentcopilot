@@ -43,9 +43,10 @@ interface MapInfo {
 }
 
 interface Props {
-  session: SessionInfo
-  map    : MapInfo | null
-  items  : MapItem[]
+  session : SessionInfo
+  clientId: string | null
+  map     : MapInfo | null
+  items   : MapItem[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -126,7 +127,7 @@ function exportarCSV(items: MapItem[]) {
 // Componente principal
 // ─────────────────────────────────────────────────────────────
 
-export default function MapaClient({ session, map, items }: Props) {
+export default function MapaClient({ session, clientId, map, items }: Props) {
   const router = useRouter()
 
   // ── Estado: generar nuevo mapa ─────────────────────────────
@@ -135,6 +136,41 @@ export default function MapaClient({ session, map, items }: Props) {
   const [artMes, setArtMes]                 = useState<4 | 6 | 8 | 10>(6)
   const [generando, setGenerando]           = useState(false)
   const [errorGen, setErrorGen]             = useState<string | null>(null)
+
+  // ── Estado: crear pedidos desde mapa ───────────────────────
+  // Tracks: map_item_id → contenido_id (cuando se crea exitosamente)
+  const [pedidosCreados, setPedidosCreados] = useState<Record<string, string>>({})
+  const [creandoPedido, setCreandoPedido]   = useState<string | null>(null)
+  const [errorPedidoId, setErrorPedidoId]   = useState<string | null>(null) // qué item falló
+  const [errorPedidoMsg, setErrorPedidoMsg] = useState<string | null>(null)
+
+  async function handleCrearPedido(item: MapItem) {
+    if (!clientId || creandoPedido) return // evitar clicks simultáneos
+    setCreandoPedido(item.id)
+    setErrorPedidoId(null)
+    setErrorPedidoMsg(null)
+    try {
+      const res = await fetch('/api/pedidos/desde-mapa', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          map_item_id         : item.id,
+          client_id           : clientId,
+          titulo              : item.title,
+          keyword_principal   : item.main_keyword,
+          keywords_secundarias: item.secondary_keywords,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error creando pedido')
+      setPedidosCreados((prev) => ({ ...prev, [item.id]: data.contenido_id as string }))
+    } catch (e) {
+      setErrorPedidoId(item.id)
+      setErrorPedidoMsg(e instanceof Error ? e.message : 'Error desconocido')
+    } finally {
+      setCreandoPedido(null)
+    }
+  }
 
   // ── Estado: colapso de secciones de mes ───────────────────
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set<string>())
@@ -485,22 +521,42 @@ export default function MapaClient({ session, map, items }: Props) {
                               <PriorityBadge p={item.priority} />
                             </td>
                             <td className="px-3 py-3 text-center">
-                              {item.contenido_id ? (
-                                <Link
-                                  href={`/proyectos/${item.contenido_id}`}
-                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
-                                >
-                                  <ExternalLink className="h-3 w-3" />
-                                  Ver
-                                </Link>
-                              ) : (
-                                <Link
-                                  href={`/pedidos/nuevo-manual`}
-                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-                                >
-                                  <Plus className="h-3 w-3" />
-                                  Pedido
-                                </Link>
+                              {(() => {
+                                // Comprobar si ya tiene contenido (original o recién creado)
+                                const contenidoId = pedidosCreados[item.id] ?? item.contenido_id
+                                if (contenidoId) {
+                                  return (
+                                    <Link
+                                      href={`/contenidos/${contenidoId}`}
+                                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      Ver pedido
+                                    </Link>
+                                  )
+                                }
+                                if (creandoPedido === item.id) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 bg-gray-100 px-2 py-1.5 rounded-lg">
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      Creando...
+                                    </span>
+                                  )
+                                }
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCrearPedido(item)}
+                                    disabled={!clientId || creandoPedido !== null}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    Pedido
+                                  </button>
+                                )
+                              })()}
+                              {errorPedidoId === item.id && errorPedidoMsg && (
+                                <p className="text-[10px] text-red-500 mt-1">{errorPedidoMsg}</p>
                               )}
                             </td>
                           </tr>
