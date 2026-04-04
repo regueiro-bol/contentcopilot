@@ -36,40 +36,6 @@ export default async function ClusteringPage({ params }: PageProps) {
 
   if (!session) notFound()
 
-  console.log(`[ClusteringPage] params.sessionId: ${params.sessionId}`)
-
-  // ── Diagnóstico: query filtrada por cluster_name NOT NULL ──
-  const { data: testKw, error: testErr } = await supabase
-    .from('keywords')
-    .select('id, keyword, cluster_name')
-    .eq('session_id', params.sessionId)
-    .not('cluster_name', 'is', null)
-    .limit(3)
-  console.log(`[ClusteringPage][TEST] keywords con cluster_name NOT NULL: ${testKw?.length ?? 0} | error: ${testErr?.message ?? 'ninguno'}`)
-  if (testKw && testKw.length > 0) {
-    console.log(`[ClusteringPage][TEST] sample:`, JSON.stringify(testKw[0]))
-  }
-
-  console.log(`[ClusteringPage][TEST] Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`)
-
-  // ── Diagnóstico: fetch directo a PostgREST para ver raw response ──
-  try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!
-    const restUrl = `${url}/rest/v1/keywords?session_id=eq.${params.sessionId}&incluida=eq.true&select=keyword,cluster_name,funnel_stage,priority&limit=3`
-    const rawRes = await fetch(restUrl, {
-      headers: {
-        'apikey': key,
-        'Authorization': `Bearer ${key}`,
-      },
-    })
-    const rawJson = await rawRes.text()
-    console.log(`[ClusteringPage][RAW] PostgREST status: ${rawRes.status}`)
-    console.log(`[ClusteringPage][RAW] PostgREST response (primeros 500):`, rawJson.substring(0, 500))
-  } catch (rawErr) {
-    console.error(`[ClusteringPage][RAW] Error:`, rawErr)
-  }
-
   // ── Cargar keywords con cluster info ──────────────────────
   const { data: keywords, error: kwError } = await supabase
     .from('keywords')
@@ -79,23 +45,7 @@ export default async function ClusteringPage({ params }: PageProps) {
     .order('volume', { ascending: false, nullsFirst: false })
 
   if (kwError) {
-    console.error(`[ClusteringPage] Error en query keywords:`, JSON.stringify(kwError))
-  }
-
-  const kwCount        = (keywords ?? []).length
-  const withCluster    = (keywords ?? []).filter((k) => !!k.cluster_name).length
-  const withoutCluster = kwCount - withCluster
-  console.log(`[ClusteringPage] keywords: ${kwCount} total | ${withCluster} con cluster_name | ${withoutCluster} sin cluster_name`)
-
-  if (kwCount > 0) {
-    const sample = keywords![0]
-    console.log(`[ClusteringPage] Ejemplo keyword[0]:`, JSON.stringify({
-      keyword     : sample.keyword,
-      cluster_name: sample.cluster_name,
-      funnel_stage: sample.funnel_stage,
-      priority    : sample.priority,
-      incluida    : sample.incluida,
-    }))
+    console.error(`[ClusteringPage] Error en query keywords:`, kwError.message)
   }
 
   // ── Agrupar por cluster ────────────────────────────────────
