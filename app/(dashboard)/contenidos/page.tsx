@@ -2,6 +2,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import ContenidosPageClient from './contenidos-client'
 import type { EstadoContenido } from '@/types'
 
+export const dynamic = 'force-dynamic'
+
 export interface FilaContenido {
   id: string
   titulo: string

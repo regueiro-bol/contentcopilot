@@ -310,7 +310,7 @@ export function ModalManual({ open, onClose, clientes }: Props) {
               <Button
                 onClick={() => {
                   handleClose()
-                  router.push('/proyectos')
+                  router.push('/contenidos')
                 }}
               >
                 Ver contenidos

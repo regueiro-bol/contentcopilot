@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Calculator,
   TrendingUp,
+  Radio,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -40,7 +41,7 @@ const navItems = [
   },
   {
     titulo: 'Contenidos',
-    href: '/proyectos',   // URL se mantiene para no romper rutas existentes
+    href: '/contenidos',
     icono: FileText,
   },
   {
@@ -57,6 +58,11 @@ const navItems = [
     titulo: 'Estrategia',
     href: '/strategy',
     icono: TrendingUp,
+  },
+  {
+    titulo: 'GEORadar',
+    href: '/georadar',
+    icono: Radio,
   },
   {
     titulo: 'Costes',

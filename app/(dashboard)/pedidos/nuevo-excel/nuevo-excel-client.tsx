@@ -871,7 +871,7 @@ export default function NuevoExcelClient({ clientes }: Props) {
             <Button variant="outline" onClick={() => router.push('/pedidos')}>
               Volver a pedidos
             </Button>
-            <Button onClick={() => router.push('/proyectos')}>
+            <Button onClick={() => router.push('/contenidos')}>
               Ver contenidos
             </Button>
           </div>

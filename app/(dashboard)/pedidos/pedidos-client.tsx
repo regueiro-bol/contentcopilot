@@ -216,7 +216,7 @@ export default function PedidosPageClient({ pedidos }: Props) {
                   <td className="px-4 py-3 text-right">
                     {pedido.proyecto_id && (
                       <Link
-                        href={`/proyectos?proyecto=${pedido.proyecto_id}`}
+                        href={`/contenidos?proyecto=${pedido.proyecto_id}`}
                         className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
                       >
                         <Eye className="h-3.5 w-3.5" />

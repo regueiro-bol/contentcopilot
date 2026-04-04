@@ -9,11 +9,12 @@ const titulosPagina: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/clientes': 'Clientes',
   '/pedidos': 'Pedidos de contenido',
-  '/proyectos': 'Contenidos',
+  '/contenidos': 'Contenidos',
   '/copiloto': 'Copiloto de contenido',
   '/agentes': 'Agentes de IA',
   '/costes': 'Calculadora de costes',
   '/strategy': 'Estrategia de Contenidos',
+  '/georadar': 'GEORadar',
 }
 
 export function DashboardShell({

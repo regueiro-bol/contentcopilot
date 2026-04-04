@@ -10,7 +10,6 @@ function path(id: string) {
 
 function revalidateListas() {
   revalidatePath('/contenidos')
-  revalidatePath('/proyectos')
   revalidatePath('/dashboard')
 }
 

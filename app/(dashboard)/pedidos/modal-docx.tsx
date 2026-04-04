@@ -393,7 +393,7 @@ export function ModalDocx({ open, onClose, clientes }: Props) {
                 className="gap-2"
                 onClick={() => {
                   handleClose()
-                  router.push('/proyectos')
+                  router.push('/contenidos')
                 }}
               >
                 Ver contenidos

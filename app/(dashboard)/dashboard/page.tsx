@@ -319,7 +319,7 @@ export default async function DashboardPage() {
                   {hayMas && (
                     <div className="px-4 py-3 mt-1 border-t border-gray-100">
                       <Link
-                        href="/proyectos"
+                        href="/contenidos"
                         className="flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
                       >
                         Ver todos los contenidos
@@ -374,7 +374,7 @@ export default async function DashboardPage() {
                 },
                 {
                   label: 'Todos los contenidos',
-                  href: '/proyectos',
+                  href: '/contenidos',
                   icono: <FileText className="h-4 w-4 text-gray-600" />,
                   colorClass: 'bg-gray-100 text-gray-700 hover:bg-gray-200',
                 },

@@ -295,7 +295,7 @@ export async function crearPedidoDesdeArticulos(params: {
     .eq('id', pedidoId)
 
   revalidatePath('/pedidos')
-  revalidatePath('/proyectos')
+  revalidatePath('/contenidos')
 
   return { pedidoId, contenidosCreados }
 }
@@ -412,7 +412,7 @@ export async function crearPedidoManual(params: {
   ).catch(console.error)
 
   revalidatePath('/pedidos')
-  revalidatePath('/proyectos')
+  revalidatePath('/contenidos')
 
   return { pedidoId: pedido.id, contenidoId: contenido.id }
 }
