@@ -153,26 +153,24 @@ export async function POST(request: NextRequest) {
     // en lugar de en competition_level.
     const VALID_COMP_LEVELS = ['LOW', 'MEDIUM', 'HIGH']
 
-    function safeCompetition(val: unknown): number | null {
+    const safeCompetition = (val: unknown): number | null => {
       if (val == null) return null
       if (typeof val === 'number' && isFinite(val)) return val
-      // Si es string numérico como "0.45", parsearlo
       if (typeof val === 'string') {
         const num = parseFloat(val)
         if (isFinite(num)) return num
       }
-      // String como "MEDIUM" → no es numérico, devolver null
       return null
     }
 
-    function safeCompetitionLevel(val: unknown): string | null {
+    const safeCompetitionLevel = (val: unknown): string | null => {
       if (typeof val === 'string' && VALID_COMP_LEVELS.includes(val.toUpperCase())) {
         return val.toUpperCase()
       }
       return null
     }
 
-    function safeNumber(val: unknown): number | null {
+    const safeNumber = (val: unknown): number | null => {
       if (val == null) return null
       const num = typeof val === 'number' ? val : parseFloat(String(val))
       return isFinite(num) ? num : null

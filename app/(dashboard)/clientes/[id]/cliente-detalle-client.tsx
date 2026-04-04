@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Edit, Trash2, Plus, Sparkles, ChevronRight,
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
+  Loader2, Link2, Globe, AlertCircle,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -405,6 +406,300 @@ function BrandAssetsTab({
 }
 
 // ---------------------------------------------------------------------------
+// Sección: Conexiones digitales (Google)
+// ---------------------------------------------------------------------------
+
+interface GSCProp { siteUrl: string; permissionLevel: string | null }
+interface GA4Prop { propertyId: string; displayName: string; account: string | null }
+interface GoogleAccountOption { id: string; email: string; display_name: string | null }
+interface ExistingConnection {
+  id: string
+  google_account_id: string
+  gsc_property_url: string | null
+  ga4_property_id: string | null
+  status: string
+  google_accounts?: { email: string; display_name: string | null }
+}
+
+function GoogleConnectionsSection({ clienteId }: { clienteId: string }) {
+  const [accounts, setAccounts]       = useState<GoogleAccountOption[]>([])
+  const [connection, setConnection]   = useState<ExistingConnection | null>(null)
+  const [selectedAccount, setSelectedAccount] = useState('')
+  const [gscProps, setGscProps]       = useState<GSCProp[]>([])
+  const [ga4Props, setGa4Props]       = useState<GA4Prop[]>([])
+  const [selectedGSC, setSelectedGSC] = useState('')
+  const [selectedGA4, setSelectedGA4] = useState('')
+  const [loadingProps, setLoadingProps] = useState(false)
+  const [saving, setSaving]           = useState(false)
+  const [loading, setLoading]         = useState(true)
+  const [error, setError]             = useState<string | null>(null)
+  const [success, setSuccess]         = useState(false)
+
+  // Cargar cuentas Google y conexión existente al montar
+  useEffect(() => {
+    ;(async () => {
+      try {
+        // Cargar cuentas disponibles
+        const accRes = await fetch('/api/google/accounts')
+        const accData = await accRes.json()
+        if (accRes.ok) setAccounts(accData.accounts ?? [])
+
+        // Cargar conexión existente para este cliente
+        let preloadAccountId: string | null = null
+        const connRes = await fetch(`/api/google/connections?client_id=${clienteId}`)
+        if (connRes.ok) {
+          const connData = await connRes.json()
+          const conn = connData.connection as ExistingConnection | null
+          if (conn) {
+            setConnection(conn)
+            setSelectedAccount(conn.google_account_id)
+            setSelectedGSC(conn.gsc_property_url ?? '')
+            setSelectedGA4(conn.ga4_property_id ?? '')
+            preloadAccountId = conn.google_account_id
+          }
+        }
+
+        // Si hay conexión existente, cargar las propiedades para que los dropdowns funcionen
+        if (preloadAccountId) {
+          try {
+            const propsRes = await fetch(`/api/google/accounts/${preloadAccountId}/properties`)
+            const propsData = await propsRes.json()
+            if (propsRes.ok) {
+              setGscProps(propsData.gsc ?? [])
+              setGa4Props(propsData.ga4 ?? [])
+              console.log(`[Conexiones] Propiedades precargadas: GSC=${(propsData.gsc ?? []).length}, GA4=${(propsData.ga4 ?? []).length}`)
+            }
+          } catch {
+            console.warn('[Conexiones] Error precargando propiedades')
+          }
+        }
+      } catch {
+        // silently fail on load
+      } finally {
+        setLoading(false)
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Cargar propiedades de una cuenta Google
+  async function loadProperties(accountId: string) {
+    if (!accountId) return
+
+    setLoadingProps(true)
+    setError(null)
+    try {
+      console.log(`[Conexiones] Cargando propiedades para cuenta: ${accountId}`)
+      const res  = await fetch(`/api/google/accounts/${accountId}/properties`)
+      const data = await res.json()
+      console.log(`[Conexiones] Response properties:`, JSON.stringify(data).substring(0, 500))
+      if (!res.ok) throw new Error(data.error ?? 'Error cargando propiedades')
+      setGscProps(data.gsc ?? [])
+      setGa4Props(data.ga4 ?? [])
+      console.log(`[Conexiones] GSC: ${(data.gsc ?? []).length} propiedades, GA4: ${(data.ga4 ?? []).length} propiedades`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error cargando propiedades')
+    } finally {
+      setLoadingProps(false)
+    }
+  }
+
+  // Cambiar cuenta seleccionada
+  async function handleAccountChange(accountId: string) {
+    setSelectedAccount(accountId)
+    setSelectedGSC('')
+    setSelectedGA4('')
+    setGscProps([])
+    setGa4Props([])
+    setError(null)
+
+    await loadProperties(accountId)
+  }
+
+  // Guardar conexión
+  async function handleSave() {
+    if (!selectedAccount) return
+    setSaving(true)
+    setError(null)
+    setSuccess(false)
+
+    const body = {
+      client_id        : clienteId,
+      google_account_id: selectedAccount,
+      gsc_property_url : selectedGSC || null,
+      ga4_property_id  : selectedGA4 || null,
+    }
+    console.log('[Conexiones] Guardando conexión, body:', JSON.stringify(body))
+
+    try {
+      const res = await fetch('/api/google/connections', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify(body),
+      })
+      const data = await res.json()
+      console.log('[Conexiones] Response save:', JSON.stringify(data).substring(0, 500))
+      if (!res.ok) throw new Error(data.error ?? 'Error guardando')
+      setConnection(data.connection)
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 3000)
+    } catch (e) {
+      console.error('[Conexiones] Error guardando:', e)
+      setError(e instanceof Error ? e.message : 'Error guardando')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-6 text-center text-sm text-gray-400">
+          <Loader2 className="h-4 w-4 animate-spin mx-auto mb-2" />
+          Cargando conexiones...
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            Conexiones digitales
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-500">
+            No hay cuentas Google conectadas.{' '}
+            <Link href="/settings/google-accounts" className="text-indigo-600 hover:underline">
+              Conecta una cuenta
+            </Link>{' '}
+            para acceder a Search Console y Analytics.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Globe className="h-4 w-4" />
+          Conexiones digitales
+        </CardTitle>
+        {connection && (
+          <Badge variant={connection.status === 'active' ? 'success' : 'destructive'}>
+            {connection.status === 'active' ? 'Conectado' : connection.status}
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Selector de cuenta Google */}
+        <div className="space-y-1.5">
+          <Label className="text-xs">Cuenta Google</Label>
+          <select
+            value={selectedAccount}
+            onChange={(e) => handleAccountChange(e.target.value)}
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">Seleccionar cuenta...</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.email}{a.display_name ? ` (${a.display_name})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Loading propiedades */}
+        {loadingProps && (
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Cargando propiedades de Google...
+          </div>
+        )}
+
+        {/* Propiedades GSC */}
+        {selectedAccount && !loadingProps && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Propiedad Search Console</Label>
+              <select
+                value={selectedGSC}
+                onChange={(e) => setSelectedGSC(e.target.value)}
+                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Sin asignar</option>
+                {gscProps.map((p) => (
+                  <option key={p.siteUrl} value={p.siteUrl}>{p.siteUrl}</option>
+                ))}
+              </select>
+              {gscProps.length === 0 && (
+                <p className="text-xs text-gray-400">Sin propiedades GSC disponibles</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">Propiedad Analytics 4</Label>
+              <select
+                value={selectedGA4}
+                onChange={(e) => setSelectedGA4(e.target.value)}
+                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Sin asignar</option>
+                {ga4Props.map((p) => (
+                  <option key={p.propertyId} value={p.propertyId}>
+                    {p.displayName}{p.account ? ` — ${p.account}` : ''}
+                  </option>
+                ))}
+              </select>
+              {ga4Props.length === 0 && (
+                <p className="text-xs text-gray-400">Sin propiedades GA4 disponibles</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-red-600">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {/* Éxito */}
+        {success && (
+          <div className="flex items-center gap-2 text-sm text-green-600">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            Conexión guardada correctamente.
+          </div>
+        )}
+
+        {/* Botón guardar */}
+        {selectedAccount && !loadingProps && (
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving}
+            className="gap-2"
+          >
+            {saving
+              ? <><Loader2 className="h-4 w-4 animate-spin" />Guardando...</>
+              : <><Link2 className="h-4 w-4" />Guardar conexión</>
+            }
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
 export default function ClienteDetalleClient({
@@ -621,6 +916,9 @@ export default function ClienteDetalleClient({
           <BrandAssetsTab clienteId={cliente.id} coverage={coverage ?? null} />
         </TabsContent>
       </Tabs>
+
+      {/* Conexiones digitales (Google) */}
+      <GoogleConnectionsSection clienteId={cliente.id} />
 
       {/* Zona peligrosa */}
       <Card className="border-red-200">
