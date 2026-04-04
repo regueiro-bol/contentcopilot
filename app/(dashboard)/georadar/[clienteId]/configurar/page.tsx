@@ -7,13 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
-const PAQUETES = [
-  { key: 'basico', label: 'Básico', queries: 20, llms: ['claude', 'gpt4'], frecuencia: 'mensual' },
-  { key: 'estandar', label: 'Estándar', queries: 30, llms: ['claude', 'gpt4', 'gemini', 'perplexity'], frecuencia: 'mensual' },
-  { key: 'premium', label: 'Premium', queries: 50, llms: ['claude', 'gpt4', 'gemini', 'perplexity'], frecuencia: 'quincenal' },
-  { key: 'personalizado', label: 'Personalizado', queries: 20, llms: ['claude', 'gpt4'], frecuencia: 'mensual' },
-];
-
 const LLMS_DISPONIBLES = ['claude', 'gpt4', 'gemini', 'perplexity'];
 const CATEGORIAS = ['marca', 'categoria', 'competidor', 'producto'];
 
@@ -27,7 +20,6 @@ export default function GeoRadarConfigurarPage() {
   const [sugiriendo, setSugiriendo] = useState(false);
   const [cliente, setCliente] = useState<any>(null);
 
-  const [paquete, setPaquete] = useState('estandar');
   const [llms, setLlms] = useState(['claude', 'gpt4']);
   const [maxQueries, setMaxQueries] = useState(30);
   const [frecuencia, setFrecuencia] = useState('mensual');
@@ -41,7 +33,6 @@ export default function GeoRadarConfigurarPage() {
 
       if (configData.cliente) setCliente(configData.cliente);
       if (configData.config) {
-        setPaquete(configData.config.paquete || 'personalizado');
         setLlms(configData.config.llms || ['claude', 'gpt4']);
         setMaxQueries(configData.config.max_queries || 20);
         setFrecuencia(configData.config.frecuencia || 'mensual');
@@ -68,17 +59,6 @@ export default function GeoRadarConfigurarPage() {
     }
     cargar();
   }, [clienteId]);
-
-  function seleccionarPaquete(key: string) {
-    const p = PAQUETES.find(p => p.key === key);
-    if (!p) return;
-    setPaquete(key);
-    if (key !== 'personalizado') {
-      setLlms(p.llms);
-      setMaxQueries(p.queries);
-      setFrecuencia(p.frecuencia);
-    }
-  }
 
   function toggleLlm(llm: string) {
     setLlms(prev =>
@@ -112,15 +92,17 @@ export default function GeoRadarConfigurarPage() {
 
   async function sugerirQueriesIA() {
     setSugiriendo(true);
-    const res = await fetch(`/api/georadar/${clienteId}/sugerir-queries`, {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (data.queries?.length) {
-      setQueries(prev => [
-        ...prev,
-        ...data.queries.map((q: any) => ({ query: q.query, categoria: q.categoria || 'categoria' })),
-      ]);
+    try {
+      const res = await fetch(`/api/georadar/${clienteId}/sugerir-queries`, { method: 'POST' });
+      const data = await res.json();
+      if (data.queries?.length) {
+        setQueries(prev => [
+          ...prev,
+          ...data.queries.map((q: any) => ({ query: q.query, categoria: q.categoria || 'categoria' })),
+        ]);
+      }
+    } catch (e) {
+      console.error('Error sugiriendo queries:', e);
     }
     setSugiriendo(false);
   }
@@ -131,7 +113,7 @@ export default function GeoRadarConfigurarPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        paquete,
+        paquete: 'personalizado',
         llms,
         max_queries: maxQueries,
         frecuencia,
@@ -167,47 +149,11 @@ export default function GeoRadarConfigurarPage() {
         </div>
       </div>
 
-      {/* Paso 1 — Punto de partida */}
+      {/* Paso 1 — Configuración */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wide">
-            Paso 1 — Punto de partida
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {PAQUETES.map(p => (
-              <button
-                key={p.key}
-                onClick={() => seleccionarPaquete(p.key)}
-                className={`border rounded-lg p-3 text-left transition-all ${
-                  paquete === p.key
-                    ? 'border-violet-500 bg-violet-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <p className="font-medium text-sm">{p.label}</p>
-                {p.key !== 'personalizado' && (
-                  <>
-                    <p className="text-xs text-gray-500 mt-1">{p.queries} queries</p>
-                    <p className="text-xs text-gray-500">{p.llms.length} LLMs</p>
-                    <p className="text-xs text-gray-500">{p.frecuencia}</p>
-                  </>
-                )}
-                {p.key === 'personalizado' && (
-                  <p className="text-xs text-gray-400 mt-1">Configura tú mismo</p>
-                )}
-              </button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Paso 2 — Ajustes */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wide">
-            Paso 2 — Ajustes
+            Paso 1 — Configuración
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -264,12 +210,12 @@ export default function GeoRadarConfigurarPage() {
         </CardContent>
       </Card>
 
-      {/* Paso 3 — Queries */}
+      {/* Paso 2 — Queries */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wide">
-              Paso 3 — Queries a monitorizar
+              Paso 2 — Queries a monitorizar
               <span className="ml-2 font-normal text-gray-300">{queries.length}/{maxQueries}</span>
             </CardTitle>
             <div className="flex gap-2">
@@ -302,7 +248,7 @@ export default function GeoRadarConfigurarPage() {
         <CardContent className="space-y-2">
           {queries.length === 0 && (
             <p className="text-sm text-gray-400 text-center py-4">
-              Sin queries. Usa "Sugerir con IA" o añade manualmente.
+              Sin queries. Usa &quot;Sugerir con IA&quot; o añade manualmente.
             </p>
           )}
           {queries.map((q, i) => (
@@ -331,12 +277,12 @@ export default function GeoRadarConfigurarPage() {
         </CardContent>
       </Card>
 
-      {/* Paso 4 — Competidores */}
+      {/* Paso 3 — Competidores */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wide">
-              Paso 4 — Competidores
+              Paso 3 — Competidores
             </CardTitle>
             <Button variant="outline" size="sm" onClick={addCompetidor} className="text-xs">
               <Plus className="h-3 w-3 mr-1" />
@@ -347,7 +293,7 @@ export default function GeoRadarConfigurarPage() {
         <CardContent className="space-y-2">
           {competidores.length === 0 && (
             <p className="text-sm text-gray-400 text-center py-4">
-              Cargando competidores del módulo Competitive Intelligence...
+              Sin competidores. Añade los que quieres comparar en el análisis.
             </p>
           )}
           {competidores.map((c, i) => (

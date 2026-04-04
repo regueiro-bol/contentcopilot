@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { generateReport } from '@/lib/georadar/report-generator';
 
 export async function GET(
@@ -10,37 +10,29 @@ export async function GET(
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
-  const { searchParams } = new URL(req.url);
-  const periodo = searchParams.get('periodo');
+  const supabase = createAdminClient();
 
-  const supabase = await createClient();
-
-  const query = supabase
+  // Buscar último scan completado
+  const { data: scan } = await supabase
     .from('georadar_scans')
     .select('*')
     .eq('cliente_id', params.clienteId)
     .eq('estado', 'completado')
-    .order('completado_at', { ascending: false });
-
-  if (periodo) query.eq('periodo', periodo);
-
-  const { data: scans } = await query.limit(1);
-  const scan = scans?.[0];
+    .order('fecha_scan', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (!scan) {
-    return NextResponse.json({ error: 'Sin datos para este periodo' }, { status: 404 });
+    return NextResponse.json({ error: 'Sin datos para este cliente' }, { status: 404 });
   }
 
-  const { data: informeExistente } = await supabase
-    .from('georadar_informes')
-    .select('*')
-    .eq('scan_id', scan.id)
-    .single();
-
-  if (informeExistente) {
-    return NextResponse.json(informeExistente);
+  // Si ya tiene narrativa generada, devolver directamente
+  if (scan.narrativa_resumen) {
+    return NextResponse.json(scan);
   }
 
-  const informe = await generateReport(scan.id, params.clienteId, scan.periodo);
+  // Si no, generar el informe
+  const periodo = new Date(scan.fecha_scan).toISOString().slice(0, 7);
+  const informe = await generateReport(scan.id, params.clienteId, periodo);
   return NextResponse.json(informe);
 }

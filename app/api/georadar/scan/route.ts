@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { executeScan } from '@/lib/georadar/scan-engine';
 
 export async function POST(req: NextRequest) {
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'clienteId y periodo requeridos' }, { status: 400 });
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: config } = await supabase
     .from('georadar_configs')
@@ -37,9 +37,9 @@ export async function POST(req: NextRequest) {
     .insert({
       cliente_id: clienteId,
       config_id: config.id,
-      periodo,
+      llms_usados: config.llms,
+      total_queries: count || 0,
       estado: 'pendiente',
-      queries_total: count || 0,
     })
     .select()
     .single();
@@ -66,10 +66,10 @@ export async function GET(req: NextRequest) {
 
   if (!scanId) return NextResponse.json({ error: 'scanId requerido' }, { status: 400 });
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data } = await supabase
     .from('georadar_scans')
-    .select('estado, queries_total, queries_completadas, coste_usd')
+    .select('estado, total_queries, queries_completadas, coste_usd')
     .eq('id', scanId)
     .single();
 

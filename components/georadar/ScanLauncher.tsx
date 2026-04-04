@@ -14,7 +14,7 @@ export function ScanLauncher({ clienteId, scanActivo }: ScanLauncherProps) {
   const [scanId, setScanId] = useState<string | null>(scanActivo?.id || null);
   const [progreso, setProgreso] = useState({
     completadas: scanActivo?.queries_completadas || 0,
-    total: scanActivo?.queries_total || 0,
+    total: scanActivo?.total_queries || 0,
   });
 
   useEffect(() => {
@@ -27,7 +27,7 @@ export function ScanLauncher({ clienteId, scanActivo }: ScanLauncherProps) {
       setEstado(data.estado);
       setProgreso({
         completadas: data.queries_completadas,
-        total: data.queries_total,
+        total: data.total_queries,
       });
 
       if (data.estado === 'completado' || data.estado === 'error') {

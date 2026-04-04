@@ -1,8 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { Button } from '@/components/ui/button';
-import { Settings } from 'lucide-react';
+import { Settings, Radio } from 'lucide-react';
 import Link from 'next/link';
 import { ScanLauncher } from '@/components/georadar/ScanLauncher';
 import { PresenceScoreCard } from '@/components/georadar/PresenceScoreCard';
@@ -11,7 +11,8 @@ import { NarrativaPanel } from '@/components/georadar/NarrativaPanel';
 import { CompetitorMatrix } from '@/components/georadar/CompetitorMatrix';
 import { FuentesPanel } from '@/components/georadar/FuentesPanel';
 import { RecomendacionesPanel } from '@/components/georadar/RecomendacionesPanel';
-import { Radio } from 'lucide-react';
+
+export const dynamic = 'force-dynamic';
 
 export default async function GeoRadarClientePage({
   params,
@@ -21,7 +22,7 @@ export default async function GeoRadarClientePage({
   const { userId } = await auth();
   if (!userId) redirect('/sign-in');
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: cliente } = await supabase
     .from('clientes')
@@ -29,14 +30,17 @@ export default async function GeoRadarClientePage({
     .eq('id', params.clienteId)
     .single();
 
-  const { data: informes } = await supabase
-    .from('georadar_informes')
+  // Cargar último scan completado directamente de georadar_scans
+  const { data: ultimoScan } = await supabase
+    .from('georadar_scans')
     .select('*')
     .eq('cliente_id', params.clienteId)
-    .order('generado_at', { ascending: false })
-    .limit(1);
+    .eq('estado', 'completado')
+    .order('fecha_scan', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  const informe = informes?.[0];
+  console.log('[GEORadar Page] ultimoScan:', JSON.stringify(ultimoScan)?.slice(0, 300));
 
   const { data: scanActivo } = await supabase
     .from('georadar_scans')
@@ -45,9 +49,7 @@ export default async function GeoRadarClientePage({
     .eq('estado', 'ejecutando')
     .maybeSingle();
 
-  const evolucion = informe && informe.score_anterior !== null
-    ? informe.score_global - informe.score_anterior
-    : 0;
+  const score = ultimoScan?.score_global ? Number(ultimoScan.score_global) : null;
 
   return (
     <div className="p-6 space-y-5">
@@ -60,14 +62,16 @@ export default async function GeoRadarClientePage({
             <h1 className="text-xl font-semibold text-gray-900">
               {cliente?.nombre || 'GEORadar'}
             </h1>
-            {informe && (
-              <p className="text-sm text-gray-500">Informe {informe.periodo}</p>
+            {ultimoScan && (
+              <p className="text-sm text-gray-500">
+                Último scan: {new Date(ultimoScan.fecha_scan).toLocaleDateString('es-ES')}
+              </p>
             )}
           </div>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" asChild>
-            <Link href={`/georadar/${params.clienteId}/config`}>
+            <Link href={`/georadar/${params.clienteId}/configurar`}>
               <Settings className="h-4 w-4 mr-2" />
               Configurar
             </Link>
@@ -79,7 +83,7 @@ export default async function GeoRadarClientePage({
         </div>
       </div>
 
-      {!informe && !scanActivo && (
+      {!ultimoScan && !scanActivo && (
         <div className="text-center py-20 text-gray-400">
           <Radio className="h-10 w-10 mx-auto mb-3 opacity-30" />
           <p className="text-base mb-1">Sin datos todavía</p>
@@ -87,36 +91,36 @@ export default async function GeoRadarClientePage({
         </div>
       )}
 
-      {informe && (
+      {ultimoScan && (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <PresenceScoreCard
-              score={informe.score_global}
-              scoreAnterior={informe.score_anterior}
-              evolucion={evolucion}
-              periodo={informe.periodo}
+              score={score}
+              scoreAnterior={null}
+              evolucion={0}
+              periodo={new Date(ultimoScan.fecha_scan).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
             />
             <div className="lg:col-span-2">
-              <LLMBreakdownChart scoresPorLLM={informe.scores_por_llm} />
+              <LLMBreakdownChart scoresPorLLM={ultimoScan.scores_por_llm ?? {}} />
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <NarrativaPanel
-              atributosDominantes={informe.atributos_dominantes}
-              atributosAusentes={informe.atributos_ausentes}
-              narrativa={informe.narrativa_resumen}
+              atributosDominantes={ultimoScan.atributos_dominantes ?? []}
+              atributosAusentes={ultimoScan.atributos_ausentes ?? []}
+              narrativa={ultimoScan.narrativa_resumen ?? ''}
             />
             <CompetitorMatrix
-              posicionCompetitiva={informe.posicion_competitiva}
+              posicionCompetitiva={ultimoScan.posicion_competitiva ?? { lidera: [], pierde: [] }}
             />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <FuentesPanel topFuentes={informe.top_fuentes} />
+            <FuentesPanel topFuentes={ultimoScan.top_fuentes ?? []} />
             <div className="lg:col-span-2">
               <RecomendacionesPanel
-                recomendaciones={informe.recomendaciones}
+                recomendaciones={ultimoScan.recomendaciones ?? []}
                 clienteId={params.clienteId}
               />
             </div>

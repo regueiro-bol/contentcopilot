@@ -17,8 +17,7 @@ function resolverApiKey(appId?: string): string {
     'b192c433-abce-46a8-a843-63270005a3c0': process.env.DIFY_BRIEF_SEO_API_KEY ?? '',
     // Revisor GEO-SEO
     'ca381077-a8cf-4a1b-a285-e8ffbc676857': process.env.DIFY_REVISOR_GEO_SEO_API_KEY ?? '',
-    // Humanizador
-    '9a4ee2d7-1ebc-4ecf-b612-e93a04517eab': process.env.DIFY_HUMANIZADOR_API_KEY ?? '',
+    // Humanizador — migrado a /api/humanizador (Claude API directa)
     // Legibilidad Lectora
     'ec87a85c-e9a1-4221-9ad5-9c240279b709': process.env.DIFY_LEGIBILIDAD_API_KEY ?? '',
     // Voz de Marca

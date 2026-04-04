@@ -3,10 +3,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useUser } from '@clerk/nextjs'
 import {
-  Sparkles, Save, ChevronDown,
+  Sparkles, Save, ChevronDown, ChevronUp,
   X, Send, Loader2, AlertCircle, CheckCircle2,
   Volume2, VolumeX, RotateCcw, Eye, EyeOff,
-  PlusCircle, FileSearch, CheckCheck, Edit2,
+  PlusCircle, FileSearch, CheckCheck, Edit2, User,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
@@ -54,7 +54,7 @@ NUNCA añadas después del texto:
 Si necesitas hacer algún comentario, escríbelo ANTES del texto en una sola frase, nunca después.`
 
 // ─── Tipos locales ───────────────────────────────────────────────────────────
-type TabActiva = 'copiloto' | 'informe'
+type TabActiva = 'copiloto' | 'informe' | 'humanizar'
 type ModoVista = 'editar' | 'preview'
 
 interface MensajeChat {
@@ -346,6 +346,14 @@ export default function CopilotoClient({
   const [fechaRevision, setFechaRevision]       = useState('')
   const [cargandoRevision, setCargandoRevision] = useState(false)
 
+  // ── Humanización state ──────────────────────────────────────────────────
+  const [textoHumanizado, setTextoHumanizado]         = useState('')
+  const [cargandoHumanizar, setCargandoHumanizar]     = useState(false)
+  const [fechaHumanizado, setFechaHumanizado]         = useState('')
+  const [confirmReemplazar, setConfirmReemplazar]     = useState(false)
+  const [verTextoHumanizado, setVerTextoHumanizado]   = useState(false)
+  const [resumenAbierto, setResumenAbierto]           = useState(false)
+
   const palabras = texto.split(/\s+/).filter(s => s.length > 0).length
 
   // ── Auto-load contenido inicial desde URL param ──────────────────────────
@@ -634,6 +642,151 @@ ${texto}`,
     }
   }
 
+  // ── Humanizar texto — Claude API con streaming ─────────────────────────
+  async function handleHumanizar() {
+    if (!texto.trim()) return
+    setTabActiva('humanizar')
+    setTextoHumanizado('')
+    setFechaHumanizado('')
+    setCargandoHumanizar(true)
+    setConfirmReemplazar(false)
+    setVerTextoHumanizado(false)
+    setResumenAbierto(false)
+
+    try {
+      const res = await fetch('/api/humanizador', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          texto,
+          cliente      : contenidoActual?.clientes?.nombre ?? undefined,
+          proyecto     : contenidoActual?.proyectos?.nombre ?? undefined,
+          voz_marca    : contenidoActual?.proyectos?.tono_voz ?? undefined,
+          modo         : 'stream',
+          contenido_id : contenidoId || null,
+          proyecto_id  : contenidoActual?.proyecto_id ?? contenidoActual?.proyectos?.id ?? null,
+        }),
+      })
+
+      if (!res.ok) {
+        const datos = await res.json().catch(() => ({ error: 'Error desconocido' }))
+        throw new Error(datos.error ?? 'Error al conectar con el Humanizador')
+      }
+
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('No se pudo leer el stream')
+
+      const decoder = new TextDecoder()
+      let acumulado = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        const lineas = chunk.split('\n').filter((l) => l.startsWith('data: '))
+
+        for (const linea of lineas) {
+          const datos = linea.replace('data: ', '')
+          if (datos === '[DONE]') continue
+          try {
+            const parsed = JSON.parse(datos)
+            if (parsed.texto) {
+              acumulado += parsed.texto
+              setTextoHumanizado(acumulado)
+            }
+          } catch { /* chunk parcial */ }
+        }
+      }
+
+      if (!acumulado) throw new Error('El Humanizador no devolvió contenido')
+      setFechaHumanizado(new Date().toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }))
+    } catch (e) {
+      setTextoHumanizado(`⚠️ ${e instanceof Error ? e.message : 'Error al conectar con el Agente Humanizador.'}`)
+    } finally {
+      setCargandoHumanizar(false)
+    }
+  }
+
+  // Extraer solo el texto humanizado (PARTE 2) del resultado completo
+  function extraerTextoHumanizado(output: string): string {
+    // Busca el bloque PARTE 2 o TEXTO HUMANIZADO
+    const marcadores = [
+      /PARTE 2[^:]*:\s*TEXTO HUMANIZADO\s*\n/i,
+      /TEXTO HUMANIZADO\s*\n/i,
+      /## TEXTO HUMANIZADO\s*\n/i,
+      /### TEXTO HUMANIZADO\s*\n/i,
+    ]
+
+    for (const marcador of marcadores) {
+      const match = output.search(marcador)
+      if (match > -1) {
+        const inicio = output.indexOf('\n', match) + 1
+        // Corta en la estimación final (--- seguido de Estimación)
+        const fin = output.search(/---\s*\n[\s\S]*?[Ee]stimaci/)
+        if (fin > inicio) return output.substring(inicio, fin).trim()
+        // Corta en cualquier --- final
+        const finAlt = output.indexOf('\n---', inicio)
+        if (finAlt > inicio) return output.substring(inicio, finAlt).trim()
+        return output.substring(inicio).trim()
+      }
+    }
+
+    // Fallback: elimina todo antes del primer marcador y después de la estimación
+    return output
+      .replace(/^[\s\S]*?TEXTO HUMANIZADO\s*\n/i, '')
+      .replace(/\n---\s*\n[\s\S]*$/, '')
+      .trim()
+  }
+
+  // Extraer los bullets del resumen de cambios para mostrar durante streaming
+  function extraerBulletsResumen(output: string): string[] {
+    const lineas = output.split('\n')
+    return lineas.filter((l) => l.trimStart().startsWith('- ')).map((l) => l.trim())
+  }
+
+  // Extraer bloque de resumen completo (PARTE 1)
+  function extraerResumen(output: string): string {
+    // Buscar inicio del resumen
+    const marcadoresInicio = [
+      /PARTE 1[^:]*:\s*RESUMEN DE CAMBIOS\s*\n/i,
+      /RESUMEN DE CAMBIOS\s*\n/i,
+      /## RESUMEN DE CAMBIOS\s*\n/i,
+      /### RESUMEN DE CAMBIOS\s*\n/i,
+    ]
+    let inicio = -1
+    for (const m of marcadoresInicio) {
+      const match = output.search(m)
+      if (match > -1) {
+        inicio = output.indexOf('\n', match) + 1
+        break
+      }
+    }
+    if (inicio === -1) return ''
+
+    // Buscar fin del resumen (inicio del texto humanizado)
+    const marcadoresFin = [
+      /PARTE 2[^:]*:/i,
+      /TEXTO HUMANIZADO/i,
+      /## TEXTO HUMANIZADO/i,
+      /### TEXTO HUMANIZADO/i,
+    ]
+    let fin = output.length
+    for (const m of marcadoresFin) {
+      const match = output.search(m)
+      if (match > inicio) { fin = match; break }
+    }
+
+    return output.substring(inicio, fin).trim()
+  }
+
+  function handleReemplazarConHumanizado() {
+    const textoLimpio = extraerTextoHumanizado(textoHumanizado)
+    setTexto(textoLimpio)
+    setConfirmReemplazar(false)
+    setVerTextoHumanizado(false)
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
@@ -854,6 +1007,19 @@ ${texto}`,
               Informe GEO-SEO
               {textoRevision && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
               {cargandoRevision && <Loader2 className="h-3 w-3 animate-spin text-emerald-500" />}
+            </button>
+            <button
+              onClick={() => setTabActiva('humanizar')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-3 text-xs font-semibold transition-all border-b-2 ${
+                tabActiva === 'humanizar'
+                  ? 'border-orange-500 text-orange-600 bg-orange-50/50'
+                  : 'border-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <User className="h-3.5 w-3.5" />
+              Humanizar
+              {textoHumanizado && !cargandoHumanizar && <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />}
+              {cargandoHumanizar && <Loader2 className="h-3 w-3 animate-spin text-orange-500" />}
             </button>
           </div>
 
@@ -1095,6 +1261,193 @@ ${texto}`,
                 </button>
                 {!texto.trim() && (
                   <p className="text-xs text-gray-400">Selecciona un contenido con texto para analizar</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab 3: Humanizar ──────────────────────────────────────────── */}
+        {tabActiva === 'humanizar' && (
+          <div className="flex-1 overflow-y-auto">
+            {/* ── Estado: procesando (streaming) ─────────────────────────── */}
+            {cargandoHumanizar ? (
+              <div className="flex flex-col items-center gap-3 px-6 pt-8 text-center">
+                <div className="h-14 w-14 rounded-2xl bg-orange-50 flex items-center justify-center">
+                  <Loader2 className="h-7 w-7 animate-spin text-orange-500" />
+                </div>
+                <p className="text-sm font-semibold text-gray-800">Humanizando el texto…</p>
+                <p className="text-xs text-gray-400">Puede tardar 30–60 segundos en textos largos</p>
+
+                {/* Bullets del resumen en tiempo real */}
+                {textoHumanizado && (() => {
+                  const bullets = extraerBulletsResumen(textoHumanizado)
+                  if (bullets.length === 0) return null
+                  return (
+                    <div className="w-full mt-3 px-2">
+                      <div className="bg-amber-50 rounded-xl border border-amber-200 px-4 py-3 text-left">
+                        <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-2">
+                          Cambios detectados
+                        </p>
+                        <ul className="space-y-1">
+                          {bullets.map((b, i) => (
+                            <li key={i} className="text-xs text-amber-900 leading-relaxed">{b}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+
+            /* ── Estado: completado con éxito ──────────────────────────── */
+            ) : textoHumanizado && !textoHumanizado.startsWith('⚠️') ? (
+              <div className="px-4 py-4 space-y-3">
+                {/* Card de resumen colapsable */}
+                {(() => {
+                  const resumen = extraerResumen(textoHumanizado)
+                  if (!resumen) return null
+                  return (
+                    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                      <button
+                        onClick={() => setResumenAbierto(!resumenAbierto)}
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <User className="h-3.5 w-3.5 text-orange-600" />
+                          <span className="text-xs font-semibold text-gray-700">Resumen de cambios</span>
+                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-green-100 text-green-700">
+                            Completado
+                          </span>
+                        </div>
+                        {resumenAbierto
+                          ? <ChevronUp className="h-3.5 w-3.5 text-gray-400" />
+                          : <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
+                        }
+                      </button>
+                      {resumenAbierto && (
+                        <div className="px-4 pb-3 border-t border-gray-100">
+                          <div className="prose prose-xs prose-gray max-w-none pt-3">
+                            <ReactMarkdown>{resumen}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* Botón principal: Reemplazar en editor */}
+                {!confirmReemplazar ? (
+                  <button
+                    onClick={() => setConfirmReemplazar(true)}
+                    className="w-full rounded-xl py-2.5 px-4 text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                    Reemplazar en editor
+                  </button>
+                ) : (
+                  <div className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-orange-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-orange-800 leading-relaxed">
+                        ¿Reemplazar el texto actual con la versión humanizada? Esta acción no se puede deshacer.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleReemplazarConHumanizado}
+                        className="flex-1 rounded-lg py-2 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 transition-colors"
+                      >
+                        Sí, reemplazar
+                      </button>
+                      <button
+                        onClick={() => setConfirmReemplazar(false)}
+                        className="flex-1 rounded-lg py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Botón: Ver texto humanizado (toggle) */}
+                <button
+                  onClick={() => setVerTextoHumanizado(!verTextoHumanizado)}
+                  className="w-full rounded-xl py-2 px-4 text-xs font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 transition-colors flex items-center justify-center gap-2"
+                >
+                  {verTextoHumanizado
+                    ? <><EyeOff className="h-3.5 w-3.5" />Ocultar texto humanizado</>
+                    : <><Eye className="h-3.5 w-3.5" />Ver texto humanizado</>
+                  }
+                </button>
+
+                {/* Panel de texto humanizado (scrollable) */}
+                {verTextoHumanizado && (
+                  <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3 max-h-[45vh] overflow-y-auto">
+                    <div className="prose prose-xs prose-gray max-w-none">
+                      <ReactMarkdown>{extraerTextoHumanizado(textoHumanizado)}</ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+
+                {/* Botón: Volver a humanizar */}
+                <button
+                  onClick={handleHumanizar}
+                  disabled={!texto.trim() || cargandoHumanizar}
+                  className="w-full rounded-xl py-2 px-4 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Volver a humanizar
+                </button>
+
+                {fechaHumanizado && (
+                  <p className="text-center text-[10px] text-gray-400">{fechaHumanizado}</p>
+                )}
+              </div>
+
+            /* ── Estado: error ─────────────────────────────────────────── */
+            ) : textoHumanizado.startsWith('⚠️') ? (
+              <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
+                <div className="h-14 w-14 rounded-2xl bg-red-50 flex items-center justify-center">
+                  <AlertCircle className="h-7 w-7 text-red-400" />
+                </div>
+                <p className="text-sm text-red-600">{textoHumanizado}</p>
+                <button
+                  onClick={handleHumanizar}
+                  disabled={!texto.trim()}
+                  className="rounded-xl py-2.5 px-5 text-sm font-semibold bg-orange-600 hover:bg-orange-700 text-white shadow-sm flex items-center gap-2 transition-all"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reintentar
+                </button>
+              </div>
+
+            /* ── Estado: vacío (inicial) ───────────────────────────────── */
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
+                <div className="h-14 w-14 rounded-2xl bg-orange-50 flex items-center justify-center">
+                  <User className="h-7 w-7 text-orange-300" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-700">Humanizar texto</p>
+                  <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                    Transforma el texto del editor para que suene genuinamente humano y pase los detectores de IA
+                  </p>
+                </div>
+                <button
+                  onClick={handleHumanizar}
+                  disabled={!texto.trim()}
+                  className={`rounded-xl py-2.5 px-5 text-sm font-semibold flex items-center gap-2 transition-all ${
+                    !texto.trim()
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-orange-600 hover:bg-orange-700 text-white shadow-sm'
+                  }`}
+                >
+                  <User className="h-4 w-4" />
+                  Humanizar texto
+                </button>
+                {!texto.trim() && (
+                  <p className="text-xs text-gray-400">Selecciona un contenido con texto para humanizar</p>
                 )}
               </div>
             )}

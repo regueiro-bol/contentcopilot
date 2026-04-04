@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import Anthropic from '@anthropic-ai/sdk';
 import { calculateGlobalScore } from './scorer';
 import type { LLMProvider, InformeData } from './types';
@@ -10,12 +10,14 @@ export async function generateReport(
   clienteId: string,
   periodo: string
 ): Promise<InformeData> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
-  const { data: resultados } = await supabase
+  console.log('[Report] Buscando resultados para scan:', scanId);
+  const { data: resultados, error: resError } = await supabase
     .from('georadar_resultados')
-    .select('*, georadar_queries(query_texto, categoria)')
+    .select('*, georadar_queries(query, categoria)')
     .eq('scan_id', scanId);
+  console.log('[Report] Resultados encontrados:', resultados?.length, 'Error:', resError?.message);
 
   if (!resultados || resultados.length === 0) throw new Error('Sin resultados');
 
@@ -53,7 +55,7 @@ export async function generateReport(
     scoresPorLLM[llm] = calculateGlobalScore(llmResults);
   }
 
-  const todosAtributos = resultados.flatMap(r => r.atributos_asociados || []);
+  const todosAtributos = resultados.flatMap(r => r.atributos_detectados || []);
   const atribFreq = todosAtributos.reduce((acc: Record<string, number>, a) => {
     acc[a] = (acc[a] || 0) + 1;
     return acc;
@@ -77,7 +79,7 @@ export async function generateReport(
     const qId = r.query_id;
     if (!acc[qId]) {
       acc[qId] = {
-        query: r.georadar_queries?.query_texto,
+        query: r.georadar_queries?.query,
         scores: [],
         competidores: [] as string[],
       };
@@ -148,15 +150,13 @@ Devuelve SOLO JSON sin markdown:
   const iaText = iaResponse.content[0].type === 'text' ? iaResponse.content[0].text : '{}';
   let iaData: any = {};
   try {
-    iaData = JSON.parse(iaText.trim());
+    const clean = iaText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    iaData = JSON.parse(clean);
   } catch { /* usar defaults */ }
 
-  const informeData = {
-    scan_id: scanId,
-    cliente_id: clienteId,
-    periodo,
+  // Guardar informe directamente en georadar_scans
+  await supabase.from('georadar_scans').update({
     score_global: scoreGlobal,
-    score_anterior: scoreAnterior,
     scores_por_llm: scoresPorLLM,
     atributos_dominantes: atributosDominantes,
     atributos_ausentes: iaData.atributos_ausentes || [],
@@ -164,13 +164,23 @@ Devuelve SOLO JSON sin markdown:
     posicion_competitiva: { lidera, pierde },
     top_fuentes: topFuentes,
     recomendaciones: iaData.recomendaciones || [],
-  };
-
-  await supabase.from('georadar_informes').insert(informeData);
+    estado: 'completado',
+  }).eq('id', scanId);
 
   return {
-    ...informeData,
+    scan_id: scanId,
+    cliente_id: clienteId,
     cliente_nombre: cliente?.nombre || '',
+    periodo,
+    score_global: scoreGlobal,
+    score_anterior: scoreAnterior,
     evolucion: scoreAnterior !== null ? scoreGlobal - scoreAnterior : 0,
+    scores_por_llm: scoresPorLLM,
+    atributos_dominantes: atributosDominantes,
+    atributos_ausentes: iaData.atributos_ausentes || [],
+    narrativa_resumen: iaData.narrativa || '',
+    posicion_competitiva: { lidera, pierde },
+    top_fuentes: topFuentes,
+    recomendaciones: iaData.recomendaciones || [],
   } as InformeData;
 }

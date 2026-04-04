@@ -108,7 +108,7 @@ const AGENTES: AgenteConfig[] = [
     descripcion: 'Transforma textos con patrones de IA para que suenen genuinamente humanos en español',
     icono: 'User',
     color: 'orange',
-    dify_app_id: process.env.NEXT_PUBLIC_DIFY_HUMANIZADOR_APP_ID ?? '',
+    dify_app_id: '', // migrado a Claude API directa (/api/humanizador)
     estado: 'activo',
     flujo: 'revision',
     uso: 'Pega el texto generado y recibe la versión humanizada lista para publicar',
@@ -228,6 +228,68 @@ function ChatModal({
     setEnviando(true)
 
     try {
+      // ── Humanizador: usa Claude API directa con streaming ──────────────
+      if (agente.id === 'humanizador') {
+        // Añadir placeholder para el asistente (se irá llenando con el stream)
+        const mensajesConPlaceholder: Mensaje[] = [...nuevosMensajes, { rol: 'asistente', contenido: '' }]
+        setMensajes(mensajesConPlaceholder)
+
+        const res = await fetch('/api/humanizador', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            texto,
+            mensajes: nuevosMensajes.map((m) => ({
+              role: m.rol === 'usuario' ? 'user' : 'assistant',
+              content: m.contenido,
+            })),
+            modo: 'stream',
+          }),
+        })
+
+        if (!res.ok) {
+          const datos = await res.json().catch(() => ({ error: 'Error desconocido' }))
+          setMensajes([...nuevosMensajes, {
+            rol: 'asistente',
+            contenido: `⚠️ Error: ${datos.error ?? 'No se pudo conectar con el Humanizador'}`,
+          }])
+          return
+        }
+
+        // Leer stream SSE
+        const reader = res.body?.getReader()
+        if (!reader) throw new Error('No se pudo leer el stream')
+
+        const decoder = new TextDecoder()
+        let textoAcumulado = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value, { stream: true })
+          const lineas = chunk.split('\n').filter((l) => l.startsWith('data: '))
+
+          for (const linea of lineas) {
+            const datos = linea.replace('data: ', '')
+            if (datos === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(datos)
+              if (parsed.texto) {
+                textoAcumulado += parsed.texto
+                setMensajes([...nuevosMensajes, { rol: 'asistente', contenido: textoAcumulado }])
+              }
+            } catch { /* chunk parcial, ignorar */ }
+          }
+        }
+
+        if (!textoAcumulado) {
+          setMensajes([...nuevosMensajes, { rol: 'asistente', contenido: '⚠️ Sin respuesta del Humanizador.' }])
+        }
+        return
+      }
+
+      // ── Resto de agentes: Dify (blocking) ─────────────────────────────
       const res = await fetch('/api/dify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

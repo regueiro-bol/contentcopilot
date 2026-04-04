@@ -33,6 +33,7 @@ export type TipoOperacion =
   | 'ad_creative'    // pieza social con FLUX
   | 'video_reel'     // reel generado con FLUX + FFmpeg
   | 'video_story'    // story generado con FLUX + FFmpeg
+  | 'humanizacion'   // humanización de texto IA
 
 // ─── Cálculo ─────────────────────────────────────────────────────────────────
 

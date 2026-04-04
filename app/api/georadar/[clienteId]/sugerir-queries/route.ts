@@ -47,10 +47,13 @@ Devuelve SOLO JSON sin markdown:
   });
 
   const text = response.content[0].type === 'text' ? response.content[0].text : '{}';
+  console.log('[GEORadar] sugerir-queries raw:', text.substring(0, 300));
   try {
-    const data = JSON.parse(text.trim());
+    const clean = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const data = JSON.parse(clean);
     return NextResponse.json(data);
-  } catch {
+  } catch (e) {
+    console.error('[GEORadar] Error parsing sugerir-queries:', e);
     return NextResponse.json({ queries: [] });
   }
 }
