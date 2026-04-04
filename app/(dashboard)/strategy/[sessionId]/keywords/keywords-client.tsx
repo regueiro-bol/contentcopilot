@@ -34,6 +34,10 @@ export interface KeywordRow {
   incluida          : boolean
   cluster_name      : string | null
   funnel_stage      : string | null
+  gsc_clicks        : number | null
+  gsc_impressions   : number | null
+  gsc_position      : number | null
+  gsc_opportunity   : 'quick_win' | 'existing' | 'new' | null
 }
 
 export interface SessionResumen {
@@ -110,6 +114,30 @@ function IntentBadge({ intent }: { intent: string | null }) {
   )
 }
 
+const GSC_OPP_STYLES: Record<string, { label: string; cls: string }> = {
+  existing : { label: 'Existente', cls: 'bg-green-100 text-green-700'  },
+  quick_win: { label: 'Quick win', cls: 'bg-amber-100 text-amber-700'  },
+  new      : { label: 'Nueva',     cls: 'bg-blue-100 text-blue-700'   },
+}
+
+const GSC_FILTERS = [
+  { value: '',          label: 'Todas' },
+  { value: 'quick_win', label: 'Quick wins' },
+  { value: 'existing',  label: 'Existentes' },
+  { value: 'new',       label: 'Nuevas' },
+]
+
+function GSCBadge({ opportunity }: { opportunity: string | null }) {
+  if (!opportunity) return <span className="text-gray-300">—</span>
+  const style = GSC_OPP_STYLES[opportunity]
+  if (!style) return <span className="text-gray-300">—</span>
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.cls}`}>
+      {style.label}
+    </span>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────
 // Componente principal
 // ─────────────────────────────────────────────────────────────
@@ -129,6 +157,7 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
   const [busqueda,          setBusqueda]          = useState('')
   const [filtroIntent,      setFiltroIntent]      = useState('')
   const [filtroDificultad,  setFiltroDificultad]  = useState('Todas')
+  const [filtroGSC,         setFiltroGSC]         = useState('')
 
   // ── Keywords filtradas ─────────────────────────────────────
   const keywordsFiltradas = useMemo(() => {
@@ -138,9 +167,10 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
       if (q && !k.keyword.toLowerCase().includes(q)) return false
       if (filtroIntent && k.search_intent !== filtroIntent) return false
       if (filtroDificultad !== 'Todas' && !difRange.test(k.keyword_difficulty)) return false
+      if (filtroGSC && k.gsc_opportunity !== filtroGSC) return false
       return true
     })
-  }, [initialKeywords, busqueda, filtroIntent, filtroDificultad])
+  }, [initialKeywords, busqueda, filtroIntent, filtroDificultad, filtroGSC])
 
   // ── Contadores ─────────────────────────────────────────────
   const totalIncluidas = useMemo(
@@ -220,9 +250,11 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
     setBusqueda('')
     setFiltroIntent('')
     setFiltroDificultad('Todas')
+    setFiltroGSC('')
   }
 
-  const hayFiltros = busqueda !== '' || filtroIntent !== '' || filtroDificultad !== 'Todas'
+  const hayGSCData = initialKeywords.some((k) => k.gsc_opportunity != null)
+  const hayFiltros = busqueda !== '' || filtroIntent !== '' || filtroDificultad !== 'Todas' || filtroGSC !== ''
 
   const { label: statusLabel, cls: statusCls } =
     STATUS_MAP[session.status] ?? { label: session.status, cls: 'bg-gray-100 text-gray-500' }
@@ -335,6 +367,30 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
             </div>
           </div>
 
+          {/* Filtro GSC — solo visible si hay datos GSC */}
+          {hayGSCData && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Oportunidad GSC</p>
+              <div className="flex flex-wrap gap-1.5">
+                {GSC_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFiltroGSC(value)}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                      filtroGSC === value
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Resultado de filtro + reset */}
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
@@ -377,13 +433,16 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                 <th className="px-3 py-2.5 text-right font-semibold text-gray-600 whitespace-nowrap">Volumen</th>
                 <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Dificultad</th>
                 <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Intención</th>
+                {hayGSCData && (
+                  <th className="px-3 py-2.5 text-left font-semibold text-gray-600">GSC</th>
+                )}
                 <th className="px-3 py-2.5 text-right font-semibold text-gray-600">CPC</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {keywordsFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-12 text-center text-gray-400">
+                  <td colSpan={hayGSCData ? 7 : 6} className="px-3 py-12 text-center text-gray-400">
                     <Search className="h-6 w-6 mx-auto mb-2 opacity-40" />
                     <p className="text-sm">No hay keywords que coincidan con los filtros</p>
                     {hayFiltros && (
@@ -432,6 +491,11 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                       <td className="px-3 py-2">
                         <IntentBadge intent={kw.search_intent} />
                       </td>
+                      {hayGSCData && (
+                        <td className="px-3 py-2">
+                          <GSCBadge opportunity={kw.gsc_opportunity} />
+                        </td>
+                      )}
                       <td className="px-3 py-2 text-right font-mono text-xs text-gray-500">
                         {kw.cpc != null ? `€${kw.cpc.toFixed(2)}` : <span className="text-gray-300">—</span>}
                       </td>

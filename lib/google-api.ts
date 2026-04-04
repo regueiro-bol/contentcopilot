@@ -160,37 +160,59 @@ export interface GSCKeyword {
   position    : number
 }
 
+/** Formatea Date como YYYY-MM-DD */
+function formatDateISO(d: Date): string {
+  return d.toISOString().split('T')[0]
+}
+
 /**
  * Obtiene keywords de GSC con métricas (clicks, impressions, ctr, position).
  * Agrupa por query, máximo 1000 filas.
+ *
+ * Si no se pasan fechas, usa los últimos 90 días hasta ayer.
  */
 export async function getGSCKeywords(
   accessToken: string,
   siteUrl    : string,
-  startDate  : string,
-  endDate    : string,
+  startDate? : string,
+  endDate?   : string,
 ): Promise<GSCKeyword[]> {
   const auth       = getAuthenticatedClient(accessToken)
   const webmasters = google.webmasters({ version: 'v3', auth })
 
+  // Defaults: últimos 90 días hasta ayer
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  const ninetyDaysAgo = new Date()
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 91)
+
+  const start = startDate ?? formatDateISO(ninetyDaysAgo)
+  const end   = endDate   ?? formatDateISO(yesterday)
+
+  console.log(`[GSC] Consultando keywords: ${siteUrl} | ${start} → ${end}`)
+
   const { data } = await webmasters.searchanalytics.query({
     siteUrl,
     requestBody: {
-      startDate,
-      endDate,
-      dimensions : ['query'],
-      rowLimit   : 1000,
-      startRow   : 0,
+      startDate : start,
+      endDate   : end,
+      dimensions: ['query'],
+      rowLimit  : 1000,
+      startRow  : 0,
+      dataState : 'final',
     },
   })
 
-  return (data.rows ?? []).map((row) => ({
+  const keywords = (data.rows ?? []).map((row) => ({
     query      : row.keys?.[0] ?? '',
     clicks     : row.clicks      ?? 0,
     impressions: row.impressions  ?? 0,
     ctr        : row.ctr          ?? 0,
     position   : row.position     ?? 0,
   }))
+
+  console.log(`[GSC] ${keywords.length} keywords obtenidas de ${siteUrl}`)
+  return keywords
 }
 
 // ─────────────────────────────────────────────────────────────

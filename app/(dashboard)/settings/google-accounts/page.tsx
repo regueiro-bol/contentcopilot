@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   Plus,
@@ -36,6 +36,14 @@ const MAX_ACCOUNTS = 3
 // ─────────────────────────────────────────────────────────────
 
 export default function GoogleAccountsPage() {
+  return (
+    <Suspense fallback={null}>
+      <GoogleAccountsContent />
+    </Suspense>
+  )
+}
+
+function GoogleAccountsContent() {
   const searchParams = useSearchParams()
 
   const [accounts, setAccounts]   = useState<GoogleAccount[]>([])

@@ -8,6 +8,11 @@ import {
   type KeywordIdeaItem,
   type SearchVolumeItem,
 } from '@/lib/dataforseo'
+import {
+  getGSCKeywords,
+  refreshAccessToken,
+  type GSCKeyword,
+} from '@/lib/google-api'
 
 export const maxDuration = 120
 
@@ -145,6 +150,57 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ── 3b. GSC keywords (si el cliente tiene propiedad GSC vinculada) ────
+    const gscMap = new Map<string, GSCKeyword>()
+    try {
+      // Buscar conexión GSC activa para este cliente
+      const { data: gscConn } = await supabase
+        .from('client_google_connections')
+        .select('gsc_property_url, google_account_id, google_accounts(access_token, refresh_token, token_expiry)')
+        .eq('client_id', cliente_id)
+        .eq('status', 'active')
+        .not('gsc_property_url', 'is', null)
+        .maybeSingle()
+
+      if (gscConn?.gsc_property_url && gscConn.google_accounts) {
+        const ga = gscConn.google_accounts as unknown as {
+          access_token: string | null; refresh_token: string; token_expiry: string | null
+        }
+        let accessToken = ga.access_token
+
+        // Refrescar token si expirado
+        const isExpired = !accessToken || (ga.token_expiry && new Date(ga.token_expiry) <= new Date())
+        if (isExpired && ga.refresh_token) {
+          console.log('[Research] Refrescando token GSC...')
+          const refreshed = await refreshAccessToken(ga.refresh_token)
+          accessToken = refreshed.access_token
+          // Actualizar token en BD
+          await supabase
+            .from('google_accounts')
+            .update({
+              access_token: refreshed.access_token,
+              token_expiry: refreshed.expiry_date ? new Date(refreshed.expiry_date).toISOString() : null,
+              updated_at  : new Date().toISOString(),
+            })
+            .eq('id', gscConn.google_account_id)
+        }
+
+        if (accessToken) {
+          console.log(`[Research] Consultando GSC: ${gscConn.gsc_property_url}`)
+          const gscKeywords = await getGSCKeywords(accessToken, gscConn.gsc_property_url)
+          for (const gk of gscKeywords) {
+            gscMap.set(gk.query.toLowerCase().trim(), gk)
+          }
+          console.log(`[Research] GSC: ${gscMap.size} keywords obtenidas`)
+        }
+      } else {
+        console.log('[Research] Sin conexión GSC activa para este cliente')
+      }
+    } catch (gscErr) {
+      console.warn('[Research] Error obteniendo datos GSC (continuamos sin ellos):', gscErr instanceof Error ? gscErr.message : gscErr)
+      // No es crítico — continuamos sin datos GSC
+    }
+
     // ── 4. Merge y deduplicación ───────────────────────────────────────────
     // Prioridad: keyword_ideas (tiene más métricas) sobre search_volume
 
@@ -213,8 +269,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── 4b. Enriquecer con datos GSC ────────────────────────────────────────
+    const classifyOpportunity = (pos: number | null): 'existing' | 'quick_win' | 'new' => {
+      if (pos == null) return 'new'
+      if (pos <= 3) return 'existing'
+      if (pos <= 20) return 'quick_win'
+      return 'existing' // pos > 20 ya rankea pero bajo
+    }
+
+    for (const [key, kwData] of Array.from(keywordsMap.entries())) {
+      const gsc = gscMap.get(key)
+      if (gsc) {
+        kwData.gsc_clicks      = gsc.clicks
+        kwData.gsc_impressions = gsc.impressions
+        kwData.gsc_ctr         = Math.round(gsc.ctr * 10000) / 10000 // 4 decimales
+        kwData.gsc_position    = Math.round(gsc.position * 100) / 100 // 2 decimales
+        kwData.gsc_opportunity = classifyOpportunity(gsc.position)
+      } else if (gscMap.size > 0) {
+        // Solo marcar como 'new' si tenemos datos GSC (si no hay GSC, dejar null)
+        kwData.gsc_opportunity = 'new'
+      }
+    }
+
     const keywordsArray = Array.from(keywordsMap.values())
-    console.log(`[Research] Total keywords a insertar: ${keywordsArray.length}`)
+    const withGsc = keywordsArray.filter((k) => k.gsc_opportunity != null).length
+    console.log(`[Research] Total keywords a insertar: ${keywordsArray.length} | con datos GSC: ${withGsc}`)
 
     // ── 5. Insertar keywords por lotes ─────────────────────────────────────
     const BATCH_SIZE = 100
