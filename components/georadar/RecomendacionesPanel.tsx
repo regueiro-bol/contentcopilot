@@ -1,18 +1,20 @@
+'use client';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Check, Loader2 } from 'lucide-react';
+import { useState } from 'react';
 
 const URGENCIA_STYLES: Record<string, string> = {
-  alta: 'bg-red-50 border-red-200 text-red-700',
-  media: 'bg-amber-50 border-amber-200 text-amber-700',
-  baja: 'bg-gray-50 border-gray-200 text-gray-600',
+  alta: 'bg-red-50 border-red-200',
+  media: 'bg-amber-50 border-amber-200',
+  baja: 'bg-gray-50 border-gray-200',
 };
 
-const URGENCIA_BADGE: Record<string, string> = {
-  alta: 'destructive',
-  media: 'warning',
-  baja: 'secondary',
+const URGENCIA_TEXT: Record<string, string> = {
+  alta: 'text-red-700',
+  media: 'text-amber-700',
+  baja: 'text-gray-600',
 };
 
 interface Recomendacion {
@@ -29,6 +31,25 @@ interface Props {
 }
 
 export function RecomendacionesPanel({ recomendaciones, clienteId }: Props) {
+  const [creando, setCreando] = useState<number | null>(null);
+  const [creados, setCreados] = useState<Record<number, boolean>>({});
+
+  async function crearContenido(rec: Recomendacion, i: number) {
+    setCreando(i);
+    await fetch(`/api/georadar/${clienteId}/crear-contenido`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gap: rec.gap,
+        accion: rec.accion,
+        tipo_contenido: rec.tipo_contenido,
+        urgencia: rec.urgencia,
+      }),
+    });
+    setCreados(prev => ({ ...prev, [i]: true }));
+    setCreando(null);
+  }
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -37,13 +58,13 @@ export function RecomendacionesPanel({ recomendaciones, clienteId }: Props) {
             Recomendaciones de contenido
           </CardTitle>
           <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
-            → conectado al pipeline
+            → pipeline ContentCopilot
           </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {recomendaciones.length === 0 && (
-          <p className="text-sm text-gray-400 text-center py-4">Sin recomendaciones generadas</p>
+          <p className="text-sm text-gray-400 text-center py-4">Sin recomendaciones</p>
         )}
         {recomendaciones.map((rec, i) => (
           <div
@@ -51,28 +72,34 @@ export function RecomendacionesPanel({ recomendaciones, clienteId }: Props) {
             className={`border rounded-lg p-3.5 ${URGENCIA_STYLES[rec.urgencia]}`}
           >
             <div className="flex items-start justify-between gap-3 mb-1.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium uppercase tracking-wide">
-                  Urgencia {rec.urgencia}
-                </span>
-                <span className="text-xs opacity-70">· {rec.tipo_contenido}</span>
+              <div className={`text-xs font-medium uppercase tracking-wide ${URGENCIA_TEXT[rec.urgencia]}`}>
+                Urgencia {rec.urgencia} · {rec.tipo_contenido}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-6 px-2 shrink-0"
-                asChild
-              >
-                <a href={`/contenidos/nuevo?clienteId=${clienteId}&tipo=${rec.tipo_contenido}&gap=${encodeURIComponent(rec.gap)}`}>
+              {creados[i] ? (
+                <Button size="sm" variant="outline" disabled className="text-xs h-6 px-2 text-green-600 border-green-200">
+                  <Check className="h-3 w-3 mr-1" />
+                  Creado
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-6 px-2 shrink-0"
+                  onClick={() => crearContenido(rec, i)}
+                  disabled={creando === i}
+                >
+                  {creando === i
+                    ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    : <ArrowRight className="h-3 w-3 mr-1" />
+                  }
                   Crear contenido
-                  <ArrowRight className="h-3 w-3 ml-1" />
-                </a>
-              </Button>
+                </Button>
+              )}
             </div>
-            <p className="text-xs leading-relaxed mb-1.5">{rec.gap}</p>
-            <p className="text-xs opacity-75">{rec.accion}</p>
+            <p className={`text-xs leading-relaxed mb-1 ${URGENCIA_TEXT[rec.urgencia]}`}>{rec.gap}</p>
+            <p className={`text-xs opacity-75 ${URGENCIA_TEXT[rec.urgencia]}`}>{rec.accion}</p>
             {rec.queries_afectadas?.length > 0 && (
-              <p className="text-xs opacity-60 mt-1.5">
+              <p className={`text-xs opacity-60 mt-1.5 ${URGENCIA_TEXT[rec.urgencia]}`}>
                 Queries: {rec.queries_afectadas.join(' · ')}
               </p>
             )}
