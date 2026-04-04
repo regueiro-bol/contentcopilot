@@ -64,6 +64,8 @@ interface ClusterSummary {
   total_keywords: number
   funnel        : { tofu: number; mofu: number; bofu: number }
   top_keywords  : { keyword: string; volume: number | null; difficulty: number | null; funnel: string | null }[]
+  /** Número de artículos que Claude debe generar para este cluster */
+  assigned_articles?: number
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -77,11 +79,23 @@ function buildMapPrompt(
   meses       : number,
   artMes      : number,
   monthsList  : string[],
-  clustersJson: string,
+  clustersWithAssignment: ClusterSummary[],
   batchIndex  : number,
   totalBatches: number,
   articulosParaEsteBatch: number,
 ): string {
+  // Generar instrucción explícita por cluster
+  const assignmentLines = clustersWithAssignment
+    .map((c) => `- "${c.cluster}": ${c.assigned_articles} artículo${c.assigned_articles !== 1 ? 's' : ''}`)
+    .join('\n')
+
+  // JSON de clusters sin el campo assigned_articles (para no confundir a Claude)
+  const clustersJson = JSON.stringify(
+    clustersWithAssignment.map(({ assigned_articles: _, ...rest }) => rest),
+    null,
+    2,
+  )
+
   return `Genera artículos para el mapa editorial SEO del cliente "${clientName}".
 
 Configuración global:
@@ -90,13 +104,19 @@ Configuración global:
 - Meses disponibles: ${JSON.stringify(monthsList)}
 
 Lote ${batchIndex + 1} de ${totalBatches}.
-Genera EXACTAMENTE ${articulosParaEsteBatch} artículos para los siguientes clusters:
+Genera EXACTAMENTE ${articulosParaEsteBatch} artículos en total, distribuidos así:
+${assignmentLines}
+
+IMPORTANTE: Respeta EXACTAMENTE el número de artículos asignado a cada cluster.
+Si un cluster tiene 2+ artículos, cada uno debe cubrir un ángulo o keyword diferente del cluster.
+
+Datos de los clusters:
 ${clustersJson}
 
 Para cada artículo genera:
 - title: título SEO optimizado (50-70 caracteres), natural en español
 - slug: URL slug sin tildes, sin caracteres especiales, guiones como separador
-- main_keyword: keyword principal (la de mayor volumen del cluster)
+- main_keyword: keyword principal (diferente para cada artículo del mismo cluster)
 - secondary_keywords: array de 2-4 keywords complementarias del mismo cluster
 - cluster: nombre exacto del cluster (igual al de los datos)
 - funnel_stage: "tofu" | "mofu" | "bofu" según el cluster
@@ -109,9 +129,9 @@ Estrategia temporal:
 - TOFU alto volumen → meses tempranos (base de tráfico)
 - MOFU → meses intermedios (consideración)
 - BOFU → meses finales (conversión)
-- Distribuye respetando ${artMes} artículos/mes
+- Distribuye EXACTAMENTE ${artMes} artículos por mes
 
-Responde ÚNICAMENTE con un JSON array:
+Responde ÚNICAMENTE con un JSON array de ${articulosParaEsteBatch} objetos:
 [{"title":"...","slug":"...","main_keyword":"...","secondary_keywords":["..."],"cluster":"...","funnel_stage":"tofu","suggested_month":"${monthsList[0]}","priority":1,"volume":2400,"difficulty":42}]`
 }
 
@@ -203,30 +223,87 @@ export async function POST(request: NextRequest) {
       clusterGroups.get(name)!.push(kw)
     }
 
-    // Resumen compacto: top N keywords por cluster
-    const allClusterSummaries: ClusterSummary[] = Array.from(clusterGroups.entries()).map(([name, kws]) => {
-      const sorted = [...kws].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
-      return {
-        cluster       : name,
-        total_keywords: kws.length,
-        funnel        : {
-          tofu: kws.filter((k) => k.funnel_stage === 'tofu').length,
-          mofu: kws.filter((k) => k.funnel_stage === 'mofu').length,
-          bofu: kws.filter((k) => k.funnel_stage === 'bofu').length,
-        },
-        top_keywords: sorted.slice(0, TOP_KW_PER_CLUSTER).map((k) => ({
-          keyword   : k.keyword,
-          volume    : k.volume,
-          difficulty: k.keyword_difficulty,
-          funnel    : k.funnel_stage,
-        })),
-      }
-    })
+    // Resumen compacto: top N keywords por cluster, ordenados por volumen total desc
+    const allClusterSummaries: ClusterSummary[] = Array.from(clusterGroups.entries())
+      .map(([name, kws]) => {
+        const sorted = [...kws].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
+        return {
+          cluster       : name,
+          total_keywords: kws.length,
+          funnel        : {
+            tofu: kws.filter((k) => k.funnel_stage === 'tofu').length,
+            mofu: kws.filter((k) => k.funnel_stage === 'mofu').length,
+            bofu: kws.filter((k) => k.funnel_stage === 'bofu').length,
+          },
+          top_keywords: sorted.slice(0, TOP_KW_PER_CLUSTER).map((k) => ({
+            keyword   : k.keyword,
+            volume    : k.volume,
+            difficulty: k.keyword_difficulty,
+            funnel    : k.funnel_stage,
+          })),
+          total_volume: kws.reduce((sum, k) => sum + (k.volume ?? 0), 0),
+        }
+      })
+      // Priorizar por volumen total descendente
+      .sort((a, b) => (b.total_volume ?? 0) - (a.total_volume ?? 0))
+      .map(({ total_volume: _, ...rest }) => rest) // eliminar campo auxiliar
 
     const monthsList    = generateMonths(meses)
     const totalClusters = allClusterSummaries.length
 
-    console.log(`[GenerateMap] ${totalClusters} clusters, ${keywords.length} keywords, ${meses} meses, ${artMes} art/mes → máx ${totalMax} artículos`)
+    // ── Asignar artículos a cada cluster ─────────────────────
+    // Regla: cada cluster recibe mínimo 1 artículo.
+    // Clusters con ≥3 keywords pueden recibir artículos extra.
+    // Si hay más clusters que totalMax, solo usar los top por volumen.
+    const clustersToUse = allClusterSummaries.slice(0, totalMax)
+    let articulosRestantes = totalMax
+
+    // Fase 1: 1 artículo por cluster
+    for (const c of clustersToUse) {
+      c.assigned_articles = 1
+      articulosRestantes--
+    }
+
+    // Fase 2: repartir sobrantes entre clusters con ≥3 keywords (más ángulos posibles)
+    if (articulosRestantes > 0) {
+      // Candidatos para artículos extra: clusters con ≥3 keywords, ordenados por total_keywords desc
+      const candidates = [...clustersToUse]
+        .filter((c) => c.total_keywords >= 3)
+        .sort((a, b) => b.total_keywords - a.total_keywords)
+
+      // Máximo de artículos extra por cluster = floor(total_keywords / 2), cap 4
+      let round = 0
+      while (articulosRestantes > 0 && candidates.length > 0) {
+        let assigned = false
+        for (const c of candidates) {
+          if (articulosRestantes <= 0) break
+          const maxForCluster = Math.min(4, Math.floor(c.total_keywords / 2))
+          if ((c.assigned_articles ?? 1) < 1 + maxForCluster) {
+            c.assigned_articles = (c.assigned_articles ?? 1) + 1
+            articulosRestantes--
+            assigned = true
+          }
+        }
+        if (!assigned) break // Ningún cluster puede absorber más
+        round++
+        if (round > 20) break // Safety: evitar loop infinito
+      }
+
+      // Si aún sobran, repartir round-robin entre todos
+      if (articulosRestantes > 0) {
+        let idx = 0
+        while (articulosRestantes > 0) {
+          clustersToUse[idx % clustersToUse.length].assigned_articles =
+            (clustersToUse[idx % clustersToUse.length].assigned_articles ?? 1) + 1
+          articulosRestantes--
+          idx++
+        }
+      }
+    }
+
+    const totalAsignado = clustersToUse.reduce((sum, c) => sum + (c.assigned_articles ?? 1), 0)
+    console.log(`[GenerateMap] ${totalClusters} clusters, ${keywords.length} keywords, ${meses} meses, ${artMes} art/mes → ${totalAsignado} artículos asignados`)
+    console.log(`[GenerateMap] Asignación:`, clustersToUse.map((c) => `${c.cluster}=${c.assigned_articles}`).join(', '))
 
     // ── Crear content_map ANTES de los batches ───────────────
     // Así podemos insertar items progresivamente.
@@ -251,37 +328,25 @@ export async function POST(request: NextRequest) {
 
     // ── Dividir clusters en batches de CLUSTER_BATCH_SIZE ────
     const clusterBatches: ClusterSummary[][] = []
-    for (let i = 0; i < allClusterSummaries.length; i += CLUSTER_BATCH_SIZE) {
-      clusterBatches.push(allClusterSummaries.slice(i, i + CLUSTER_BATCH_SIZE))
+    for (let i = 0; i < clustersToUse.length; i += CLUSTER_BATCH_SIZE) {
+      clusterBatches.push(clustersToUse.slice(i, i + CLUSTER_BATCH_SIZE))
     }
 
-    // Repartir artículos proporcionalmente entre batches
-    // (por peso de keywords en cada batch)
-    const totalKwCount       = allClusterSummaries.reduce((sum, c) => sum + c.total_keywords, 0)
-    let articulosAsignados   = 0
     let totalItemsInsertados = 0
     let sortOrder            = 0
 
     for (let batchIdx = 0; batchIdx < clusterBatches.length; batchIdx++) {
-      const batch       = clusterBatches[batchIdx]
-      const batchKwCount = batch.reduce((sum, c) => sum + c.total_keywords, 0)
+      const batch = clusterBatches[batchIdx]
 
-      // Proporcional, mínimo 1 por batch, redondeando
-      let articulosParaBatch: number
-      if (batchIdx === clusterBatches.length - 1) {
-        // Último batch: lo que quede
-        articulosParaBatch = totalMax - articulosAsignados
-      } else {
-        articulosParaBatch = Math.max(1, Math.round((batchKwCount / totalKwCount) * totalMax))
-      }
-      articulosAsignados += articulosParaBatch
+      // Sumar artículos asignados a los clusters de este batch
+      const articulosParaBatch = batch.reduce((sum, c) => sum + (c.assigned_articles ?? 1), 0)
 
       console.log(`[GenerateMap] Batch ${batchIdx + 1}/${clusterBatches.length}: ${batch.length} clusters, pidiendo ${articulosParaBatch} artículos`)
 
       try {
         const response = await anthropic.messages.create({
           model     : 'claude-sonnet-4-5',
-          max_tokens: 4096,
+          max_tokens: 8192,
           system    : SYSTEM_PROMPT,
           messages  : [{
             role   : 'user',
@@ -290,7 +355,7 @@ export async function POST(request: NextRequest) {
               meses,
               artMes,
               monthsList,
-              JSON.stringify(batch, null, 2),
+              batch,
               batchIdx,
               clusterBatches.length,
               articulosParaBatch,
