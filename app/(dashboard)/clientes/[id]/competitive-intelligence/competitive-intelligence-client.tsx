@@ -308,13 +308,23 @@ function AdsSection({ ads }: { ads: CompetitorAdRow[] }) {
   )
 }
 
+function isImageUrl(url: string): boolean {
+  return /\.(jpg|jpeg|png|gif|webp)/i.test(url)
+    || url.includes('simgad')
+    || url.includes('googlesyndication.com/archive')
+}
+
 function AdCard({ ad }: { ad: CompetitorAdRow }) {
-  const [expanded, setExpanded] = useState(false)
-  const hasCopy    = !!ad.copy_text
-  const copy       = ad.copy_text ?? ''
-  const truncated  = hasCopy && copy.length > 140 && !expanded
-  const isGoogle   = ad.platform === 'google'
-  const externalUrl = ad.creative_url ?? ad.ad_snapshot_url ?? null
+  const [expanded, setExpanded]   = useState(false)
+  const [imgError, setImgError]   = useState(false)
+  const hasCopy      = !!ad.copy_text
+  const copy         = ad.copy_text ?? ''
+  const truncated    = hasCopy && copy.length > 140 && !expanded
+  const isGoogle     = ad.platform === 'google'
+  const externalUrl  = ad.creative_url ?? ad.ad_snapshot_url ?? null
+  const showPreview  = !!ad.creative_url && isImageUrl(ad.creative_url) && !imgError
+  const raw          = ad.raw_data as Record<string, unknown> | null
+  const totalDays    = typeof raw?.total_days_shown === 'number' ? raw.total_days_shown : null
 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 flex flex-col gap-3 hover:border-indigo-200 transition-colors">
@@ -325,6 +335,20 @@ function AdCard({ ad }: { ad: CompetitorAdRow }) {
         </span>
         <Badge className="bg-green-50 text-green-700 border-green-200 text-xs">Activo</Badge>
       </div>
+
+      {/* Creative image preview */}
+      {showPreview && (
+        <div className="rounded-md overflow-hidden border border-gray-200 bg-white">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={ad.creative_url!}
+            alt={`Anuncio de ${ad.competitors?.page_name ?? 'competidor'}`}
+            className="w-full h-auto max-h-48 object-contain"
+            loading="lazy"
+            onError={() => setImgError(true)}
+          />
+        </div>
+      )}
 
       {/* Copy text o fallback snapshot */}
       <div>
@@ -352,25 +376,12 @@ function AdCard({ ad }: { ad: CompetitorAdRow }) {
             <ExternalLink className="h-3.5 w-3.5" />
             Ver anuncio en Google Ads Transparency
           </a>
-        ) : (
+        ) : !showPreview ? (
           <p className="text-sm text-gray-400 italic">
-            {isGoogle ? 'Anuncio de imagen/vídeo sin texto extraíble' : '(sin texto disponible)'}
+            {isGoogle ? 'Anuncio sin preview disponible' : '(sin texto disponible)'}
           </p>
-        )}
+        ) : null}
       </div>
-
-      {/* Creative image preview (si es una imagen) */}
-      {ad.creative_url && ad.creative_url.match(/\.(jpg|jpeg|png|gif|webp)/i) && (
-        <div className="rounded-md overflow-hidden border border-gray-200 bg-white">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={ad.creative_url}
-            alt={`Anuncio de ${ad.competitors?.page_name ?? 'competidor'}`}
-            className="w-full h-auto max-h-48 object-contain"
-            loading="lazy"
-          />
-        </div>
-      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between mt-auto pt-2 border-t border-gray-200">
@@ -378,6 +389,11 @@ function AdCard({ ad }: { ad: CompetitorAdRow }) {
           {ad.cta_type && (
             <span className="bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded text-xs font-medium">
               {ad.cta_type.replace(/_/g, ' ')}
+            </span>
+          )}
+          {totalDays != null && (
+            <span className="bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded text-xs font-medium">
+              {totalDays}d activo
             </span>
           )}
           {ad.started_running && (
