@@ -23,6 +23,9 @@ export interface MapItem {
   status            : string
   contenido_id      : string | null
   sort_order        : number
+  content_status    : 'gap' | 'existing_content' | 'partial' | null
+  existing_url      : string | null
+  similarity_score  : number | null
 }
 
 export default async function MapaPage({ params }: PageProps) {
@@ -52,7 +55,7 @@ export default async function MapaPage({ params }: PageProps) {
     const { data: rawItems } = await supabase
       .from('content_map_items')
       .select(
-        'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order',
+        'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order, content_status, existing_url, similarity_score',
       )
       .eq('map_id', map.id)
       .order('sort_order', { ascending: true })
@@ -72,6 +75,9 @@ export default async function MapaPage({ params }: PageProps) {
       status            : String(i.status ?? 'planned'),
       contenido_id      : (i.contenido_id as string | null) ?? null,
       sort_order        : Number(i.sort_order ?? 0),
+      content_status    : (i.content_status as 'gap' | 'existing_content' | 'partial' | null) ?? null,
+      existing_url      : (i.existing_url as string | null) ?? null,
+      similarity_score  : i.similarity_score != null ? Number(i.similarity_score) : null,
     }))
   }
 

@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Calendar,
   Plus,
+  Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -84,6 +85,42 @@ function PriorityBadge({ p }: { p: number }) {
   )
 }
 
+function GapBadge({ status, url, score }: { status: 'gap' | 'existing_content' | 'partial' | null; url: string | null; score: number | null }) {
+  if (!status) return null
+  const pct = score != null ? `${Math.round(score * 100)}%` : null
+  const cfg = {
+    gap:              { label: 'Nuevo',     emoji: '🟢', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    existing_content: { label: 'Ya existe', emoji: '🟡', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+    partial:          { label: 'Parcial',   emoji: '🔵', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+  }[status]
+  const tooltipText = {
+    gap: 'Sin contenido similar en el blog. Oportunidad virgen — crear desde cero.',
+    partial: `Existe contenido relacionado pero no cubre este tema exactamente.${pct ? ` Similitud: ${pct}.` : ''} Valorar nuevo artículo o ampliar el existente.`,
+    existing_content: `Contenido muy similar ya publicado.${pct ? ` Similitud: ${pct}.` : ''} Mejor actualizar que crear nuevo.`,
+  }[status]
+  const inner = (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cfg.cls}`}>
+      {cfg.emoji} {cfg.label}
+    </span>
+  )
+  const wrapper = (children: React.ReactNode) => (
+    <div style={{ position: 'relative', display: 'inline-block' }} className="group">
+      {children}
+      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block bg-gray-900 text-white text-[11px] leading-snug rounded-lg px-2.5 py-1.5 w-52 z-20 whitespace-normal shadow-lg pointer-events-none">
+        {tooltipText}
+      </div>
+    </div>
+  )
+  if (status === 'existing_content' && url) {
+    return wrapper(
+      <a href={url} target="_blank" rel="noopener noreferrer" className="hover:opacity-80">
+        {inner}
+      </a>,
+    )
+  }
+  return wrapper(inner)
+}
+
 /** Formatea "2026-05" → "Mayo 2026" */
 function formatMonth(ym: string): string {
   if (!ym) return '—'
@@ -143,6 +180,33 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   const [creandoPedido, setCreandoPedido]   = useState<string | null>(null)
   const [errorPedidoId, setErrorPedidoId]   = useState<string | null>(null) // qué item falló
   const [errorPedidoMsg, setErrorPedidoMsg] = useState<string | null>(null)
+
+  // ── Estado: gap analysis ────────────────────────────────────
+  const [analizandoGaps, setAnalizandoGaps] = useState(false)
+  const [errorGaps, setErrorGaps]           = useState<string | null>(null)
+  const [gapSummary, setGapSummary]         = useState<{ gap: number; existing_content: number; partial: number } | null>(null)
+
+  async function handleAnalizarGaps() {
+    if (!clientId || !map) return
+    setAnalizandoGaps(true)
+    setErrorGaps(null)
+    setGapSummary(null)
+    try {
+      const res = await fetch('/api/strategy/check-existing', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ map_id: map.id, client_id: clientId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error analizando gaps')
+      setGapSummary(data.summary)
+      router.refresh()
+    } catch (e) {
+      setErrorGaps(e instanceof Error ? e.message : 'Error desconocido')
+    } finally {
+      setAnalizandoGaps(false)
+    }
+  }
 
   async function handleCrearPedido(item: MapItem) {
     if (!clientId || creandoPedido) return // evitar clicks simultáneos
@@ -242,15 +306,29 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
             </Link>
           </Button>
           {items.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => exportarCSV(items)}
-              className="gap-2"
-            >
-              <Download className="h-4 w-4" />
-              Exportar CSV
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAnalizarGaps}
+                disabled={analizandoGaps || !clientId || !map}
+                className="gap-2 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+              >
+                {analizandoGaps
+                  ? <><Loader2 className="h-4 w-4 animate-spin" />Analizando...</>
+                  : <><Search className="h-4 w-4" />Analizar gaps</>
+                }
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => exportarCSV(items)}
+                className="gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Exportar CSV
+              </Button>
+            </>
           )}
           <Button
             size="sm"
@@ -280,6 +358,45 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {/* Gap analysis feedback */}
+      {analizandoGaps && (
+        <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-4 py-3">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Comparando {items.length} artículos con la base documental del cliente...
+        </div>
+      )}
+      {errorGaps && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          {errorGaps}
+        </div>
+      )}
+      {gapSummary && !analizandoGaps && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-4 text-xs bg-gray-50 rounded-lg px-4 py-2.5">
+            <span className="font-semibold text-gray-600">Resultado gap analysis:</span>
+            <span className="text-emerald-700">🟢 {gapSummary.gap} nuevos</span>
+            <span className="text-amber-700">🟡 {gapSummary.existing_content} existentes</span>
+            <span className="text-blue-700">🔵 {gapSummary.partial} parciales</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              { emoji: '🟢', title: 'Nuevo', desc: 'No existe contenido similar. Crear desde cero.', border: 'border-emerald-200', bg: 'bg-emerald-50/50', text: 'text-emerald-800' },
+              { emoji: '🔵', title: 'Parcial', desc: 'Existe contenido relacionado pero incompleto. Crear nuevo enfoque o ampliar el existente.', border: 'border-blue-200', bg: 'bg-blue-50/50', text: 'text-blue-800' },
+              { emoji: '🟡', title: 'Ya existe', desc: 'Contenido muy similar ya publicado. Valorar actualización en lugar de crear nuevo.', border: 'border-amber-200', bg: 'bg-amber-50/50', text: 'text-amber-800' },
+            ].map((item) => (
+              <div key={item.title} className={`flex items-start gap-2.5 rounded-lg border ${item.border} ${item.bg} px-3 py-2.5`}>
+                <span className="text-base leading-none mt-0.5">{item.emoji}</span>
+                <div>
+                  <p className={`text-xs font-semibold ${item.text}`}>{item.title}</p>
+                  <p className="text-[11px] text-gray-500 leading-snug mt-0.5">{item.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -465,6 +582,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                           <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 hidden sm:table-cell">Volumen</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Dificultad</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Prioridad</th>
+                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Gap</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">Acción</th>
                         </tr>
                       </thead>
@@ -519,6 +637,13 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                             </td>
                             <td className="px-3 py-3 hidden md:table-cell">
                               <PriorityBadge p={item.priority} />
+                            </td>
+                            <td className="px-3 py-3 text-center hidden sm:table-cell">
+                              <GapBadge
+                                status={item.content_status}
+                                url={item.existing_url}
+                                score={item.similarity_score}
+                              />
                             </td>
                             <td className="px-3 py-3 text-center">
                               {(() => {
