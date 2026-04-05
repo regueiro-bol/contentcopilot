@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Edit, Trash2, Plus, Sparkles, ChevronRight,
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
-  Loader2, Link2, Globe, AlertCircle,
+  Loader2, Link2, Globe, AlertCircle, BarChart2, RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -406,6 +406,214 @@ function BrandAssetsTab({
 }
 
 // ---------------------------------------------------------------------------
+// Tab: Analítica GA4
+// ---------------------------------------------------------------------------
+
+interface GA4PageMetric {
+  pagePath   : string
+  sessions   : number
+  pageViews  : number
+  avgDuration: number
+  bounceRate : number
+  conversions: number
+}
+
+function GA4AnalyticsTab({ clienteId }: { clienteId: string }) {
+  const [metrics, setMetrics]   = useState<GA4PageMetric[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState<string | null>(null)
+  const [fecha, setFecha]       = useState<string | null>(null)
+  const [cached, setCached]     = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function cargar(force = false) {
+    if (force) setRefreshing(true)
+    else setLoading(true)
+    setError(null)
+
+    try {
+      const url = `/api/google/ga4/${clienteId}${force ? '?force=true' : ''}`
+      const res = await fetch(url)
+      const data = await res.json()
+
+      if (!res.ok) {
+        if (data.error === 'no_ga4') {
+          setError('no_ga4')
+        } else {
+          setError(data.error ?? 'Error cargando datos')
+        }
+        return
+      }
+
+      setMetrics(Array.isArray(data.metrics) ? data.metrics : [])
+      setFecha(data.fecha ?? null)
+      setCached(data.cached ?? false)
+    } catch {
+      setError('Error de conexión')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  useEffect(() => { cargar() }, [clienteId])
+
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60)
+    const s = Math.round(seconds % 60)
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
+
+  // Sin GA4 configurado
+  if (!loading && error === 'no_ga4') {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <BarChart2 className="h-8 w-8 text-gray-300 mx-auto mb-3" />
+          <p className="text-sm font-medium text-gray-500">Google Analytics 4 no configurado</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Vincula una propiedad GA4 en la sección{' '}
+            <span className="text-indigo-600 font-medium">Conexiones digitales</span>
+            {' '}de esta ficha.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Loading
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400 mx-auto mb-2" />
+          <p className="text-sm text-gray-400">Cargando datos de Analytics...</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Error genérico
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="py-8">
+          <div className="flex items-center gap-2 text-sm text-red-600">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // KPIs resumen
+  const totalSessions    = metrics.reduce((s, m) => s + m.sessions, 0)
+  const totalPageViews   = metrics.reduce((s, m) => s + m.pageViews, 0)
+  const avgDuration      = metrics.length > 0
+    ? metrics.reduce((s, m) => s + m.avgDuration * m.sessions, 0) / Math.max(totalSessions, 1)
+    : 0
+  const avgBounce        = metrics.length > 0
+    ? metrics.reduce((s, m) => s + m.bounceRate * m.sessions, 0) / Math.max(totalSessions, 1)
+    : 0
+
+  const top20 = metrics.slice(0, 20)
+
+  return (
+    <div className="space-y-4">
+      {/* Header con fecha y botón actualizar */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-gray-400">
+          {fecha && (
+            <>
+              Datos del {new Date(fecha).toLocaleDateString('es-ES')}
+              {cached && <span className="ml-1 text-gray-300">(caché)</span>}
+            </>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => cargar(true)}
+          disabled={refreshing}
+          className="text-xs gap-1.5"
+        >
+          {refreshing
+            ? <Loader2 className="h-3 w-3 animate-spin" />
+            : <RefreshCw className="h-3 w-3" />
+          }
+          Actualizar datos
+        </Button>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Sesiones', value: totalSessions.toLocaleString('es-ES'), color: 'text-indigo-700' },
+          { label: 'Páginas vistas', value: totalPageViews.toLocaleString('es-ES'), color: 'text-emerald-700' },
+          { label: 'Duración media', value: formatDuration(avgDuration), color: 'text-violet-700' },
+          { label: 'Tasa de rebote', value: `${(avgBounce * 100).toFixed(1)}%`, color: 'text-amber-700' },
+        ].map(({ label, value, color }) => (
+          <Card key={label}>
+            <CardContent className="p-3">
+              <p className={`text-xl font-bold ${color}`}>{value}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Tabla top 20 */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold">Top 20 páginas por sesiones</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {top20.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">Sin datos de páginas</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-xs text-gray-500">
+                    <th className="text-left py-2 pr-3">Página</th>
+                    <th className="text-right py-2 px-2">Sesiones</th>
+                    <th className="text-right py-2 px-2">Vistas</th>
+                    <th className="text-right py-2 px-2">Duración</th>
+                    <th className="text-right py-2 pl-2">Rebote</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {top20.map((m, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="py-2 pr-3 max-w-xs truncate text-gray-700 font-mono text-xs" title={m.pagePath}>
+                        {m.pagePath}
+                      </td>
+                      <td className="py-2 px-2 text-right font-semibold tabular-nums">
+                        {m.sessions.toLocaleString('es-ES')}
+                      </td>
+                      <td className="py-2 px-2 text-right text-gray-500 tabular-nums">
+                        {m.pageViews.toLocaleString('es-ES')}
+                      </td>
+                      <td className="py-2 px-2 text-right text-gray-500 tabular-nums">
+                        {formatDuration(m.avgDuration)}
+                      </td>
+                      <td className="py-2 pl-2 text-right text-gray-500 tabular-nums">
+                        {(m.bounceRate * 100).toFixed(1)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Sección: Conexiones digitales (Google)
 // ---------------------------------------------------------------------------
 
@@ -752,6 +960,10 @@ export default function ClienteDetalleClient({
             <ImageIcon className="h-3.5 w-3.5" />
             Brand Assets
           </TabsTrigger>
+          <TabsTrigger value="analitica" className="gap-1.5">
+            <BarChart2 className="h-3.5 w-3.5" />
+            Analítica
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Tab 1: Identidad ── */}
@@ -914,6 +1126,11 @@ export default function ClienteDetalleClient({
         {/* ── Tab 4: Brand Assets ── */}
         <TabsContent value="brand-assets">
           <BrandAssetsTab clienteId={cliente.id} coverage={coverage ?? null} />
+        </TabsContent>
+
+        {/* ── Tab 5: Analítica GA4 ── */}
+        <TabsContent value="analitica">
+          <GA4AnalyticsTab clienteId={cliente.id} />
         </TabsContent>
       </Tabs>
 

@@ -272,3 +272,74 @@ export async function getGA4Properties(accessToken: string): Promise<GA4Property
   console.log(`[GoogleAPI] Total propiedades GA4: ${properties.length}`)
   return properties
 }
+
+// ─────────────────────────────────────────────────────────────
+// Google Analytics 4 — Métricas por página
+// ─────────────────────────────────────────────────────────────
+
+export interface GA4PageMetric {
+  pagePath    : string
+  sessions    : number
+  pageViews   : number
+  avgDuration : number
+  bounceRate  : number
+  conversions : number
+}
+
+/**
+ * Obtiene métricas GA4 por página (últimos 90 días).
+ * Usa Analytics Data API v1beta: properties.runReport
+ *
+ * Requiere scope analytics.readonly y que "Google Analytics Data API"
+ * esté habilitada en Google Cloud Console.
+ */
+export async function getGA4PageMetrics(
+  accessToken: string,
+  propertyId : string,
+): Promise<GA4PageMetric[]> {
+  const auth          = getAuthenticatedClient(accessToken)
+  const analyticsData = google.analyticsdata({ version: 'v1beta', auth })
+
+  console.log(`[GA4] Obteniendo métricas para propiedad ${propertyId}...`)
+
+  // Usar fetch directo a Analytics Data API para evitar problemas de tipos con googleapis
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`
+  const res = await fetch(url, {
+    method : 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type' : 'application/json',
+    },
+    body: JSON.stringify({
+      dateRanges: [{ startDate: '90daysAgo', endDate: 'yesterday' }],
+      dimensions: [{ name: 'pagePath' }],
+      metrics   : [
+        { name: 'sessions' },
+        { name: 'screenPageViews' },
+        { name: 'averageSessionDuration' },
+        { name: 'bounceRate' },
+        { name: 'conversions' },
+      ],
+      limit   : 500,
+      orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+    }),
+  })
+
+  if (!res.ok) {
+    const errBody = await res.text()
+    throw new Error(`GA4 API ${res.status}: ${errBody.substring(0, 200)}`)
+  }
+
+  const data = await res.json()
+  const rows: any[] = data.rows ?? []
+  console.log(`[GA4] ${rows.length} páginas obtenidas para propiedad ${propertyId}`)
+
+  return rows.map((row: any) => ({
+    pagePath   : row.dimensionValues?.[0]?.value ?? '',
+    sessions   : Number(row.metricValues?.[0]?.value ?? 0),
+    pageViews  : Number(row.metricValues?.[1]?.value ?? 0),
+    avgDuration: Number(row.metricValues?.[2]?.value ?? 0),
+    bounceRate : Number(row.metricValues?.[3]?.value ?? 0),
+    conversions: Number(row.metricValues?.[4]?.value ?? 0),
+  }))
+}
