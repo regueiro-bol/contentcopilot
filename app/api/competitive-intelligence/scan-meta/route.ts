@@ -24,44 +24,56 @@ const MAX_ADS_PER_COMPETITOR = 20
 // Tipos — Resultado del actor (subconjunto relevante)
 // ─────────────────────────────────────────────────────────────
 
+// Campos reales del actor (snake_case, verificados contra output real)
 interface ApifyAdResult {
-  adArchiveID?:    string
-  collationCount?: number
-  collationID?:    number
-  startDate?:      number       // Unix timestamp (seconds)
-  endDate?:        number | null
-  isActive?:       boolean
-  publisherPlatform?: string[]  // ['facebook','instagram',...]
-  pageName?:       string
-  pageID?:         string
+  // Error items (URL sin resultados)
+  error?:              string
+  errorCode?:          string
+  url?:                string
+  // Identificadores
+  ad_archive_id?:      string
+  ad_id?:              string
+  collation_count?:    number | null
+  collation_id?:       number | null
+  page_id?:            string
+  page_name?:          string
+  // Estado y fechas
+  is_active?:          boolean
+  start_date?:         number       // Unix timestamp (seconds)
+  end_date?:           number | null
+  start_date_formatted?: string     // "2026-03-12 07:00:00"
+  end_date_formatted?:   string | null
+  // Plataformas
+  publisher_platform?: string[]     // ["FACEBOOK","INSTAGRAM","MESSENGER",...]
+  // Snapshot (contenido del anuncio)
   snapshot?: {
-    body?: {
-      markup?: { __html?: string }
-      text?:   string
-    }
-    title?:         string
-    caption?:       string
-    cta_text?:      string
-    cta_type?:      string
-    link_url?:      string
-    link_description?: string
-    page_like_count?:  number
-    images?:        Array<{ original_image_url?: string; resized_image_url?: string }>
-    videos?:        Array<{ video_hd_url?: string; video_sd_url?: string; video_preview_image_url?: string }>
-    cards?:         Array<{ title?: string; body?: string; link_url?: string }>
-    creation_time?:    number
-    body_translations?: Record<string, { text?: string }>
+    body?:               { text?: string; markup?: { __html?: string } }
+    title?:              string
+    caption?:            string
+    cta_text?:           string
+    cta_type?:           string
+    link_url?:           string
+    link_description?:   string
+    display_format?:     string
+    page_name?:          string
+    page_like_count?:    number
+    page_profile_uri?:   string
+    page_profile_picture_url?: string
+    images?:             Array<{ original_image_url?: string; resized_image_url?: string }>
+    videos?:             Array<{ video_hd_url?: string; video_sd_url?: string; video_preview_image_url?: string }>
+    cards?:              Array<{ title?: string; body?: string; link_url?: string }>
+    extra_images?:       Array<{ url?: string }>
+    extra_videos?:       Array<{ url?: string }>
   }
-  // Campos de gasto/reach (pueden no estar presentes)
-  currency?:      string
-  spend?: {
-    lower_bound?: number
-    upper_bound?: number
-  }
-  impressions?: {
-    lower_bound?: number
-    upper_bound?: number
-  }
+  // Métricas
+  currency?:             string | null
+  spend?:                { lower_bound?: number; upper_bound?: number } | null
+  reach_estimate?:       { lower_bound?: number; upper_bound?: number } | null
+  // Meta del scraper
+  ad_library_url?:       string     // "https://www.facebook.com/ads/library/?id=..."
+  total?:                number
+  position?:             number
+  ads_count?:            number
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -77,52 +89,55 @@ function buildAdLibraryUrl(pageName: string): string {
 function extractCopyText(ad: ApifyAdResult): string | null {
   const parts: string[] = []
 
-  // Título del snapshot
   if (ad.snapshot?.title) parts.push(ad.snapshot.title)
 
-  // Body — preferir .text, fallback a .markup.__html limpio
   const bodyText = ad.snapshot?.body?.text
   const bodyHtml = ad.snapshot?.body?.markup?.__html
   if (bodyText) {
     parts.push(bodyText)
   } else if (bodyHtml) {
-    // Limpiar HTML básico
     parts.push(bodyHtml.replace(/<[^>]+>/g, '').trim())
   }
 
-  // Caption / link_description como complemento
   if (ad.snapshot?.caption) parts.push(ad.snapshot.caption)
 
   return parts.length > 0 ? parts.join(' — ') : null
 }
 
-/** Extrae la URL de la imagen principal */
+/** Extrae la URL de la imagen o video preview */
 function extractCreativeUrl(ad: ApifyAdResult): string | null {
-  // Imágenes
+  // Imágenes del snapshot
   const img = ad.snapshot?.images?.[0]
   if (img?.original_image_url) return img.original_image_url
   if (img?.resized_image_url) return img.resized_image_url
 
-  // Video preview
+  // Extra images
+  const extra = ad.snapshot?.extra_images?.[0]
+  if (extra?.url) return extra.url
+
+  // Video preview image
   const vid = ad.snapshot?.videos?.[0]
   if (vid?.video_preview_image_url) return vid.video_preview_image_url
+
+  // Page profile picture como último recurso
+  if (ad.snapshot?.page_profile_picture_url) return ad.snapshot.page_profile_picture_url
 
   return null
 }
 
-/** Extrae URL de snapshot (para ver el anuncio completo) */
+/** Extrae URL directa al anuncio en Meta Ad Library */
 function extractSnapshotUrl(ad: ApifyAdResult): string | null {
-  if (ad.adArchiveID) {
-    return `https://www.facebook.com/ads/library/?id=${ad.adArchiveID}`
-  }
+  // El actor devuelve ad_library_url directamente
+  if (ad.ad_library_url) return ad.ad_library_url
+  if (ad.ad_archive_id) return `https://www.facebook.com/ads/library/?id=${ad.ad_archive_id}`
   return null
 }
 
 /** Genera un ID externo estable */
 function buildAdIdExternal(ad: ApifyAdResult, competitorName: string): string {
-  if (ad.adArchiveID) return String(ad.adArchiveID)
-  if (ad.collationID) return `meta_${ad.collationID}`
-  return `meta_${competitorName}_${ad.startDate ?? Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 120)
+  if (ad.ad_archive_id) return String(ad.ad_archive_id)
+  if (ad.collation_id) return `meta_${ad.collation_id}`
+  return `meta_${competitorName}_${ad.start_date ?? Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 120)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -230,11 +245,14 @@ export async function POST(request: NextRequest) {
     error?:        string
   }> = []
 
-  // Agrupar ads por competidor
+  // Filtrar items de error y agrupar ads por competidor
+  const validAds = allItems.filter((a) => !a.error && a.ad_archive_id)
+  console.log(`[ci-scan-meta] Items válidos (sin errores): ${validAds.length} de ${allItems.length}`)
+
   const adsByComp = new Map<string, ApifyAdResult[]>()
-  for (const ad of allItems) {
-    // Intentar emparejar por pageName o pageID
-    const adPageName = (ad.pageName ?? '').toLowerCase()
+  for (const ad of validAds) {
+    // El page_name puede estar top-level o dentro de snapshot
+    const adPageName = (ad.page_name ?? ad.snapshot?.page_name ?? '').toLowerCase()
     let matched = compByName.get(adPageName)
 
     // Fallback: buscar coincidencia parcial
@@ -283,11 +301,11 @@ export async function POST(request: NextRequest) {
             ad_snapshot_url: snapshotUrl,
             copy_text:       copyText,
             cta_type:        ad.snapshot?.cta_text ?? ad.snapshot?.cta_type ?? null,
-            started_running: ad.startDate
-              ? new Date(ad.startDate * 1000).toISOString()
+            started_running: ad.start_date
+              ? new Date(ad.start_date * 1000).toISOString()
               : null,
             last_seen_at:    new Date().toISOString(),
-            is_active:       ad.isActive ?? true,
+            is_active:       ad.is_active ?? true,
             raw_data:        ad as unknown as Record<string, unknown>,
           },
           { onConflict: 'platform,ad_id_external', ignoreDuplicates: false },
