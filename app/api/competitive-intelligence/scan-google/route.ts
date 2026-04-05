@@ -49,12 +49,17 @@ interface SerpApiResponse {
   search_information?: { total_results?: number }
 }
 
-/** Detecta si el page_name es un dominio web (contiene un punto) */
+/** Detecta si el texto es un dominio web (contiene un punto, sin espacios) */
 function isDomain(name: string): boolean {
   return name.includes('.') && !name.includes(' ')
 }
 
-async function fetchGoogleAds(competitorName: string): Promise<{
+/**
+ * Ejecuta una búsqueda en SerpApi Google Ads Transparency Center.
+ * @param searchText  Texto de búsqueda (dominio o nombre de anunciante)
+ * @returns           Array de anuncios y posible error
+ */
+async function fetchGoogleAdsSingle(searchText: string): Promise<{
   ads: SerpApiAd[]
   error: string | null
 }> {
@@ -66,16 +71,13 @@ async function fetchGoogleAds(competitorName: string): Promise<{
     }
   }
 
-  // Modo dominio (p.ej. 'academia-geopol.es') o nombre (p.ej. 'Adams Formación')
-  // En ambos casos se usa el parámetro 'text' — SerpApi acepta nombres y dominios.
-  // Región 2724 = España (código numérico de SerpApi Google Ads Transparency Center)
-  const searchMode = isDomain(competitorName) ? 'dominio' : 'nombre'
-  console.log(`[ci-scan-google] Buscando "${competitorName}" por ${searchMode}`)
+  const mode = isDomain(searchText) ? 'dominio' : 'nombre'
+  console.log(`[ci-scan-google] Buscando "${searchText}" por ${mode}`)
 
   const params = new URLSearchParams({
     engine:  'google_ads_transparency_center',
     api_key: apiKey,
-    text:    competitorName,
+    text:    searchText,
     region:  '2724',  // España
     num:     '20',
   })
@@ -84,7 +86,6 @@ async function fetchGoogleAds(competitorName: string): Promise<{
     const res  = await fetch(`${SERPAPI_BASE}?${params.toString()}`)
     const json = await res.json() as SerpApiResponse
 
-    // "no results" no es un error — es simplemente 0 anuncios
     if (json.error) {
       const noResults = json.error.toLowerCase().includes("hasn't returned any results")
       if (noResults) return { ads: [], error: null }
@@ -95,7 +96,7 @@ async function fetchGoogleAds(competitorName: string): Promise<{
 
     // Debug: log primeros 3 resultados raw en desarrollo
     if (process.env.NODE_ENV === 'development' && ads.length > 0) {
-      console.log(`[ci-scan-google] Raw SerpApi response (primeros ${Math.min(3, ads.length)}):`)
+      console.log(`[ci-scan-google] "${searchText}" → ${ads.length} ads (primeros 3):`)
       for (const ad of ads.slice(0, 3)) {
         console.log(JSON.stringify(ad, null, 2))
       }
@@ -105,6 +106,53 @@ async function fetchGoogleAds(competitorName: string): Promise<{
   } catch (err) {
     return { ads: [], error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+/**
+ * Busca anuncios de un competidor con estrategia multi-término:
+ * 1. Busca por page_name (dominio o nombre)
+ * 2. Si hay advertiser_name diferente → busca también por ese nombre
+ * 3. Si la primera búsqueda dio 0 y page_name es un dominio → intenta sin TLD
+ * 4. Combina y deduplica por ad_creative_id
+ */
+async function fetchGoogleAds(
+  pageName: string,
+  advertiserName: string | null,
+): Promise<{ ads: SerpApiAd[]; error: string | null }> {
+  // 1. Búsqueda principal por page_name
+  const { ads: primaryAds, error: primaryError } = await fetchGoogleAdsSingle(pageName)
+  if (primaryError) return { ads: [], error: primaryError }
+
+  const allAds = [...primaryAds]
+  const seenIds = new Set(primaryAds.map((a) => a.ad_creative_id).filter(Boolean))
+
+  // 2. Si hay advertiser_name distinto al page_name → segunda búsqueda
+  if (advertiserName && advertiserName.toLowerCase() !== pageName.toLowerCase()) {
+    console.log(`[ci-scan-google] Búsqueda adicional por advertiser_name: "${advertiserName}"`)
+    const { ads: advAds } = await fetchGoogleAdsSingle(advertiserName)
+    for (const ad of advAds) {
+      if (ad.ad_creative_id && seenIds.has(ad.ad_creative_id)) continue
+      allAds.push(ad)
+      if (ad.ad_creative_id) seenIds.add(ad.ad_creative_id)
+    }
+  }
+
+  // 3. Si 0 resultados y page_name es dominio → intentar sin TLD como último recurso
+  if (allAds.length === 0 && isDomain(pageName)) {
+    const withoutTld = pageName.replace(/\.[a-z]{2,}$/i, '')
+    if (withoutTld !== pageName) {
+      console.log(`[ci-scan-google] Fallback: buscando sin TLD "${withoutTld}"`)
+      const { ads: fallbackAds } = await fetchGoogleAdsSingle(withoutTld)
+      for (const ad of fallbackAds) {
+        if (ad.ad_creative_id && seenIds.has(ad.ad_creative_id)) continue
+        allAds.push(ad)
+        if (ad.ad_creative_id) seenIds.add(ad.ad_creative_id)
+      }
+    }
+  }
+
+  console.log(`[ci-scan-google] Total combinado para "${pageName}": ${allAds.length} ads únicos`)
+  return { ads: allAds, error: null }
 }
 
 function extractCopyText(ad: SerpApiAd): string | null {
@@ -169,7 +217,8 @@ export async function POST(request: NextRequest) {
   let totalNew   = 0
 
   for (const comp of competitors) {
-    const { ads, error: fetchError } = await fetchGoogleAds(comp.page_name)
+    const advName = (comp.advertiser_name as string | null) ?? null
+    const { ads, error: fetchError } = await fetchGoogleAds(comp.page_name, advName)
 
     if (fetchError) {
       console.error(`[ci-scan-google] Error "${comp.page_name}":`, fetchError)
