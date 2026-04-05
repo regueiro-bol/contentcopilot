@@ -61,6 +61,7 @@ export async function GET(
   }
 
   // 3. Fetch fresco de Google
+  console.log(`[GA4] Llamando a Google API para cliente ${params.clientId}`)
   const ga = conn.google_accounts as unknown as {
     access_token: string | null
     refresh_token: string

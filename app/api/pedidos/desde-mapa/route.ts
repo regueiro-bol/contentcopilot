@@ -24,6 +24,9 @@ function buildBriefPrompt(ctx: {
   volume: number | null
   difficulty: number | null
   suggestedMonth: string | null
+  // Actualización
+  esActualizacion: boolean
+  existingUrl: string | null
   // GSC
   gscPosition: number | null
   gscClicks: number | null
@@ -54,6 +57,15 @@ function buildBriefPrompt(ctx: {
   if (ctx.volume != null) lines.push(`- Volumen mensual: ${ctx.volume.toLocaleString('es-ES')}`)
   if (ctx.difficulty != null) lines.push(`- Dificultad KD: ${ctx.difficulty}/100`)
   if (ctx.suggestedMonth) lines.push(`- Mes de publicación sugerido: ${ctx.suggestedMonth}`)
+
+  // Actualización
+  if (ctx.esActualizacion) {
+    lines.push('')
+    lines.push('# ⚠️ TIPO: ACTUALIZACIÓN DE CONTENIDO EXISTENTE')
+    lines.push(`Este artículo es una ACTUALIZACIÓN del contenido existente${ctx.existingUrl ? ` en: ${ctx.existingUrl}` : ''}.`)
+    lines.push('Analiza qué tiene ese contenido y propón mejoras, nuevas secciones, datos actualizados y optimizaciones GEO que lo hagan más completo y efectivo.')
+    lines.push('El brief debe centrarse en qué AÑADIR, MEJORAR y ACTUALIZAR, no en reescribir desde cero.')
+  }
 
   // GSC
   if (ctx.gscPosition != null || ctx.gscClicks != null) {
@@ -192,9 +204,13 @@ export async function POST(request: NextRequest) {
       titulo              : string
       keyword_principal   : string
       keywords_secundarias: string[]
+      tipo?               : 'nuevo' | 'actualizacion'
+      existing_url?       : string
     }
 
-    const { map_item_id, client_id, titulo, keyword_principal, keywords_secundarias } = body
+    const { map_item_id, client_id, titulo: tituloRaw, keyword_principal, keywords_secundarias } = body
+    const esActualizacion = body.tipo === 'actualizacion'
+    const titulo = esActualizacion ? `[ACTUALIZACIÓN] ${tituloRaw}` : tituloRaw
 
     if (!map_item_id || !client_id || !titulo) {
       return NextResponse.json(
@@ -330,11 +346,13 @@ export async function POST(request: NextRequest) {
     console.log('[DesdeMapa] Generando brief con Claude...')
 
     const briefPrompt = buildBriefPrompt({
-      titulo,
+      titulo: tituloRaw,
       slug,
       mainKeyword       : keyword_principal,
       secondaryKeywords : keywords_secundarias ?? [],
       cluster           : (mapItem.cluster as string | null) ?? null,
+      esActualizacion,
+      existingUrl       : body.existing_url ?? null,
       funnelStage       : (mapItem.funnel_stage as string | null) ?? null,
       volume            : mapItem.volume != null ? Number(mapItem.volume) : null,
       difficulty        : mapItem.difficulty != null ? Number(mapItem.difficulty) : null,

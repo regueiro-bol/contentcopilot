@@ -223,6 +223,10 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
           titulo              : item.title,
           keyword_principal   : item.main_keyword,
           keywords_secundarias: item.secondary_keywords,
+          ...(item.content_status === 'existing_content' && {
+            tipo        : 'actualizacion',
+            existing_url: item.existing_url,
+          }),
         }),
       })
       const data = await res.json()
@@ -668,15 +672,21 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                                     </span>
                                   )
                                 }
+                                const isUpdate = item.content_status === 'existing_content'
                                 return (
                                   <button
                                     type="button"
                                     onClick={() => handleCrearPedido(item)}
                                     disabled={!clientId || creandoPedido !== null}
-                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
+                                    className={cn(
+                                      'inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50',
+                                      isUpdate
+                                        ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
+                                        : 'text-gray-600 bg-gray-100 hover:bg-gray-200',
+                                    )}
                                   >
                                     <Plus className="h-3 w-3" />
-                                    Pedido
+                                    {isUpdate ? 'Actualizar' : 'Pedido'}
                                   </button>
                                 )
                               })()}

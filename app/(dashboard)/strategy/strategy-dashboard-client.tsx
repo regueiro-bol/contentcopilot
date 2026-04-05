@@ -40,12 +40,13 @@ interface SesionResumen {
 }
 
 interface Props {
-  clientes        : ClienteOption[]
-  sesiones        : SesionResumen[]
-  totalSesiones   : number
-  totalKeywords   : number
-  totalMapas      : number
-  mapasPorCliente : Record<string, number>
+  clientes              : ClienteOption[]
+  sesiones              : SesionResumen[]
+  totalSesiones         : number
+  totalKeywords         : number
+  totalMapas            : number
+  mapasPorCliente       : Record<string, number>
+  mapaSessionPorCliente : Record<string, string>
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -137,6 +138,7 @@ export default function StrategyDashboardClient({
   totalKeywords,
   totalMapas,
   mapasPorCliente,
+  mapaSessionPorCliente,
 }: Props) {
   // Inicializar desde localStorage de forma síncrona para evitar flash
   const [clienteId, setClienteId] = useState(() => {
@@ -223,14 +225,23 @@ export default function StrategyDashboardClient({
       )}
 
       {/* ── KPIs ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
+      {(() => {
+        const mapasCount = clienteId ? (mapasPorCliente[clienteId] ?? 0) : totalMapas
+        // Link directo: si hay 1 mapa del cliente → ir al mapa; si hay >1 → listado
+        const mapasHref = clienteId && mapasCount > 0
+          ? mapasCount === 1 && mapaSessionPorCliente[clienteId]
+            ? `/strategy/${mapaSessionPorCliente[clienteId]}/mapa`
+            : `/strategy/mapas?cliente=${clienteId}`
+          : mapasCount > 0 ? '/strategy/mapas' : undefined
+
+        const kpis = [
           {
             label: clienteId ? 'Sesiones del cliente' : 'Sesiones de research',
             value: clienteId ? sesionesCliente.length : totalSesiones,
             icon : BarChart3,
             color: 'text-indigo-600',
             bg   : 'bg-indigo-50',
+            href : undefined as string | undefined,
           },
           {
             label: 'Keywords analizadas',
@@ -240,30 +251,42 @@ export default function StrategyDashboardClient({
             icon : TrendingUp,
             color: 'text-emerald-600',
             bg   : 'bg-emerald-50',
+            href : undefined as string | undefined,
           },
           {
             label: 'Mapas de contenido',
-            value: clienteId ? (mapasPorCliente[clienteId] ?? 0) : totalMapas,
+            value: mapasCount,
             icon : Map,
             color: 'text-violet-600',
             bg   : 'bg-violet-50',
+            href : mapasHref,
           },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <Card key={label}>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className={`rounded-lg p-2 ${bg}`}>
-                  <Icon className={`h-4 w-4 ${color}`} />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-900">{value}</p>
-                  <p className="text-xs text-gray-500">{label}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+        ]
+
+        return (
+          <div className="grid grid-cols-3 gap-4">
+            {kpis.map(({ label, value, icon: Icon, color, bg, href }) => {
+              const card = (
+                <Card key={label} className={href ? 'hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer' : ''}>
+                  <CardContent className="p-5">
+                    <div className="flex items-center gap-3">
+                      <div className={`rounded-lg p-2 ${bg}`}>
+                        <Icon className={`h-4 w-4 ${color}`} />
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-gray-900">{value}</p>
+                        <p className="text-xs text-gray-500">{label}</p>
+                      </div>
+                      {href && <ChevronRight className="h-4 w-4 text-gray-300 ml-auto" />}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+              return href ? <Link key={label} href={href}>{card}</Link> : <div key={label}>{card}</div>
+            })}
+          </div>
+        )
+      })()}
 
       {/* ── Contexto cliente seleccionado ──────────────────── */}
       {clienteId && ultimaSesion && (

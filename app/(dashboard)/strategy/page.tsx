@@ -51,15 +51,23 @@ export default async function StrategyPage() {
     .select('id', { count: 'exact', head: true })
     .eq('incluida', true)
 
-  // Mapas por cliente (para el KPI filtrado)
+  // Mapas por cliente (para el KPI filtrado + link directo si solo hay 1)
   const { data: mapasPorClienteRaw } = await supabase
     .from('content_maps')
-    .select('client_id')
+    .select('id, client_id, session_id')
 
   const mapasPorCliente: Record<string, number> = {}
+  // session_id del mapa más reciente por cliente (para link directo)
+  const mapaSessionPorCliente: Record<string, string> = {}
   for (const m of mapasPorClienteRaw ?? []) {
     const cid = String(m.client_id ?? '')
-    if (cid) mapasPorCliente[cid] = (mapasPorCliente[cid] ?? 0) + 1
+    if (cid) {
+      mapasPorCliente[cid] = (mapasPorCliente[cid] ?? 0) + 1
+      // Guardar solo si es el primero (más reciente por orden de insert)
+      if (!mapaSessionPorCliente[cid] && m.session_id) {
+        mapaSessionPorCliente[cid] = String(m.session_id)
+      }
+    }
   }
 
   return (
@@ -70,6 +78,7 @@ export default async function StrategyPage() {
       totalKeywords={totalKeywords ?? 0}
       totalMapas={totalMapas ?? 0}
       mapasPorCliente={mapasPorCliente}
+      mapaSessionPorCliente={mapaSessionPorCliente}
     />
   )
 }
