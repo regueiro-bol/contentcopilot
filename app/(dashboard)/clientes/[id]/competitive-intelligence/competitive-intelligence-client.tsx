@@ -508,6 +508,13 @@ function ReportView({ content, report }: { content: ReportContent; report: CiRep
         </span>
       </div>
 
+      {/* Nota metodológica */}
+      {content.nota_metodologica && (
+        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <p className="text-xs text-gray-500 leading-relaxed">{content.nota_metodologica}</p>
+        </div>
+      )}
+
       {/* Resumen ejecutivo */}
       <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-lg">
         <p className="text-sm font-medium text-indigo-900 mb-1">Resumen ejecutivo</p>
@@ -525,9 +532,40 @@ function ReportView({ content, report }: { content: ReportContent; report: CiRep
             {content.analisis_por_competidor.map((comp) => (
               <div key={comp.nombre} className="rounded-lg border border-gray-200 p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm font-semibold text-gray-900">{comp.nombre}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-gray-900">{comp.nombre}</p>
+                    {comp.plataforma && (
+                      <span className="text-[10px] font-medium text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 uppercase">
+                        {comp.plataforma}
+                      </span>
+                    )}
+                  </div>
                   <span className="text-xs text-gray-400">{comp.num_ads} ads</span>
                 </div>
+                {/* Formatos */}
+                {comp.formatos && Object.keys(comp.formatos).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {Object.entries(comp.formatos).map(([fmt, count]) => (
+                      <span key={fmt} className="text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">
+                        {fmt}: {count as number}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Consistencia de inversión */}
+                {comp.consistencia_inversion && (
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-500 mb-0.5">Inversión</p>
+                    <p className="text-xs text-gray-700">{comp.consistencia_inversion}</p>
+                  </div>
+                )}
+                {/* Días promedio */}
+                {comp.dias_promedio_activo != null && (
+                  <p className="text-[11px] text-gray-400 mb-2">
+                    Promedio {comp.dias_promedio_activo} días activo por anuncio
+                  </p>
+                )}
+                {/* Mensajes clave (solo si hay — Meta ads) */}
                 {comp.mensajes_clave?.length > 0 && (
                   <div className="mb-2">
                     <p className="text-xs text-gray-500 mb-1">Mensajes clave</p>
@@ -535,6 +573,19 @@ function ReportView({ content, report }: { content: ReportContent; report: CiRep
                       {comp.mensajes_clave.slice(0, 3).map((m, i) => (
                         <li key={i} className="text-xs text-gray-700 flex items-start gap-1">
                           <span className="text-indigo-400 mt-0.5">•</span>{m}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {/* Observaciones */}
+                {comp.observaciones?.length > 0 && (
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-500 mb-1">Observaciones</p>
+                    <ul className="space-y-0.5">
+                      {comp.observaciones.slice(0, 3).map((o, i) => (
+                        <li key={i} className="text-xs text-gray-700 flex items-start gap-1">
+                          <span className="text-emerald-400 mt-0.5">•</span>{o}
                         </li>
                       ))}
                     </ul>

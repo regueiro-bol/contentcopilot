@@ -15,17 +15,22 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export const maxDuration = 120
 
 interface ReportContent {
+  nota_metodologica: string
   resumen_ejecutivo: string
   analisis_por_competidor: Array<{
-    nombre:              string
-    num_ads:             number
-    mensajes_clave:      string[]
-    ctas_usados:         string[]
-    tematicas_visuales:  string[]
+    nombre:                    string
+    plataforma:                string
+    num_ads:                   number
+    formatos:                  Record<string, number>
+    dias_promedio_activo:      number | null
+    consistencia_inversion:    string
+    mensajes_clave:            string[]
+    ctas_usados:               string[]
+    observaciones:             string[]
   }>
   patrones_generales: {
     formatos_dominantes:          string[]
-    mensajes_recurrentes:         string[]
+    estrategias_de_inversion:     string[]
     propuestas_de_valor_comunes:  string[]
   }
   oportunidades:      string[]
@@ -72,7 +77,7 @@ export async function POST(request: NextRequest) {
       .eq('active', true),
     supabase
       .from('competitor_ads')
-      .select('competitor_id, copy_text, cta_type, started_running, is_active')
+      .select('competitor_id, platform, copy_text, cta_type, creative_url, ad_snapshot_url, started_running, is_active, raw_data')
       .eq('client_id', client_id)
       .eq('is_active', true)
       .gte('first_seen_at', periodStart.toISOString()),
@@ -86,14 +91,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No hay ads de la competencia. Ejecuta un escaneo primero.' }, { status: 400 })
   }
 
-  // Agrupar ads por competitor
-  const compMap = new Map(competitors.map((c) => [c.id, c.page_name]))
-  const adsByComp = new Map<string, typeof ads>()
+  // Agrupar ads por competitor con datos enriquecidos
+  const compMap = new Map(competitors.map((c) => [c.id, { name: c.page_name, platform: c.platform }]))
+  const adsByComp: Record<string, typeof ads> = {}
 
   for (const ad of ads) {
-    const name = compMap.get(ad.competitor_id) ?? 'Desconocido'
-    if (!adsByComp.has(name)) adsByComp.set(name, [])
-    adsByComp.get(name)!.push(ad)
+    const info = compMap.get(ad.competitor_id)
+    const name = info?.name ?? 'Desconocido'
+    if (!adsByComp[name]) adsByComp[name] = []
+    adsByComp[name].push(ad)
   }
 
   // Construir el prompt de análisis
@@ -102,21 +108,53 @@ export async function POST(request: NextRequest) {
   const restrictions  = (contextData?.restrictions   as string | null) ?? 'Ninguna'
 
   let adsSection = ''
-  for (const [pageName, pageAds] of adsByComp.entries()) {
-    adsSection += `\n### ${pageName} (${pageAds.length} anuncios activos)\n`
+  for (const [pageName, pageAds] of Object.entries(adsByComp)) {
+    const platform = compMap.get(pageAds[0]?.competitor_id ?? '')?.platform ?? 'desconocida'
+
+    // Calcular stats agregados
+    const formats: Record<string, number> = {}
+    const daysShown: number[] = []
+    for (const ad of pageAds) {
+      const fmt = (ad.cta_type as string) ?? 'desconocido'
+      formats[fmt] = (formats[fmt] ?? 0) + 1
+      const raw = ad.raw_data as Record<string, unknown> | null
+      if (raw?.total_days_shown && typeof raw.total_days_shown === 'number') {
+        daysShown.push(raw.total_days_shown)
+      }
+    }
+    const avgDays = daysShown.length > 0
+      ? Math.round(daysShown.reduce((a, b) => a + b, 0) / daysShown.length)
+      : null
+
+    adsSection += `\n### ${pageName} — plataforma: ${platform} (${pageAds.length} anuncios activos)\n`
+    adsSection += `Formatos: ${Object.entries(formats).map(([f, n]) => `${f}: ${n}`).join(', ')}\n`
+    if (avgDays != null) adsSection += `Días promedio activo por anuncio: ${avgDays}\n`
+
     for (let i = 0; i < Math.min(pageAds.length, 15); i++) {
       const ad = pageAds[i]
-      adsSection += `${i + 1}. Copy: "${ad.copy_text ?? '(sin texto)'}" | CTA: ${ad.cta_type ?? 'desconocido'}`
+      const raw = ad.raw_data as Record<string, unknown> | null
+      const parts: string[] = []
+
+      // Meta ads tienen copy_text; Google ads no
+      if (ad.copy_text) parts.push(`Copy: "${ad.copy_text}"`)
+      parts.push(`Formato: ${ad.cta_type ?? 'desconocido'}`)
+      if (raw?.total_days_shown) parts.push(`${raw.total_days_shown} días activo`)
+      if (ad.creative_url) parts.push('Tiene imagen/vídeo')
       if (ad.started_running) {
-        adsSection += ` | Activo desde: ${new Date(ad.started_running).toLocaleDateString('es-ES')}`
+        parts.push(`Desde: ${new Date(ad.started_running).toLocaleDateString('es-ES')}`)
       }
-      adsSection += '\n'
+      adsSection += `${i + 1}. ${parts.join(' | ')}\n`
     }
   }
 
   const systemPrompt = `Eres un estratega de marketing digital experto en análisis competitivo para el mercado español.
 Tu análisis es preciso, accionable y orientado a resultados.
-Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin comentarios).`
+Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin comentarios).
+
+IMPORTANTE: Los datos de Google Ads Transparency Center NO incluyen el texto de los anuncios (headline/description).
+Para anuncios de Google, analiza: formatos usados (text/image/video), consistencia temporal (días activos),
+volumen de anuncios y estrategia de inversión. NO inventes copy ni mensajes que no aparezcan en los datos.
+Para anuncios de Meta (si los hay), SÍ hay copy_text disponible — analízalo normalmente.`
 
   const userPrompt = `Analiza los anuncios activos de la competencia de "${clienteData.nombre}" y genera un informe estratégico.
 
@@ -128,29 +166,38 @@ CONTEXTO DEL CLIENTE:
 ANUNCIOS DE LA COMPETENCIA (últimos 30 días):
 ${adsSection}
 
+NOTA: Para anuncios de Google, el texto (headline/description) no está disponible públicamente.
+Centra el análisis de Google en formatos, volumen, consistencia de inversión y estrategia de medios.
+Si hay anuncios de Meta con copy_text, analiza también sus mensajes.
+
 Genera un JSON con esta estructura exacta:
 {
-  "resumen_ejecutivo": "Párrafo de 3-4 frases resumiendo el panorama competitivo",
+  "nota_metodologica": "Análisis basado en datos de Google Ads Transparency y/o Meta Ad Library. El texto de los anuncios de Google no es accesible públicamente — el análisis se centra en formatos, volumen e inversión.",
+  "resumen_ejecutivo": "Párrafo de 3-4 frases resumiendo el panorama competitivo: volumen de inversión, formatos preferidos y nivel de actividad",
   "analisis_por_competidor": [
     {
       "nombre": "Nombre del competidor",
+      "plataforma": "google o meta",
       "num_ads": 5,
-      "mensajes_clave": ["mensaje 1", "mensaje 2"],
-      "ctas_usados": ["Saber más", "Inscríbete"],
-      "tematicas_visuales": ["tema 1", "tema 2"]
+      "formatos": {"text": 3, "image": 2},
+      "dias_promedio_activo": 120,
+      "consistencia_inversion": "Alta/Media/Baja — descripción de la regularidad de inversión",
+      "mensajes_clave": ["solo si hay copy_text de Meta, si no dejar vacío"],
+      "ctas_usados": ["formato 1", "formato 2"],
+      "observaciones": ["observación sobre la estrategia de este competidor"]
     }
   ],
   "patrones_generales": {
     "formatos_dominantes": ["formato 1"],
-    "mensajes_recurrentes": ["mensaje 1"],
-    "propuestas_de_valor_comunes": ["propuesta 1"]
+    "estrategias_de_inversion": ["patrón de inversión observado"],
+    "propuestas_de_valor_comunes": ["propuesta inferida del posicionamiento"]
   },
   "oportunidades": ["oportunidad 1", "oportunidad 2", "oportunidad 3"],
   "recomendaciones": [
     {
       "prioridad": "alta",
-      "recomendacion": "Acción concreta",
-      "razonamiento": "Por qué hacerlo"
+      "recomendacion": "Acción concreta sobre formatos o inversión",
+      "razonamiento": "Por qué hacerlo basándote en los datos"
     }
   ]
 }`

@@ -80,18 +80,23 @@ export interface CompetitorAdRow {
 }
 
 export interface ReportContent {
+  nota_metodologica:       string
   resumen_ejecutivo:       string
   analisis_por_competidor: Array<{
-    nombre:             string
-    num_ads:            number
-    mensajes_clave:     string[]
-    ctas_usados:        string[]
-    tematicas_visuales: string[]
+    nombre:                    string
+    plataforma:                string
+    num_ads:                   number
+    formatos:                  Record<string, number>
+    dias_promedio_activo:      number | null
+    consistencia_inversion:    string
+    mensajes_clave:            string[]
+    ctas_usados:               string[]
+    observaciones:             string[]
   }>
   patrones_generales: {
-    formatos_dominantes:         string[]
-    mensajes_recurrentes:        string[]
-    propuestas_de_valor_comunes: string[]
+    formatos_dominantes:          string[]
+    estrategias_de_inversion:     string[]
+    propuestas_de_valor_comunes:  string[]
   }
   oportunidades:    string[]
   recomendaciones:  Array<{
