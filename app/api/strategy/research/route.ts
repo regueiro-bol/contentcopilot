@@ -4,9 +4,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import {
   getKeywordIdeas,
   getSearchVolume,
+  getCompetitorKeywords,
+  extractDomain,
   DataForSEOError,
   type KeywordIdeaItem,
   type SearchVolumeItem,
+  type CompetitorKeyword,
 } from '@/lib/dataforseo'
 import {
   getGSCKeywords,
@@ -201,6 +204,31 @@ export async function POST(request: NextRequest) {
       // No es crítico — continuamos sin datos GSC
     }
 
+    // ── 3c. Keywords de competidores (DataForSEO Labs) ────────────────────
+    const competitorMap = new Map<string, { kw: CompetitorKeyword; source: string }>()
+    const competidoresUrls = (Array.isArray(competidores) ? competidores : []) as string[]
+
+    if (competidoresUrls.length > 0) {
+      console.log(`[Research] Analizando ${competidoresUrls.length} competidores...`)
+      for (const url of competidoresUrls.slice(0, 5)) {
+        const domain = extractDomain(url)
+        if (!domain) continue
+        try {
+          const compKws = await getCompetitorKeywords(domain)
+          console.log(`[Research] Competidor ${domain}: ${compKws.length} keywords`)
+          for (const ck of compKws) {
+            const key = ck.keyword.toLowerCase().trim()
+            if (!competitorMap.has(key)) {
+              competitorMap.set(key, { kw: ck, source: domain })
+            }
+          }
+        } catch (compErr) {
+          console.warn(`[Research] Error en competidor ${domain} (continuamos):`, compErr instanceof Error ? compErr.message : compErr)
+        }
+      }
+      console.log(`[Research] Total keywords de competidores (deduplicadas): ${competitorMap.size}`)
+    }
+
     // ── 4. Merge y deduplicación ───────────────────────────────────────────
     // Prioridad: keyword_ideas (tiene más métricas) sobre search_volume
 
@@ -291,9 +319,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── 4c. Enriquecer con datos de competidores ─────────────────────────
+    if (competitorMap.size > 0) {
+      let enriched = 0
+      let added    = 0
+
+      for (const [key, { kw: ck, source }] of Array.from(competitorMap.entries())) {
+        if (keywordsMap.has(key)) {
+          // Keyword ya existe → solo marcar el competidor source
+          const existing = keywordsMap.get(key)!
+          if (!existing.competitor_source) {
+            existing.competitor_source = source
+            enriched++
+          }
+        } else {
+          // Keyword nueva del competidor → añadir al dataset
+          keywordsMap.set(key, {
+            session_id        : sessionId,
+            keyword           : ck.keyword,
+            volume            : safeNumber(ck.volume),
+            keyword_difficulty: safeNumber(ck.difficulty),
+            cpc               : null,
+            competition       : null,
+            competition_level : null,
+            search_intent     : ck.intent ?? null,
+            monthly_searches  : null,
+            incluida          : true,
+            competitor_source : source,
+          })
+          added++
+        }
+      }
+
+      console.log(`[Research] Competidores: ${enriched} keywords existentes enriquecidas, ${added} keywords nuevas añadidas`)
+    }
+
     const keywordsArray = Array.from(keywordsMap.values())
-    const withGsc = keywordsArray.filter((k) => k.gsc_opportunity != null).length
-    console.log(`[Research] Total keywords a insertar: ${keywordsArray.length} | con datos GSC: ${withGsc}`)
+    const withGsc         = keywordsArray.filter((k) => k.gsc_opportunity != null).length
+    const withCompetitor  = keywordsArray.filter((k) => k.competitor_source != null).length
+    console.log(`[Research] Total keywords a insertar: ${keywordsArray.length} | con GSC: ${withGsc} | de competidores: ${withCompetitor}`)
 
     // ── 5. Insertar keywords por lotes ─────────────────────────────────────
     const BATCH_SIZE = 100

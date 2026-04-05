@@ -24,7 +24,7 @@ export default async function KeywordsPage({ params }: PageProps) {
   const { data: keywords } = await supabase
     .from('keywords')
     .select(
-      'id, keyword, volume, keyword_difficulty, cpc, competition, competition_level, search_intent, monthly_searches, incluida, cluster_name, funnel_stage, notas, gsc_clicks, gsc_impressions, gsc_position, gsc_opportunity',
+      'id, keyword, volume, keyword_difficulty, cpc, competition, competition_level, search_intent, monthly_searches, incluida, cluster_name, funnel_stage, notas, gsc_clicks, gsc_impressions, gsc_position, gsc_opportunity, competitor_source',
     )
     .eq('session_id', params.sessionId)
     .order('volume', { ascending: false, nullsFirst: false })
@@ -66,6 +66,7 @@ export default async function KeywordsPage({ params }: PageProps) {
           gsc_impressions   : k.gsc_impressions != null ? Number(k.gsc_impressions) : null,
           gsc_position      : k.gsc_position != null ? Number(k.gsc_position) : null,
           gsc_opportunity   : (k.gsc_opportunity as 'quick_win' | 'existing' | 'new' | null) ?? null,
+          competitor_source : (k.competitor_source as string | null) ?? null,
         }))}
       />
     </div>

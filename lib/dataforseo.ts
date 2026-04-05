@@ -331,3 +331,89 @@ export function intentLabel(intent: KeywordIdeaItem['search_intent'] | undefined
   }
   return map[intent] ?? intent
 }
+
+// ─────────────────────────────────────────────────────────────
+// Competitor Keywords (DataForSEO Labs)
+// ─────────────────────────────────────────────────────────────
+
+export interface CompetitorKeyword {
+  keyword   : string
+  volume    : number
+  position  : number
+  url       : string
+  difficulty: number | null
+  intent    : string | null
+}
+
+/**
+ * Extrae el dominio limpio de una URL.
+ * "https://www.ejemplo.es/pagina" → "ejemplo.es"
+ */
+export function extractDomain(url: string): string {
+  return url
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '')
+    .trim()
+}
+
+/**
+ * Obtiene las keywords que rankea un dominio competidor.
+ * Endpoint: POST /dataforseo_labs/google/ranked_keywords/live
+ *
+ * @param domain       - Dominio sin protocolo ni trailing slash (ej: "competidor.es")
+ * @param locationCode - Código de país DataForSEO (default: 2724 = España)
+ * @param languageCode - Código de idioma (default: "es")
+ * @param limit        - Máximo de keywords a devolver (default: 100)
+ */
+export async function getCompetitorKeywords(
+  domain      : string,
+  locationCode: number = SPAIN_LOCATION,
+  languageCode: string = SPAIN_LANGUAGE,
+  limit       : number = 100,
+): Promise<CompetitorKeyword[]> {
+  console.log(`[DataForSEO] Ranked keywords para ${domain} (limit=${limit})`)
+
+  const data = await post<{
+    items: Array<{
+      keyword_data?: {
+        keyword           : string
+        keyword_info?: {
+          search_volume     : number | null
+          keyword_difficulty: number | null
+          main_intent?      : string | null
+        }
+      }
+      ranked_serp_element?: {
+        serp_item?: {
+          rank_absolute: number | null
+          url          : string | null
+        }
+      }
+    }>
+  }>('/dataforseo_labs/google/ranked_keywords/live', [
+    {
+      target       : domain,
+      location_code: locationCode,
+      language_code: languageCode,
+      limit,
+      filters      : [
+        ['keyword_data.keyword_info.search_volume', '>', 10],
+      ],
+    },
+  ])
+
+  const items = data.tasks?.[0]?.result?.[0]?.items ?? []
+  console.log(`[DataForSEO] ${domain}: ${items.length} ranked keywords`)
+
+  return items
+    .filter((item) => item.keyword_data?.keyword)
+    .map((item) => ({
+      keyword   : item.keyword_data!.keyword,
+      volume    : item.keyword_data?.keyword_info?.search_volume ?? 0,
+      position  : item.ranked_serp_element?.serp_item?.rank_absolute ?? 0,
+      url       : item.ranked_serp_element?.serp_item?.url ?? '',
+      difficulty: item.keyword_data?.keyword_info?.keyword_difficulty ?? null,
+      intent    : (item.keyword_data?.keyword_info as any)?.main_intent ?? null,
+    }))
+}

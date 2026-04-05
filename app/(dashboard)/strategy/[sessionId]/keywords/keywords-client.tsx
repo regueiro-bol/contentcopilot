@@ -38,6 +38,7 @@ export interface KeywordRow {
   gsc_impressions   : number | null
   gsc_position      : number | null
   gsc_opportunity   : 'quick_win' | 'existing' | 'new' | null
+  competitor_source : string | null
 }
 
 export interface SessionResumen {
@@ -138,6 +139,24 @@ function GSCBadge({ opportunity }: { opportunity: string | null }) {
   )
 }
 
+const ORIGEN_FILTERS = [
+  { value: '',           label: 'Todas' },
+  { value: 'dataforseo', label: 'DataForSEO' },
+  { value: 'competitor', label: 'Competidor' },
+]
+
+function CompetitorBadge({ source }: { source: string | null }) {
+  if (!source) return null
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-100 text-violet-700"
+      title={`Competidor: ${source}`}
+    >
+      Comp.
+    </span>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────
 // Componente principal
 // ─────────────────────────────────────────────────────────────
@@ -158,6 +177,7 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
   const [filtroIntent,      setFiltroIntent]      = useState('')
   const [filtroDificultad,  setFiltroDificultad]  = useState('Todas')
   const [filtroGSC,         setFiltroGSC]         = useState('')
+  const [filtroOrigen,      setFiltroOrigen]      = useState('')
 
   // ── Keywords filtradas ─────────────────────────────────────
   const keywordsFiltradas = useMemo(() => {
@@ -168,9 +188,11 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
       if (filtroIntent && k.search_intent !== filtroIntent) return false
       if (filtroDificultad !== 'Todas' && !difRange.test(k.keyword_difficulty)) return false
       if (filtroGSC && k.gsc_opportunity !== filtroGSC) return false
+      if (filtroOrigen === 'competitor' && !k.competitor_source) return false
+      if (filtroOrigen === 'dataforseo' && k.competitor_source) return false
       return true
     })
-  }, [initialKeywords, busqueda, filtroIntent, filtroDificultad, filtroGSC])
+  }, [initialKeywords, busqueda, filtroIntent, filtroDificultad, filtroGSC, filtroOrigen])
 
   // ── Contadores ─────────────────────────────────────────────
   const totalIncluidas = useMemo(
@@ -251,10 +273,12 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
     setFiltroIntent('')
     setFiltroDificultad('Todas')
     setFiltroGSC('')
+    setFiltroOrigen('')
   }
 
-  const hayGSCData = initialKeywords.some((k) => k.gsc_opportunity != null)
-  const hayFiltros = busqueda !== '' || filtroIntent !== '' || filtroDificultad !== 'Todas' || filtroGSC !== ''
+  const hayGSCData        = initialKeywords.some((k) => k.gsc_opportunity != null)
+  const hayCompetitorData = initialKeywords.some((k) => k.competitor_source != null)
+  const hayFiltros = busqueda !== '' || filtroIntent !== '' || filtroDificultad !== 'Todas' || filtroGSC !== '' || filtroOrigen !== ''
 
   const { label: statusLabel, cls: statusCls } =
     STATUS_MAP[session.status] ?? { label: session.status, cls: 'bg-gray-100 text-gray-500' }
@@ -391,6 +415,30 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
             </div>
           )}
 
+          {/* Filtro Origen — solo visible si hay datos de competidores */}
+          {hayCompetitorData && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Origen</p>
+              <div className="flex flex-wrap gap-1.5">
+                {ORIGEN_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFiltroOrigen(value)}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                      filtroOrigen === value
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Resultado de filtro + reset */}
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
@@ -436,13 +484,16 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                 {hayGSCData && (
                   <th className="px-3 py-2.5 text-left font-semibold text-gray-600">GSC</th>
                 )}
+                {hayCompetitorData && (
+                  <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Origen</th>
+                )}
                 <th className="px-3 py-2.5 text-right font-semibold text-gray-600">CPC</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {keywordsFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={hayGSCData ? 7 : 6} className="px-3 py-12 text-center text-gray-400">
+                  <td colSpan={6 + (hayGSCData ? 1 : 0) + (hayCompetitorData ? 1 : 0)} className="px-3 py-12 text-center text-gray-400">
                     <Search className="h-6 w-6 mx-auto mb-2 opacity-40" />
                     <p className="text-sm">No hay keywords que coincidan con los filtros</p>
                     {hayFiltros && (
@@ -494,6 +545,11 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                       {hayGSCData && (
                         <td className="px-3 py-2">
                           <GSCBadge opportunity={kw.gsc_opportunity} />
+                        </td>
+                      )}
+                      {hayCompetitorData && (
+                        <td className="px-3 py-2">
+                          <CompetitorBadge source={kw.competitor_source} />
                         </td>
                       )}
                       <td className="px-3 py-2 text-right font-mono text-xs text-gray-500">
