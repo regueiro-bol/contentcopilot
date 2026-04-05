@@ -270,8 +270,30 @@ export async function POST(request: NextRequest) {
       console.log(`[DesdeMapa] Proyecto "${PROJECT_NAME}" creado: ${proyecto.id}`)
     }
 
-    // ── Crear contenido ──
+    // ── Crear contenido (o detectar duplicado por slug) ──
     const slug = toSlug(titulo)
+
+    // Comprobar si ya existe un contenido con ese slug en el mismo proyecto
+    const { data: existente } = await supabase
+      .from('contenidos')
+      .select('id')
+      .eq('proyecto_id', proyecto.id)
+      .eq('slug', slug)
+      .maybeSingle()
+
+    if (existente) {
+      console.log(`[DesdeMapa] Contenido ya existe: ${existente.id} (slug: ${slug})`)
+      // Vincular map_item si no lo estaba
+      await supabase
+        .from('content_map_items')
+        .update({ contenido_id: existente.id, status: 'assigned', updated_at: new Date().toISOString() })
+        .eq('id', map_item_id)
+      return NextResponse.json({
+        ok            : true,
+        contenido_id  : existente.id,
+        already_exists: true,
+      })
+    }
 
     const { data: contenido, error: contError } = await supabase
       .from('contenidos')
