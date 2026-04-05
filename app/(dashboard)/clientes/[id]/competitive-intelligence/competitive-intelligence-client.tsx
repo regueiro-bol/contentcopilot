@@ -704,7 +704,7 @@ export default function CompetitiveIntelligenceClient({
     setScanning(true)
     const tid = addToast('Escaneando Meta Ad Library…', 'loading')
 
-    const res = await fetch('/api/competitive-intelligence/scan', {
+    const res = await fetch('/api/competitive-intelligence/scan-meta', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ client_id: clientId }),
