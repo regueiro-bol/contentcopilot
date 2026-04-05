@@ -433,7 +433,7 @@ function GA4AnalyticsTab({ clienteId }: { clienteId: string }) {
 
     try {
       const url = `/api/google/ga4/${clienteId}${force ? '?force=true' : ''}`
-      const res = await fetch(url)
+      const res = await fetch(url, { cache: 'no-store' })
       const data = await res.json()
 
       if (!res.ok) {

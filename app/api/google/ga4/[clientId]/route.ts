@@ -3,6 +3,8 @@ import { auth } from '@clerk/nextjs/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { refreshAccessToken, getGA4PageMetrics } from '@/lib/google-api'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * GET /api/google/ga4/[clientId]?force=true
  *
@@ -35,6 +37,7 @@ export async function GET(
   }
 
   const propertyId = conn.ga4_property_id as string
+  console.log(`[GA4] Request para cliente ${params.clientId}, force=${force}`)
 
   // 2. Comprobar caché (snapshot de hoy)
   if (!force) {
