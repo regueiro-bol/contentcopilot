@@ -57,16 +57,38 @@ export async function POST(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   if (queries?.length) {
-    await supabase.from('georadar_queries').delete().eq('cliente_id', params.clienteId);
-    await supabase.from('georadar_queries').insert(
-      queries.map((q: any) => ({
-        config_id: config.id,
-        cliente_id: params.clienteId,
-        query: q.query,
-        categoria: q.categoria || 'marca',
-        activa: true,
-      }))
-    );
+    // Primero desactivar todas
+    await supabase
+      .from('georadar_queries')
+      .update({ activa: false })
+      .eq('cliente_id', params.clienteId);
+
+    // Luego upsert de las que vienen del formulario
+    for (const q of queries.filter((q: any) => q.query.trim())) {
+      const { data: existente } = await supabase
+        .from('georadar_queries')
+        .select('id')
+        .eq('cliente_id', params.clienteId)
+        .eq('query', q.query.trim())
+        .maybeSingle();
+
+      if (existente) {
+        await supabase
+          .from('georadar_queries')
+          .update({ activa: true, categoria: q.categoria || 'marca' })
+          .eq('id', existente.id);
+      } else {
+        await supabase
+          .from('georadar_queries')
+          .insert({
+            config_id: config.id,
+            cliente_id: params.clienteId,
+            query: q.query.trim(),
+            categoria: q.categoria || 'marca',
+            activa: true,
+          });
+      }
+    }
   }
 
   return NextResponse.json({ ok: true });

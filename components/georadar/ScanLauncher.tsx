@@ -33,7 +33,9 @@ export function ScanLauncher({ clienteId, scanActivo }: ScanLauncherProps) {
       if (data.estado === 'completado' || data.estado === 'error') {
         clearInterval(interval);
         if (data.estado === 'completado') {
-          window.location.reload();
+          setTimeout(() => {
+            window.location.reload();
+          }, 3000);
         }
       }
     }, 3000);
