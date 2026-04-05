@@ -1,10 +1,10 @@
 /**
  * POST /api/competitive-intelligence/scan-meta
  *
- * Escanea competidores en Meta Ad Library usando Apify actor
- * "curious_coder/facebook-ads-library-scraper".
+ * Escanea competidores en Meta Ad Library usando la API HTTP de Apify
+ * con el actor "curious_coder/facebook-ads-library-scraper".
  *
- * El actor recibe URLs de Facebook Ad Library como input.
+ * Usa fetch nativo (sin SDK) para evitar problemas con proxy-agent en Vercel.
  * Requiere APIFY_API_TOKEN en las variables de entorno.
  *
  * Body: { client_id: string, competitor_ids?: string[] }
@@ -12,40 +12,33 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { ApifyClient } from 'apify-client'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const maxDuration = 120
 
-const ACTOR_ID = 'curious_coder/facebook-ads-library-scraper'
+const APIFY_ACTOR = 'curious_coder~facebook-ads-library-scraper'
+const APIFY_BASE  = 'https://api.apify.com/v2'
 const MAX_ADS_PER_COMPETITOR = 20
 
 // ─────────────────────────────────────────────────────────────
-// Tipos — Resultado del actor (subconjunto relevante)
+// Tipos — Resultado del actor (snake_case, verificado)
 // ─────────────────────────────────────────────────────────────
 
-// Campos reales del actor (snake_case, verificados contra output real)
 interface ApifyAdResult {
-  // Error items (URL sin resultados)
   error?:              string
   errorCode?:          string
   url?:                string
-  // Identificadores
   ad_archive_id?:      string
   ad_id?:              string
   collation_count?:    number | null
   collation_id?:       number | null
   page_id?:            string
   page_name?:          string
-  // Estado y fechas
   is_active?:          boolean
-  start_date?:         number       // Unix timestamp (seconds)
+  start_date?:         number
   end_date?:           number | null
-  start_date_formatted?: string     // "2026-03-12 07:00:00"
-  end_date_formatted?:   string | null
-  // Plataformas
-  publisher_platform?: string[]     // ["FACEBOOK","INSTAGRAM","MESSENGER",...]
-  // Snapshot (contenido del anuncio)
+  start_date_formatted?: string
+  publisher_platform?: string[]
   snapshot?: {
     body?:               { text?: string; markup?: { __html?: string } }
     title?:              string
@@ -65,32 +58,58 @@ interface ApifyAdResult {
     extra_images?:       Array<{ url?: string }>
     extra_videos?:       Array<{ url?: string }>
   }
-  // Métricas
   currency?:             string | null
   spend?:                { lower_bound?: number; upper_bound?: number } | null
   reach_estimate?:       { lower_bound?: number; upper_bound?: number } | null
-  // Meta del scraper
-  ad_library_url?:       string     // "https://www.facebook.com/ads/library/?id=..."
+  ad_library_url?:       string
   total?:                number
   position?:             number
   ads_count?:            number
 }
 
 // ─────────────────────────────────────────────────────────────
-// Helpers
+// Apify HTTP helpers
 // ─────────────────────────────────────────────────────────────
 
-/** Construye la URL de Meta Ad Library para buscar ads activos de un competidor en España */
+/**
+ * Ejecuta el actor de forma síncrona y devuelve los items del dataset.
+ * POST /v2/acts/{actorId}/runs/sync?token=...
+ * Espera hasta que el actor termine (timeout 90s en Apify).
+ */
+async function runActorSync(
+  token: string,
+  input: Record<string, unknown>,
+): Promise<{ items: ApifyAdResult[]; error: string | null }> {
+  const runUrl = `${APIFY_BASE}/acts/${APIFY_ACTOR}/runs/sync?token=${token}&timeout=90&memory=512`
+
+  const res = await fetch(runUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { items: [], error: `Apify HTTP ${res.status}: ${text.substring(0, 200)}` }
+  }
+
+  // La respuesta síncrona devuelve directamente los items del dataset
+  const items = (await res.json()) as ApifyAdResult[]
+
+  return { items: Array.isArray(items) ? items : [], error: null }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers de mapeo
+// ─────────────────────────────────────────────────────────────
+
 function buildAdLibraryUrl(pageName: string): string {
   return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ES&q=${encodeURIComponent(pageName)}&media_type=all`
 }
 
-/** Extrae texto legible del snapshot del anuncio */
 function extractCopyText(ad: ApifyAdResult): string | null {
   const parts: string[] = []
-
   if (ad.snapshot?.title) parts.push(ad.snapshot.title)
-
   const bodyText = ad.snapshot?.body?.text
   const bodyHtml = ad.snapshot?.body?.markup?.__html
   if (bodyText) {
@@ -98,42 +117,28 @@ function extractCopyText(ad: ApifyAdResult): string | null {
   } else if (bodyHtml) {
     parts.push(bodyHtml.replace(/<[^>]+>/g, '').trim())
   }
-
   if (ad.snapshot?.caption) parts.push(ad.snapshot.caption)
-
   return parts.length > 0 ? parts.join(' — ') : null
 }
 
-/** Extrae la URL de la imagen o video preview */
 function extractCreativeUrl(ad: ApifyAdResult): string | null {
-  // Imágenes del snapshot
   const img = ad.snapshot?.images?.[0]
   if (img?.original_image_url) return img.original_image_url
   if (img?.resized_image_url) return img.resized_image_url
-
-  // Extra images
   const extra = ad.snapshot?.extra_images?.[0]
   if (extra?.url) return extra.url
-
-  // Video preview image
   const vid = ad.snapshot?.videos?.[0]
   if (vid?.video_preview_image_url) return vid.video_preview_image_url
-
-  // Page profile picture como último recurso
   if (ad.snapshot?.page_profile_picture_url) return ad.snapshot.page_profile_picture_url
-
   return null
 }
 
-/** Extrae URL directa al anuncio en Meta Ad Library */
 function extractSnapshotUrl(ad: ApifyAdResult): string | null {
-  // El actor devuelve ad_library_url directamente
   if (ad.ad_library_url) return ad.ad_library_url
   if (ad.ad_archive_id) return `https://www.facebook.com/ads/library/?id=${ad.ad_archive_id}`
   return null
 }
 
-/** Genera un ID externo estable */
 function buildAdIdExternal(ad: ApifyAdResult, competitorName: string): string {
   if (ad.ad_archive_id) return String(ad.ad_archive_id)
   if (ad.collation_id) return `meta_${ad.collation_id}`
@@ -165,7 +170,6 @@ export async function POST(request: NextRequest) {
   if (!client_id) return NextResponse.json({ error: 'client_id requerido' }, { status: 400 })
 
   const supabase = createAdminClient()
-  const client   = new ApifyClient({ token: apifyToken })
 
   // Cargar competidores Meta activos
   let query = supabase
@@ -192,70 +196,36 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // Construir URLs de Ad Library para todos los competidores
+  // Construir URLs de Ad Library
   const urls = competitors.map((c) => buildAdLibraryUrl(c.page_name))
+  console.log(`[ci-scan-meta] Lanzando Apify para ${competitors.length} competidores:`, urls)
 
-  console.log(`[ci-scan-meta] Lanzando Apify actor para ${competitors.length} competidores`)
-  console.log(`[ci-scan-meta] URLs:`, urls)
+  // Ejecutar actor vía HTTP
+  const { items: allItems, error: apifyError } = await runActorSync(apifyToken, {
+    urls: urls.map((u) => ({ url: u })),
+    maxAds: MAX_ADS_PER_COMPETITOR * competitors.length,
+  })
 
-  // Ejecutar el actor de Apify
-  let allItems: ApifyAdResult[] = []
-  try {
-    const run = await client.actor(ACTOR_ID).call(
-      {
-        urls: urls.map((u) => ({ url: u })),
-        maxAds: MAX_ADS_PER_COMPETITOR * competitors.length,
-      },
-      {
-        timeout: 90,
-        memory: 512,
-      },
-    )
-
-    console.log(`[ci-scan-meta] Actor run completado: ${run.id} | status: ${run.status}`)
-
-    // Leer resultados del dataset
-    const { items } = await client.dataset(run.defaultDatasetId).listItems()
-    allItems = items as ApifyAdResult[]
-
-    console.log(`[ci-scan-meta] Total items del dataset: ${allItems.length}`)
-
-    // Debug: log primeros 3 items
-    if (allItems.length > 0) {
-      console.log(`[ci-scan-meta] Ejemplo item keys:`, Object.keys(allItems[0]))
-    }
-  } catch (err) {
-    console.error('[ci-scan-meta] Apify error:', err instanceof Error ? err.message : err)
-    return NextResponse.json(
-      { error: `Error ejecutando Apify: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 502 },
-    )
+  if (apifyError) {
+    console.error('[ci-scan-meta] Apify error:', apifyError)
+    return NextResponse.json({ error: apifyError }, { status: 502 })
   }
 
-  // Mapear resultados a competidores por pageName
+  console.log(`[ci-scan-meta] Total items: ${allItems.length}`)
+
+  // Filtrar errores y agrupar por competidor
+  const validAds = allItems.filter((a) => !a.error && a.ad_archive_id)
+  console.log(`[ci-scan-meta] Items válidos: ${validAds.length} de ${allItems.length}`)
+
   const compByName = new Map(
     competitors.map((c) => [c.page_name.toLowerCase(), c]),
   )
 
-  const results: Array<{
-    competitor_id: string
-    page_name:     string
-    ads_found:     number
-    ads_new:       number
-    error?:        string
-  }> = []
-
-  // Filtrar items de error y agrupar ads por competidor
-  const validAds = allItems.filter((a) => !a.error && a.ad_archive_id)
-  console.log(`[ci-scan-meta] Items válidos (sin errores): ${validAds.length} de ${allItems.length}`)
-
   const adsByComp = new Map<string, ApifyAdResult[]>()
   for (const ad of validAds) {
-    // El page_name puede estar top-level o dentro de snapshot
     const adPageName = (ad.page_name ?? ad.snapshot?.page_name ?? '').toLowerCase()
     let matched = compByName.get(adPageName)
 
-    // Fallback: buscar coincidencia parcial
     if (!matched) {
       compByName.forEach((comp, name) => {
         if (!matched && (adPageName.includes(name) || name.includes(adPageName))) {
@@ -264,7 +234,6 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Último recurso: asignar al primer competidor si solo hay uno
     if (!matched && competitors.length === 1) {
       matched = competitors[0]
     }
@@ -275,6 +244,15 @@ export async function POST(request: NextRequest) {
       adsByComp.get(key)!.push(ad)
     }
   }
+
+  // Upsert ads en Supabase
+  const results: Array<{
+    competitor_id: string
+    page_name:     string
+    ads_found:     number
+    ads_new:       number
+    error?:        string
+  }> = []
 
   let totalFound = 0
   let totalNew   = 0
