@@ -80,6 +80,7 @@ function CompetidoresSection({
   const [pageId, setPageId]       = useState('')
   const [platform, setPlatform]   = useState<'meta' | 'google'>('meta')
   const [saving, setSaving]       = useState(false)
+  const [addError, setAddError]   = useState<string | null>(null)
 
   const metaCompetitors   = competitors.filter((c) => c.platform === 'meta')
   const googleCompetitors = competitors.filter((c) => c.platform === 'google')
@@ -88,19 +89,24 @@ function CompetidoresSection({
     e.preventDefault()
     if (!pageName.trim()) return
     setSaving(true)
-    const res = await fetch('/api/competitive-intelligence/competitors', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ client_id: clientId, platform, page_name: pageName.trim(), page_id: pageId.trim() || undefined }),
-    })
-    if (res.ok) {
-      const { competitor } = await res.json() as { competitor: Competitor }
-      onAdd(competitor)
+    setAddError(null)
+    try {
+      const res = await fetch('/api/competitive-intelligence/competitors', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, platform, page_name: pageName.trim(), page_id: pageId.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? 'Error creando competidor')
+      onAdd(data.competitor as Competitor)
       setPageName('')
       setPageId('')
       setShowForm(false)
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Error desconocido')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   async function handleDelete(id: string) {
@@ -191,12 +197,18 @@ function CompetidoresSection({
               />
             </div>
           </div>
+          {addError && (
+            <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              {addError}
+            </div>
+          )}
           <div className="flex gap-2">
             <Button type="submit" size="sm" disabled={saving} className="text-xs">
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
               Guardar
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => setShowForm(false)} className="text-xs">
+            <Button type="button" size="sm" variant="outline" onClick={() => { setShowForm(false); setAddError(null) }} className="text-xs">
               Cancelar
             </Button>
           </div>
