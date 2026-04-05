@@ -17,19 +17,30 @@ export const maxDuration = 60
 const SERPAPI_BASE = 'https://serpapi.com/search.json'
 
 interface SerpApiAd {
-  advertiser_id?:   string
-  advertiser?:      string    // campo real de la API (no advertiser_name)
-  ad_creative_id?:  string
-  format?:          string
-  first_shown?:     number    // Unix timestamp
-  last_shown?:      number
-  image_url?:       string
-  video_url?:       string
-  description?:     string
-  headline?:        string
-  link?:            string    // adstransparency.google.com URL
-  impressions_min?: number
-  impressions_max?: number
+  advertiser_id?:       string
+  advertiser?:          string    // nombre del anunciante
+  ad_creative_id?:      string
+  format?:              string    // 'text', 'image', 'video'
+  first_shown?:         number    // Unix timestamp
+  last_shown?:          number
+  // Campos de media — SerpApi usa 'image' (no 'image_url')
+  image?:               string    // URL a la imagen del creativo
+  width?:               number
+  height?:              number
+  link?:                string    // URL del video (formato video)
+  target_domain?:       string    // dominio destino del anuncio
+  // Campos de texto — raramente presentes en Google Ads Transparency
+  description?:         string
+  headline?:            string
+  // Enlaces de detalle
+  details_link?:        string    // URL a adstransparency.google.com/advertiser/...
+  serpapi_details_link?: string   // URL de SerpApi para detalles del anuncio
+  // Métricas (solo anuncios políticos)
+  total_days_shown?:    number
+  minimum_views_count?: number
+  maximum_views_count?: number
+  minimum_budget_spent?:string
+  maximum_budget_spent?:string
 }
 
 interface SerpApiResponse {
@@ -80,7 +91,17 @@ async function fetchGoogleAds(competitorName: string): Promise<{
       return { ads: [], error: `SerpApi error: ${json.error}` }
     }
 
-    return { ads: json.ad_creatives ?? [], error: null }
+    const ads = json.ad_creatives ?? []
+
+    // Debug: log primeros 3 resultados raw en desarrollo
+    if (process.env.NODE_ENV === 'development' && ads.length > 0) {
+      console.log(`[ci-scan-google] Raw SerpApi response (primeros ${Math.min(3, ads.length)}):`)
+      for (const ad of ads.slice(0, 3)) {
+        console.log(JSON.stringify(ad, null, 2))
+      }
+    }
+
+    return { ads, error: null }
   } catch (err) {
     return { ads: [], error: err instanceof Error ? err.message : String(err) }
   }
@@ -168,6 +189,11 @@ export async function POST(request: NextRequest) {
       const adIdExternal = buildAdIdExternal(ad, comp.page_name)
       const copyText     = extractCopyText(ad)
 
+      // creative_url: imagen del anuncio (campo 'image' de SerpApi) o link de video
+      // ad_snapshot_url: enlace a la ficha del anuncio en adstransparency.google.com
+      const creativeUrl   = ad.image ?? ad.link ?? null
+      const adSnapshotUrl = ad.details_link ?? null
+
       const { error: upsertError, data: upserted } = await supabase
         .from('competitor_ads')
         .upsert(
@@ -176,7 +202,8 @@ export async function POST(request: NextRequest) {
             client_id,
             platform:        'google',
             ad_id_external:  adIdExternal,
-            creative_url:    ad.image_url ?? ad.video_url ?? ad.link ?? null,
+            creative_url:    creativeUrl,
+            ad_snapshot_url: adSnapshotUrl,
             copy_text:       copyText,
             cta_type:        ad.format ?? null,
             started_running: ad.first_shown

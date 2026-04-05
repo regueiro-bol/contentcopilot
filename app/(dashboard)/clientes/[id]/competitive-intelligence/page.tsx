@@ -62,20 +62,21 @@ export interface Competitor {
 }
 
 export interface CompetitorAdRow {
-  id:              string
-  competitor_id:   string
-  client_id:       string
-  platform:        string
-  ad_id_external:  string
-  creative_url:    string | null
-  copy_text:       string | null
-  cta_type:        string | null
-  started_running: string | null
-  first_seen_at:   string
-  last_seen_at:    string
-  is_active:       boolean
-  raw_data:        Record<string, unknown>
-  competitors?:    { page_name: string } | null
+  id:               string
+  competitor_id:    string
+  client_id:        string
+  platform:         string
+  ad_id_external:   string
+  creative_url:     string | null
+  ad_snapshot_url:  string | null
+  copy_text:        string | null
+  cta_type:         string | null
+  started_running:  string | null
+  first_seen_at:    string
+  last_seen_at:     string
+  is_active:        boolean
+  raw_data:         Record<string, unknown>
+  competitors?:     { page_name: string } | null
 }
 
 export interface ReportContent {

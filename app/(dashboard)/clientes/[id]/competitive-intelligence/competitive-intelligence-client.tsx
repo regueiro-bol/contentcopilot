@@ -310,8 +310,11 @@ function AdsSection({ ads }: { ads: CompetitorAdRow[] }) {
 
 function AdCard({ ad }: { ad: CompetitorAdRow }) {
   const [expanded, setExpanded] = useState(false)
-  const copy = ad.copy_text ?? '(sin texto disponible)'
-  const truncated = copy.length > 140 && !expanded
+  const hasCopy    = !!ad.copy_text
+  const copy       = ad.copy_text ?? ''
+  const truncated  = hasCopy && copy.length > 140 && !expanded
+  const isGoogle   = ad.platform === 'google'
+  const externalUrl = ad.creative_url ?? ad.ad_snapshot_url ?? null
 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 flex flex-col gap-3 hover:border-indigo-200 transition-colors">
@@ -323,20 +326,51 @@ function AdCard({ ad }: { ad: CompetitorAdRow }) {
         <Badge className="bg-green-50 text-green-700 border-green-200 text-xs">Activo</Badge>
       </div>
 
-      {/* Copy text */}
+      {/* Copy text o fallback snapshot */}
       <div>
-        <p className="text-sm text-gray-700 leading-relaxed">
-          {truncated ? `${copy.slice(0, 140)}…` : copy}
-        </p>
-        {copy.length > 140 && (
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="mt-1 text-xs text-indigo-600 hover:underline flex items-center gap-0.5"
+        {hasCopy ? (
+          <>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              {truncated ? `${copy.slice(0, 140)}…` : copy}
+            </p>
+            {copy.length > 140 && (
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="mt-1 text-xs text-indigo-600 hover:underline flex items-center gap-0.5"
+              >
+                {expanded ? <><ChevronUp className="h-3 w-3" /> Ver menos</> : <><ChevronDown className="h-3 w-3" /> Ver más</>}
+              </button>
+            )}
+          </>
+        ) : ad.ad_snapshot_url ? (
+          <a
+            href={ad.ad_snapshot_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
           >
-            {expanded ? <><ChevronUp className="h-3 w-3" /> Ver menos</> : <><ChevronDown className="h-3 w-3" /> Ver más</>}
-          </button>
+            <ExternalLink className="h-3.5 w-3.5" />
+            Ver anuncio en Google Ads Transparency
+          </a>
+        ) : (
+          <p className="text-sm text-gray-400 italic">
+            {isGoogle ? 'Anuncio de imagen/vídeo sin texto extraíble' : '(sin texto disponible)'}
+          </p>
         )}
       </div>
+
+      {/* Creative image preview (si es una imagen) */}
+      {ad.creative_url && ad.creative_url.match(/\.(jpg|jpeg|png|gif|webp)/i) && (
+        <div className="rounded-md overflow-hidden border border-gray-200 bg-white">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={ad.creative_url}
+            alt={`Anuncio de ${ad.competitors?.page_name ?? 'competidor'}`}
+            className="w-full h-auto max-h-48 object-contain"
+            loading="lazy"
+          />
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between mt-auto pt-2 border-t border-gray-200">
@@ -353,13 +387,13 @@ function AdCard({ ad }: { ad: CompetitorAdRow }) {
             </span>
           )}
         </div>
-        {ad.creative_url && (
+        {externalUrl && (
           <a
-            href={ad.creative_url}
+            href={externalUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="text-gray-400 hover:text-indigo-600 transition-colors"
-            title="Ver en Meta Ad Library"
+            title={isGoogle ? 'Ver en Google Ads Transparency' : 'Ver en Meta Ad Library'}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
