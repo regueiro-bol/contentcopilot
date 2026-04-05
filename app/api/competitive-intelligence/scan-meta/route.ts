@@ -246,9 +246,15 @@ export async function POST(request: NextRequest) {
 
   console.log(`[ci-scan-meta] Total items: ${allItems.length}`)
 
-  // Filtrar errores y agrupar por competidor
-  const validAds = allItems.filter((a) => !a.error && a.ad_archive_id)
-  console.log(`[ci-scan-meta] Items válidos: ${validAds.length} de ${allItems.length}`)
+  // Filtrar errores, ads sin ID, y anuncios dinámicos de catálogo (templates sin resolver)
+  const validAds = allItems.filter((a) => {
+    if (a.error || !a.ad_archive_id) return false
+    // Descartar anuncios dinámicos de catálogo con variables sin resolver
+    const text = [a.snapshot?.title, a.snapshot?.body?.text, a.snapshot?.caption].join(' ')
+    if (/\{\{product\./i.test(text)) return false
+    return true
+  })
+  console.log(`[ci-scan-meta] Items válidos: ${validAds.length} de ${allItems.length} (filtrados dinámicos de catálogo)`)
 
   const compByName = new Map(
     competitors.map((c) => [c.page_name.toLowerCase(), c]),
