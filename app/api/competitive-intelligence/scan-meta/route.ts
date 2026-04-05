@@ -72,30 +72,63 @@ interface ApifyAdResult {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Ejecuta el actor de forma síncrona y devuelve los items del dataset.
- * POST /v2/acts/{actorId}/runs/sync?token=...
- * Espera hasta que el actor termine (timeout 90s en Apify).
+ * Ejecuta el actor y espera a que termine (start → poll → read dataset).
+ * 1. POST /v2/acts/{actorId}/runs  → inicia el run
+ * 2. GET  /v2/actor-runs/{runId}   → poll hasta SUCCEEDED/FAILED
+ * 3. GET  /v2/datasets/{id}/items  → lee los resultados
  */
-async function runActorSync(
+async function runActorAndCollect(
   token: string,
   input: Record<string, unknown>,
 ): Promise<{ items: ApifyAdResult[]; error: string | null }> {
-  const runUrl = `${APIFY_BASE}/acts/${APIFY_ACTOR}/runs/sync?token=${token}&timeout=90&memory=512`
+  // 1. Iniciar run
+  const startRes = await fetch(
+    `${APIFY_BASE}/acts/${APIFY_ACTOR}/runs?token=${token}&timeout=90&memory=512`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  )
 
-  const res = await fetch(runUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  })
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    return { items: [], error: `Apify HTTP ${res.status}: ${text.substring(0, 200)}` }
+  if (!startRes.ok) {
+    const text = await startRes.text().catch(() => '')
+    return { items: [], error: `Apify start HTTP ${startRes.status}: ${text.substring(0, 200)}` }
   }
 
-  // La respuesta síncrona devuelve directamente los items del dataset
-  const items = (await res.json()) as ApifyAdResult[]
+  const startData = (await startRes.json()) as { data?: { id?: string; status?: string; defaultDatasetId?: string } }
+  const runId    = startData.data?.id
+  const datasetId = startData.data?.defaultDatasetId
 
+  if (!runId || !datasetId) {
+    return { items: [], error: 'Apify no devolvió run ID o dataset ID' }
+  }
+
+  console.log(`[ci-scan-meta] Run iniciado: ${runId} | dataset: ${datasetId}`)
+
+  // 2. Poll hasta que termine (max ~100s)
+  const maxPolls = 35
+  const pollInterval = 3000
+  let status = startData.data?.status ?? 'RUNNING'
+
+  for (let i = 0; i < maxPolls && (status === 'RUNNING' || status === 'READY'); i++) {
+    await new Promise((r) => setTimeout(r, pollInterval))
+    const pollRes = await fetch(`${APIFY_BASE}/actor-runs/${runId}?token=${token}`)
+    const pollData = (await pollRes.json()) as { data?: { status?: string } }
+    status = pollData.data?.status ?? 'UNKNOWN'
+  }
+
+  if (status !== 'SUCCEEDED') {
+    return { items: [], error: `Apify run terminó con status: ${status}` }
+  }
+
+  // 3. Leer items del dataset
+  const dsRes = await fetch(`${APIFY_BASE}/datasets/${datasetId}/items?token=${token}`)
+  if (!dsRes.ok) {
+    return { items: [], error: `Apify dataset HTTP ${dsRes.status}` }
+  }
+
+  const items = (await dsRes.json()) as ApifyAdResult[]
   return { items: Array.isArray(items) ? items : [], error: null }
 }
 
@@ -200,8 +233,8 @@ export async function POST(request: NextRequest) {
   const urls = competitors.map((c) => buildAdLibraryUrl(c.page_name))
   console.log(`[ci-scan-meta] Lanzando Apify para ${competitors.length} competidores:`, urls)
 
-  // Ejecutar actor vía HTTP
-  const { items: allItems, error: apifyError } = await runActorSync(apifyToken, {
+  // Ejecutar actor vía HTTP (start → poll → read)
+  const { items: allItems, error: apifyError } = await runActorAndCollect(apifyToken, {
     urls: urls.map((u) => ({ url: u })),
     maxAds: MAX_ADS_PER_COMPETITOR * competitors.length,
   })
