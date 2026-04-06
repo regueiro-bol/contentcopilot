@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Edit, Trash2, Plus, Sparkles, ChevronRight,
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
-  Loader2, Link2, Globe, AlertCircle, BarChart2, RefreshCw,
+  Loader2, Link2, Globe, AlertCircle, BarChart2, RefreshCw, Plug,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -969,6 +969,10 @@ export default function ClienteDetalleClient({
             <Link2 className="h-3.5 w-3.5" />
             Referencias
           </TabsTrigger>
+          <TabsTrigger value="conexiones" className="gap-1.5">
+            <Plug className="h-3.5 w-3.5" />
+            Conexiones
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Tab 1: Identidad ── */}
@@ -1142,10 +1146,12 @@ export default function ClienteDetalleClient({
         <TabsContent value="referencias">
           <ReferenciasTab clienteId={cliente.id} />
         </TabsContent>
-      </Tabs>
 
-      {/* Conexiones digitales (Google) */}
-      <GoogleConnectionsSection clienteId={cliente.id} />
+        {/* ── Tab 7: Conexiones digitales ── */}
+        <TabsContent value="conexiones">
+          <GoogleConnectionsSection clienteId={cliente.id} />
+        </TabsContent>
+      </Tabs>
 
       {/* Zona peligrosa */}
       <Card className="border-red-200">
