@@ -118,14 +118,10 @@ export async function executeScan(scanId: string): Promise<void> {
   // Calcular score global
   const scoreGlobal = calculateGlobalScore(allScores.map(s => ({ score: s })));
 
-  await supabase.from('georadar_scans').update({
-    estado: 'completado',
-    coste_usd: totalCoste,
-  }).eq('id', scanId);
+  console.log(`[GEORadar] Scan ${scanId} queries completadas. Coste: $${totalCoste.toFixed(4)}. Generando informe...`);
 
-  console.log(`[GEORadar] Scan ${scanId} completado. Coste: $${totalCoste.toFixed(4)}`);
-
-  // Generar informe
+  // Generar informe ANTES de marcar como completado
+  // para que el frontend no haga reload sin score_global
   try {
     const { generateReport } = await import('./report-generator');
     const informe = await generateReport(
@@ -138,4 +134,12 @@ export async function executeScan(scanId: string): Promise<void> {
     console.error('[GEORadar] Error generando informe:', err);
     console.error('[GEORadar] Stack:', err instanceof Error ? err.stack : err);
   }
+
+  // Marcar como completado DESPUES del informe
+  await supabase.from('georadar_scans').update({
+    estado: 'completado',
+    coste_usd: totalCoste,
+  }).eq('id', scanId);
+
+  console.log(`[GEORadar] Scan ${scanId} completado`);
 }
