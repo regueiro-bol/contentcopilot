@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Edit, Trash2, Plus, Sparkles, ChevronRight,
+  Edit, Trash2, Plus, Sparkles, ChevronRight, ChevronDown,
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
-  Loader2, Link2, Globe, AlertCircle, BarChart2, RefreshCw, Plug,
+  Loader2, Link2, Globe, AlertCircle, AlertTriangle, BarChart2,
+  RefreshCw, Plug, RotateCcw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,9 @@ import {
   actualizarClienteIdentidad,
   actualizarClienteMarca,
   crearProyecto,
+  archivarCliente,
+  reactivarCliente,
+  eliminarCliente,
 } from './actions'
 import ReferenciasTab from './referencias-tab'
 import type { Cliente, Proyecto, ProyectoFormData } from '@/types'
@@ -909,6 +913,115 @@ function GoogleConnectionsSection({ clienteId }: { clienteId: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Zona peligrosa — acordeon colapsado dentro de Tab Identidad
+// ---------------------------------------------------------------------------
+
+function ZonaPeligrosa({ clienteId, clienteNombre }: { clienteId: string; clienteNombre: string }) {
+  const router = useRouter()
+  const [open, setOpen]                     = useState(false)
+  const [confirmArchive, setConfirmArchive] = useState(false)
+  const [archiving, setArchiving]           = useState(false)
+  const [confirmText, setConfirmText]       = useState('')
+  const [deleting, setDeleting]             = useState(false)
+  const [error, setError]                   = useState<string | null>(null)
+
+  async function handleArchive() {
+    setArchiving(true)
+    setError(null)
+    try {
+      await archivarCliente(clienteId)
+      router.refresh()
+      setConfirmArchive(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error archivando')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true)
+    setError(null)
+    try {
+      await eliminarCliente(clienteId)
+      router.push('/clientes')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error eliminando')
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <div className="mt-6 rounded-lg border border-gray-200 overflow-hidden">
+      <button type="button" onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-colors">
+        <AlertTriangle className="h-3.5 w-3.5 text-gray-400" />
+        <span className="font-medium">Zona peligrosa</span>
+        {open ? <ChevronDown className="h-3.5 w-3.5 ml-auto" /> : <ChevronRight className="h-3.5 w-3.5 ml-auto" />}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 pt-1 space-y-4 border-t border-gray-100">
+          {error && (
+            <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+              <AlertCircle className="h-3 w-3 shrink-0" /> {error}
+            </div>
+          )}
+
+          {/* Archivar */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-700">Archivar cliente</p>
+              <p className="text-xs text-gray-500">No aparecera en los modulos activos. Sus datos se conservan.</p>
+            </div>
+            {confirmArchive ? (
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-amber-700">Seguro?</p>
+                <Button size="sm" className="text-xs h-7 bg-amber-600 hover:bg-amber-700 gap-1" onClick={handleArchive} disabled={archiving}>
+                  {archiving ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Archivar
+                </Button>
+                <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setConfirmArchive(false)}>Cancelar</Button>
+              </div>
+            ) : (
+              <Button size="sm" variant="outline" className="text-xs h-7 text-amber-700 border-amber-200 hover:bg-amber-50 gap-1"
+                onClick={() => setConfirmArchive(true)}>
+                Archivar cliente
+              </Button>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Eliminar permanentemente */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm text-gray-700">Eliminar permanentemente</p>
+                <p className="text-xs text-gray-500">Se eliminaran todos sus proyectos, contenidos y datos. Irreversible.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs w-44 focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder='Escribe BORRAR para confirmar'
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+              />
+              <Button size="sm" variant="destructive" className="text-xs h-7 gap-1"
+                disabled={confirmText !== 'BORRAR' || deleting}
+                onClick={handleDelete}>
+                {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                Eliminar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
 export default function ClienteDetalleClient({
@@ -920,6 +1033,7 @@ export default function ClienteDetalleClient({
   proyectos: ProyectoConCount[]
   coverage?: BrandAssetsCoverage | null
 }) {
+  const router = useRouter()
   const [editando, setEditando] = useState<'identidad' | 'marca' | null>(null)
   const [modalProyecto, setModalProyecto] = useState(false)
 
@@ -1017,8 +1131,12 @@ export default function ClienteDetalleClient({
               </div>
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Estado</p>
-                <Badge variant={cliente.activo ? 'success' : 'secondary'}>
-                  {cliente.activo ? 'Activo' : 'Inactivo'}
+                <Badge variant={
+                  (cliente as unknown as { estado?: string }).estado === 'archivado' ? 'outline'
+                  : cliente.activo ? 'success' : 'secondary'
+                }>
+                  {(cliente as unknown as { estado?: string }).estado === 'archivado' ? 'Archivado'
+                   : cliente.activo ? 'Activo' : 'Inactivo'}
                 </Badge>
               </div>
               <div className="sm:col-span-2">
@@ -1027,6 +1145,25 @@ export default function ClienteDetalleClient({
               </div>
             </CardContent>
           </Card>
+
+          {/* Reactivar (solo si archivado) */}
+          {(cliente as unknown as { estado?: string }).estado === 'archivado' && (
+            <Card className="border-emerald-200 bg-emerald-50/30 mt-4">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800">Cliente archivado</p>
+                  <p className="text-xs text-emerald-600">Este cliente no aparece en los modulos activos.</p>
+                </div>
+                <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                  onClick={async () => { await reactivarCliente(cliente.id); router.refresh() }}>
+                  <RotateCcw className="h-3.5 w-3.5" /> Reactivar
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Zona peligrosa — acordeon colapsado */}
+          <ZonaPeligrosa clienteId={cliente.id} clienteNombre={cliente.nombre} />
         </TabsContent>
 
         {/* ── Tab 2: Marca global ── */}
@@ -1152,27 +1289,6 @@ export default function ClienteDetalleClient({
           <GoogleConnectionsSection clienteId={cliente.id} />
         </TabsContent>
       </Tabs>
-
-      {/* Zona peligrosa */}
-      <Card className="border-red-200">
-        <CardHeader>
-          <CardTitle className="text-sm font-semibold text-red-700">Zona peligrosa</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-700">Eliminar este cliente</p>
-              <p className="text-xs text-gray-500">
-                Se eliminarán también todos sus proyectos y contenidos. Esta acción no se puede deshacer.
-              </p>
-            </div>
-            <Button variant="destructive" size="sm" className="gap-2">
-              <Trash2 className="h-4 w-4" />
-              Eliminar cliente
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Modales */}
       <EditarIdentidadModal

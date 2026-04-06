@@ -62,6 +62,43 @@ export async function actualizarClienteMarca(
   revalidatePath(`/clientes/${id}`)
 }
 
+// ─── Estado del cliente ─────────────────────────────────────────────────────
+
+export async function archivarCliente(id: string) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('clientes')
+    .update({ estado: 'archivado', activo: false })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(`/clientes/${id}`)
+  revalidatePath('/clientes')
+}
+
+export async function reactivarCliente(id: string) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('clientes')
+    .update({ estado: 'activo', activo: true })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(`/clientes/${id}`)
+  revalidatePath('/clientes')
+}
+
+export async function eliminarCliente(id: string) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('clientes')
+    .delete()
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath('/clientes')
+}
+
 // ─── Proyectos ───────────────────────────────────────────────────────────────
 
 export async function crearProyecto(

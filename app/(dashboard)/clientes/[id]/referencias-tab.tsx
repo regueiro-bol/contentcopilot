@@ -184,9 +184,26 @@ export default function ReferenciasTab({ clienteId }: { clienteId: string }) {
               <div className="p-4 space-y-3">
                 <p className="text-xs text-gray-400">{cfg.description}</p>
                 {tipo === 'competidor_publicitario' && (
-                  <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    Estos competidores se usan en el analisis de publicidad del Modulo Visual (Competitive Intelligence).
-                  </div>
+                  <>
+                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      Estos competidores se usan en el analisis de publicidad del Modulo Visual (Competitive Intelligence).
+                    </div>
+                    <div className="text-xs text-blue-700 bg-blue-50/60 border border-blue-100 rounded-lg px-3 py-2.5 space-y-1.5">
+                      <p className="font-medium">Como obtener el ID del anunciante?</p>
+                      <div className="flex flex-col gap-1">
+                        <a href="https://adstransparency.google.com/" target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 transition-colors">
+                          <span>🔵</span> <span className="font-medium">Google Ads Transparency</span>
+                          <span className="text-blue-400">— Busca el anunciante y copia el ID de la URL</span>
+                        </a>
+                        <a href="https://www.facebook.com/ads/library/" target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 transition-colors">
+                          <span>📘</span> <span className="font-medium">Meta Ads Library</span>
+                          <span className="text-blue-400">— Busca la pagina y copia el ID del parametro view_all_page_id</span>
+                        </a>
+                      </div>
+                    </div>
+                  </>
                 )}
                 {formTipo === tipo && (
                   <AddRefForm clienteId={clienteId} tipo={tipo}
