@@ -13,6 +13,7 @@ import {
   BarChart3,
   Layers,
   Users,
+  Lightbulb,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -331,6 +332,15 @@ export default function StrategyDashboardClient({
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
+          <ModuleCard
+            icon={Lightbulb}
+            title="Agente Inspiracion"
+            description="Analiza tu contenido, competencia y tendencias del sector para detectar oportunidades antes del briefing."
+            locked={!clienteId}
+            href={clienteId ? `/strategy/nueva?cliente=${clienteId}&modo=inspiracion` : undefined}
+            color="bg-amber-100 text-amber-600"
+            subtitle="Fase 0 · Nuevo"
+          />
           <ModuleCard
             icon={Search}
             title="Briefing y Research"
