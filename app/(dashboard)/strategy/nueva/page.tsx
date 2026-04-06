@@ -14,23 +14,53 @@ export default async function NuevaEstrategiaPage({ searchParams }: PageProps) {
     .eq('activo', true)
     .order('nombre')
 
-  // Si hay sesion de inspiracion, cargar oportunidades marcadas como seeds sugeridos
+  // Si hay sesion de inspiracion, cargar datos para pre-rellenar el briefing
   let inspiracionSeeds: string[] = []
-  let inspiracionSessionId: string | null = searchParams.inspiracion ?? null
+  let inspiracionObjetivos = ''
+  let inspiracionCompetidores: string[] = []
+  const inspiracionSessionId: string | null = searchParams.inspiracion ?? null
 
   if (inspiracionSessionId) {
     const { data: session } = await supabase
       .from('inspiracion_sessions')
-      .select('resultado, oportunidades_marcadas')
+      .select('client_id, resultado, oportunidades_marcadas')
       .eq('id', inspiracionSessionId)
       .single()
 
     if (session) {
       const marcadas = new Set((session.oportunidades_marcadas ?? []) as string[])
-      const resultado = (session.resultado ?? {}) as { oportunidades?: Array<{ id: string; tema: string }> }
-      inspiracionSeeds = (resultado.oportunidades ?? [])
-        .filter((op) => marcadas.has(op.id))
-        .map((op) => op.tema)
+      const resultado = (session.resultado ?? {}) as {
+        oportunidades?: Array<{ id: string; tema: string; urgencia?: string }>
+        resumen_ejecutivo?: { recomendacion_posicionamiento?: string }
+      }
+
+      // Seeds: oportunidades marcadas, o top 3 de urgencia alta si no hay marcadas
+      const ops = resultado.oportunidades ?? []
+      if (marcadas.size > 0) {
+        inspiracionSeeds = ops.filter((op) => marcadas.has(op.id)).map((op) => op.tema)
+      } else {
+        inspiracionSeeds = ops.filter((op) => op.urgencia === 'alta').slice(0, 3).map((op) => op.tema)
+      }
+
+      // Objetivos: recomendacion de posicionamiento
+      inspiracionObjetivos = resultado.resumen_ejecutivo?.recomendacion_posicionamiento ?? ''
+
+      // Competidores: cargar competidores editoriales con URL web del cliente
+      const { data: refs } = await supabase
+        .from('referencias_externas')
+        .select('nombre, referencia_presencias(plataforma, url)')
+        .eq('client_id', session.client_id)
+        .eq('tipo', 'competidor_editorial')
+        .eq('activo', true)
+
+      if (refs) {
+        inspiracionCompetidores = refs
+          .filter((r) => {
+            const pres = (r.referencia_presencias ?? []) as Array<{ plataforma: string; url: string | null }>
+            return pres.some((p) => p.plataforma === 'web' && p.url)
+          })
+          .map((r) => r.nombre)
+      }
     }
   }
 
@@ -56,6 +86,8 @@ export default async function NuevaEstrategiaPage({ searchParams }: PageProps) {
     <NuevaEstrategiaClient
       clientes={clientes ?? []}
       inspiracionSeeds={inspiracionSeeds}
+      inspiracionObjetivos={inspiracionObjetivos}
+      inspiracionCompetidores={inspiracionCompetidores}
       inspiracionSessionId={inspiracionSessionId}
       inspiracionReciente={inspiracionReciente}
       clienteIdInicial={clienteId}

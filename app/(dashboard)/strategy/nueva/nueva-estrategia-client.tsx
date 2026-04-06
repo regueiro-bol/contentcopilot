@@ -141,6 +141,8 @@ const TIPOS_PROYECTO: { value: TipoProyecto; label: string }[] = [
 interface Props {
   clientes: { id: string; nombre: string }[]
   inspiracionSeeds?: string[]
+  inspiracionObjetivos?: string
+  inspiracionCompetidores?: string[]
   inspiracionSessionId?: string | null
   inspiracionReciente?: { id: string; created_at: string } | null
   clienteIdInicial?: string | null
@@ -149,6 +151,8 @@ interface Props {
 export default function NuevaEstrategiaClient({
   clientes,
   inspiracionSeeds = [],
+  inspiracionObjetivos = '',
+  inspiracionCompetidores = [],
   inspiracionSessionId = null,
   inspiracionReciente = null,
   clienteIdInicial = null,
@@ -161,7 +165,10 @@ export default function NuevaEstrategiaClient({
     ...FORM_VACIO,
     clienteId: clienteIdInicial ?? '',
     seedTopics: inspiracionSeeds.length > 0 ? inspiracionSeeds.join('\n') : '',
+    objetivos: inspiracionObjetivos,
+    competidores: inspiracionCompetidores,
   })
+  const preRellenado = inspiracionSessionId && (inspiracionSeeds.length > 0 || inspiracionObjetivos)
 
   // ── Estado sugerencias IA ──────────────────────────────────
   const [sugirendoSeeds, setSugirendoSeeds]       = useState(false)
@@ -746,11 +753,14 @@ export default function NuevaEstrategiaClient({
         ))}
       </div>
 
-      {/* Seeds de inspiracion (si vienen de /inspiracion) */}
-      {paso === 1 && inspiracionSeeds.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          {inspiracionSeeds.length} oportunidad{inspiracionSeeds.length !== 1 ? 'es' : ''} del Agente de Inspiracion incluida{inspiracionSeeds.length !== 1 ? 's' : ''} como seeds
+      {/* Banner pre-rellenado desde inspiracion */}
+      {paso === 1 && preRellenado && (
+        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">
+          <Check className="h-4 w-4 shrink-0" />
+          <div>
+            <span className="font-semibold">Briefing pre-rellenado desde el Agente de Inspiracion.</span>
+            <span className="text-emerald-600 ml-1">Revisa y ajusta antes de lanzar el research.</span>
+          </div>
         </div>
       )}
 
