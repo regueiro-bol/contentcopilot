@@ -19,8 +19,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Body JSON inválido' }, { status: 400 })
   }
 
-  // Solo permitir actualizar campos seguros
-  const allowed = ['nombre', 'url', 'tipo', 'categoria', 'plataforma', 'handle_rrss', 'notas', 'activo']
+  const allowed = ['nombre', 'tipo', 'categoria', 'notas', 'activo']
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
     if (key in body) updates[key] = body[key]
@@ -32,12 +31,18 @@ export async function PATCH(
     .update(updates)
     .eq('id', params.refId)
     .eq('client_id', params.clientId)
-    .select()
+    .select('*, referencia_presencias(*)')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ referencia: data })
+  return NextResponse.json({
+    referencia: {
+      ...data,
+      presencias: data.referencia_presencias ?? [],
+      referencia_presencias: undefined,
+    },
+  })
 }
 
 export async function DELETE(
