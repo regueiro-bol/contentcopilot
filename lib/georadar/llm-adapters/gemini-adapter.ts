@@ -12,7 +12,10 @@ export async function geminiAdapter(query: string) {
   const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel(
+      { model: 'gemini-1.5-flash-8b' },
+      { apiVersion: 'v1' },
+    );
     const result = await model.generateContent(query);
     const text = result.response.text();
     const usage = result.response.usageMetadata;
@@ -20,7 +23,7 @@ export async function geminiAdapter(query: string) {
     const tokensIn = usage?.promptTokenCount || 0;
     const tokensOut = usage?.candidatesTokenCount || 0;
 
-    console.log(`[GEORadar Gemini] gemini-2.0-flash | Query: ${query.substring(0, 60)} | Respuesta: ${text.length} chars`);
+    console.log(`[GEORadar Gemini] gemini-1.5-flash-8b | Query: ${query.substring(0, 60)} | Respuesta: ${text.length} chars`);
 
     return {
       respuesta_raw: text,
