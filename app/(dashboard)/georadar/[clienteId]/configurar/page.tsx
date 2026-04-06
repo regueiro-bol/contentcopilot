@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2, Download } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2, Download, AlertTriangle, ClipboardList } from 'lucide-react';
 import Link from 'next/link';
 
 const LLMS_DISPONIBLES = ['claude', 'gpt4', 'gemini', 'perplexity'];
@@ -408,6 +408,71 @@ export default function GeoRadarConfigurarPage() {
           ))}
         </CardContent>
       </Card>
+
+      {/* Resumen del scan */}
+      {(() => {
+        const queriesValidas = queries.filter((q) => q.query.trim()).length;
+        const llmsActivos = llms.length;
+        const compsValidos = competidores.filter((c) => c.nombre.trim()).length;
+        const totalQueries = queriesValidas * llmsActivos;
+        // Coste estimado: ~$0.003 por query-LLM (prompt + respuesta + analisis)
+        const costeEst = totalQueries * 0.003;
+        const llmLabels: Record<string, string> = { claude: 'Claude', gpt4: 'GPT-4', gemini: 'Gemini', perplexity: 'Perplexity' };
+
+        return (
+          <Card className="border-violet-200 bg-violet-50/30">
+            <CardContent className="p-5">
+              <p className="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-3">
+                <ClipboardList className="h-4 w-4 text-violet-600" />
+                Resumen del scan
+              </p>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                <span className="text-gray-500">Cliente</span>
+                <span className="text-gray-800 font-medium">{cliente?.nombre ?? '—'}</span>
+
+                <span className="text-gray-500">Keywords ({queriesValidas})</span>
+                <span className="text-gray-800 truncate" title={queries.filter((q) => q.query.trim()).map((q) => q.query).join(', ')}>
+                  {queriesValidas > 0
+                    ? queries.filter((q) => q.query.trim()).map((q) => q.query).slice(0, 3).join(', ') + (queriesValidas > 3 ? '...' : '')
+                    : '—'}
+                </span>
+
+                <span className="text-gray-500">Competidores ({compsValidos})</span>
+                <span className="text-gray-800 truncate">
+                  {compsValidos > 0
+                    ? competidores.filter((c) => c.nombre.trim()).map((c) => c.dominio || c.nombre).slice(0, 3).join(', ') + (compsValidos > 3 ? '...' : '')
+                    : '—'}
+                </span>
+
+                <span className="text-gray-500">LLMs activos ({llmsActivos})</span>
+                <span className="text-gray-800">{llms.map((l) => llmLabels[l] ?? l).join(', ') || '—'}</span>
+
+                <span className="text-gray-500">Queries totales</span>
+                <span className="text-gray-800 font-semibold">
+                  {totalQueries} <span className="font-normal text-gray-400">({queriesValidas} keywords × {llmsActivos} LLMs)</span>
+                </span>
+
+                <span className="text-gray-500">Coste estimado</span>
+                <span className="text-gray-800 font-semibold">~${costeEst.toFixed(2)}</span>
+              </div>
+
+              {compsValidos === 0 && (
+                <div className="flex items-center gap-1.5 mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Sin competidores configurados. El analisis no podra comparar tu presencia con la competencia.
+                </div>
+              )}
+
+              {queriesValidas === 0 && (
+                <div className="flex items-center gap-1.5 mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Necesitas al menos una keyword para lanzar el scan.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <div className="flex justify-end">
         <Button onClick={guardar} disabled={saving} className="bg-violet-600 hover:bg-violet-700">
