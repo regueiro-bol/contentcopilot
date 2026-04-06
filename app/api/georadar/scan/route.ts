@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { executeScan } from '@/lib/georadar/scan-engine';
 
+/**
+ * POST /api/georadar/scan
+ * Crea el registro del scan y devuelve el scan_id inmediatamente.
+ * La ejecucion la dispara el frontend llamando a POST /ejecutar.
+ */
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
@@ -48,15 +52,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  executeScan(scan.id).catch(console.error);
-
   return NextResponse.json({
     scan_id: scan.id,
-    estado: 'iniciando',
-    queries: count
+    estado: 'pendiente',
+    queries: count,
   });
 }
 
+/**
+ * GET /api/georadar/scan?scanId=...
+ * Polling de progreso.
+ */
 export async function GET(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
@@ -74,4 +80,29 @@ export async function GET(req: NextRequest) {
     .single();
 
   return NextResponse.json(data);
+}
+
+/**
+ * PATCH /api/georadar/scan
+ * Cancelar un scan bloqueado.
+ * Body: { scanId: string }
+ */
+export async function PATCH(req: NextRequest) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+
+  const { scanId } = await req.json();
+  if (!scanId) return NextResponse.json({ error: 'scanId requerido' }, { status: 400 });
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from('georadar_scans')
+    .update({ estado: 'error' })
+    .eq('id', scanId)
+    .in('estado', ['pendiente', 'ejecutando']);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  console.log(`[GEORadar] Scan ${scanId} cancelado`);
+  return NextResponse.json({ ok: true });
 }
