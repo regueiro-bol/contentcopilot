@@ -58,6 +58,12 @@ export async function executeScan(scanId: string): Promise<void> {
 
         const llmResponse = await adapter(query.query);
 
+        // Adapter puede devolver null (ej: Gemini no disponible)
+        if (!llmResponse) {
+          console.log(`[GEORadar] ${llm} devolvio null para "${query.query.substring(0, 40)}" — omitiendo`);
+          continue;
+        }
+
         const competidoresFormatted = (competidores || []).map((c: any) => ({
           nombre: c.name || c.nombre || '',
           aliases: c.aliases || [],

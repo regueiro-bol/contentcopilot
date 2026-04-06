@@ -27,6 +27,7 @@ export default function GeoRadarConfigurarPage() {
   const [competidores, setCompetidores] = useState<Array<{ nombre: string; dominio: string; aliases: string }>>([]);
   const [importando, setImportando] = useState(false);
   const [importMsg, setImportMsg] = useState<{ text: string; tipo: 'ok' | 'error' } | null>(null);
+  const [guardado, setGuardado] = useState(false);
 
   useEffect(() => {
     async function cargar() {
@@ -167,7 +168,8 @@ export default function GeoRadarConfigurarPage() {
 
   async function guardar() {
     setSaving(true);
-    await fetch(`/api/georadar/${clienteId}/config`, {
+    console.log('[GEORadar Config] Guardando competidores:', competidores);
+    const res = await fetch(`/api/georadar/${clienteId}/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -185,7 +187,10 @@ export default function GeoRadarConfigurarPage() {
       }),
     });
     setSaving(false);
-    router.push(`/georadar/${clienteId}`);
+    if (res.ok) {
+      setGuardado(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }
 
   if (loading) {
@@ -206,6 +211,27 @@ export default function GeoRadarConfigurarPage() {
           {cliente && <p className="text-sm text-gray-400">{cliente.nombre}</p>}
         </div>
       </div>
+
+      {/* Banner de guardado exitoso */}
+      {guardado && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm text-emerald-800 font-medium">
+            <svg className="h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            Configuracion guardada correctamente
+          </div>
+          <div className="flex items-center gap-3">
+            <Button asChild className="bg-violet-600 hover:bg-violet-700 gap-2">
+              <Link href={`/georadar/${clienteId}`}>
+                Lanzar scan ahora
+                <ArrowLeft className="h-4 w-4 rotate-180" />
+              </Link>
+            </Button>
+            <span className="text-xs text-gray-400">
+              Actualizado {new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Paso 1 — Configuración */}
       <Card>

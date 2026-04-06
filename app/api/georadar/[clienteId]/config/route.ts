@@ -91,5 +91,41 @@ export async function POST(
     }
   }
 
+  // Guardar competidores en tabla competitors
+  if (Array.isArray(competidores)) {
+    // Desactivar competidores existentes de tipo georadar
+    // (no tocamos los de platform meta/google que son de competitive intelligence)
+    const { data: existentes } = await supabase
+      .from('competitors')
+      .select('id, page_name')
+      .eq('client_id', params.clienteId);
+
+    const nombresNuevos = new Set(
+      competidores.filter((c: any) => c.nombre?.trim()).map((c: any) => c.nombre.trim().toLowerCase()),
+    );
+
+    // Eliminar los que ya no estan en la lista
+    for (const ex of existentes ?? []) {
+      if (!nombresNuevos.has(ex.page_name.toLowerCase())) {
+        await supabase.from('competitors').delete().eq('id', ex.id);
+      }
+    }
+
+    // Upsert de los nuevos/existentes
+    const nombresExistentes = new Set((existentes ?? []).map((e) => e.page_name.toLowerCase()));
+    for (const c of competidores.filter((c: any) => c.nombre?.trim())) {
+      if (!nombresExistentes.has(c.nombre.trim().toLowerCase())) {
+        await supabase.from('competitors').insert({
+          client_id: params.clienteId,
+          platform: 'google',
+          page_name: c.nombre.trim(),
+          active: true,
+        });
+      }
+    }
+
+    console.log(`[GEORadar Config] Competidores guardados: ${competidores.length}`);
+  }
+
   return NextResponse.json({ ok: true });
 }
