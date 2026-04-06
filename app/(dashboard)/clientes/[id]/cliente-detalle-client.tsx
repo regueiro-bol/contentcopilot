@@ -24,6 +24,7 @@ import {
   actualizarClienteMarca,
   crearProyecto,
 } from './actions'
+import ReferenciasTab from './referencias-tab'
 import type { Cliente, Proyecto, ProyectoFormData } from '@/types'
 import type { BrandAssetsCoverage, GenerationStatus } from '@/types/brand-assets'
 
@@ -964,6 +965,10 @@ export default function ClienteDetalleClient({
             <BarChart2 className="h-3.5 w-3.5" />
             Analítica
           </TabsTrigger>
+          <TabsTrigger value="referencias" className="gap-1.5">
+            <Link2 className="h-3.5 w-3.5" />
+            Referencias
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Tab 1: Identidad ── */}
@@ -1131,6 +1136,11 @@ export default function ClienteDetalleClient({
         {/* ── Tab 5: Analítica GA4 ── */}
         <TabsContent value="analitica">
           <GA4AnalyticsTab clienteId={cliente.id} />
+        </TabsContent>
+
+        {/* ── Tab 6: Referencias externas ── */}
+        <TabsContent value="referencias">
+          <ReferenciasTab clienteId={cliente.id} />
         </TabsContent>
       </Tabs>
 
