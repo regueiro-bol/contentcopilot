@@ -22,9 +22,9 @@ export default async function InspiracionPage({ params }: { params: { sessionId:
   return (
     <div className="space-y-4 max-w-6xl">
       <div className="flex items-center gap-1.5 text-sm text-gray-500">
-        <Link href="/strategy" className="hover:text-gray-700 transition-colors">Estrategia</Link>
+        <Link href="/inspiracion" className="hover:text-gray-700 transition-colors">Inspiracion</Link>
         <ChevronLeft className="h-3.5 w-3.5 rotate-180" />
-        <span className="text-gray-900 font-medium">Informe de Inspiracion</span>
+        <span className="text-gray-900 font-medium">Informe</span>
       </div>
 
       <InspiracionClient

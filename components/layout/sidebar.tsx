@@ -15,6 +15,7 @@ import {
   Calculator,
   TrendingUp,
   Radio,
+  Lightbulb,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -58,6 +59,11 @@ const navItems = [
     titulo: 'Estrategia',
     href: '/strategy',
     icono: TrendingUp,
+  },
+  {
+    titulo: 'Inspiracion',
+    href: '/inspiracion',
+    icono: Lightbulb,
   },
   {
     titulo: 'GEORadar',

@@ -225,6 +225,18 @@ export default function StrategyDashboardClient({
         </div>
       )}
 
+      {/* ── Banner inspiracion ────────────────────────────── */}
+      {clienteId && (
+        <Link href={`/inspiracion?cliente=${clienteId}`}
+          className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-4 py-2.5 transition-colors">
+          <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+          <span>Quieres inspiracion antes de empezar?</span>
+          <span className="font-semibold ml-auto flex items-center gap-1">
+            Ver analisis de inspiracion <ChevronRight className="h-3 w-3" />
+          </span>
+        </Link>
+      )}
+
       {/* ── KPIs ───────────────────────────────────────────── */}
       {(() => {
         const mapasCount = clienteId ? (mapasPorCliente[clienteId] ?? 0) : totalMapas
@@ -332,15 +344,6 @@ export default function StrategyDashboardClient({
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
-          <ModuleCard
-            icon={Lightbulb}
-            title="Agente Inspiracion"
-            description="Analiza tu contenido, competencia y tendencias del sector para detectar oportunidades antes del briefing."
-            locked={!clienteId}
-            href={clienteId ? `/strategy/nueva?cliente=${clienteId}&modo=inspiracion` : undefined}
-            color="bg-amber-100 text-amber-600"
-            subtitle="Fase 0 · Nuevo"
-          />
           <ModuleCard
             icon={Search}
             title="Briefing y Research"

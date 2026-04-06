@@ -254,13 +254,19 @@ export async function POST(request: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
-  let body: { client_id?: string }
+  let body: { client_id?: string; foco?: string }
   try { body = await request.json() } catch {
     return NextResponse.json({ error: 'Body JSON invalido' }, { status: 400 })
   }
 
   const { client_id } = body
+  const foco = body.foco ?? 'contenidos'
   if (!client_id) return NextResponse.json({ error: 'client_id requerido' }, { status: 400 })
+
+  // Focos no disponibles aun
+  if (foco === 'rrss' || foco === 'visual') {
+    return NextResponse.json({ error: 'Este foco estara disponible proximamente' }, { status: 400 })
+  }
 
   const supabase = createAdminClient()
 
@@ -276,7 +282,7 @@ export async function POST(request: NextRequest) {
   // Crear sesion
   const { data: session, error: sessError } = await supabase
     .from('inspiracion_sessions')
-    .insert({ client_id, status: 'running' })
+    .insert({ client_id, status: 'running', config: { foco } })
     .select('id')
     .single()
 

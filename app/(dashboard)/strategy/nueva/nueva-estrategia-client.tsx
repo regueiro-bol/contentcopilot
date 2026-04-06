@@ -162,7 +162,6 @@ export default function NuevaEstrategiaClient({
     clienteId: clienteIdInicial ?? '',
     seedTopics: inspiracionSeeds.length > 0 ? inspiracionSeeds.join('\n') : '',
   })
-  const [lanzandoInspiracion, setLanzandoInspiracion] = useState(false)
 
   // ── Estado sugerencias IA ──────────────────────────────────
   const [sugirendoSeeds, setSugirendoSeeds]       = useState(false)
@@ -747,58 +746,12 @@ export default function NuevaEstrategiaClient({
         ))}
       </div>
 
-      {/* Banner inspiracion */}
-      {paso === 1 && inspiracionReciente && !inspiracionSessionId && (
-        <Card className="border-amber-200 bg-amber-50/30">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-amber-800">Tienes un analisis de inspiracion disponible</p>
-              <p className="text-xs text-amber-600">
-                Generado el {new Date(inspiracionReciente.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button asChild size="sm" variant="outline" className="text-xs border-amber-200 text-amber-700 hover:bg-amber-100">
-                <Link href={`/strategy/inspiracion/${inspiracionReciente.id}`}>Ver informe</Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
+      {/* Seeds de inspiracion (si vienen de /inspiracion) */}
       {paso === 1 && inspiracionSeeds.length > 0 && (
         <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2">
           <Info className="h-3.5 w-3.5 shrink-0" />
           {inspiracionSeeds.length} oportunidad{inspiracionSeeds.length !== 1 ? 'es' : ''} del Agente de Inspiracion incluida{inspiracionSeeds.length !== 1 ? 's' : ''} como seeds
         </div>
-      )}
-
-      {/* Boton lanzar inspiracion (solo si hay cliente y no hay sesion reciente) */}
-      {paso === 1 && form.clienteId && !inspiracionReciente && !inspiracionSessionId && (
-        <button
-          type="button"
-          disabled={lanzandoInspiracion}
-          onClick={async () => {
-            setLanzandoInspiracion(true)
-            try {
-              const res = await fetch('/api/strategy/inspiracion', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ client_id: form.clienteId }),
-              })
-              const data = await res.json()
-              if (res.ok && data.session_id) {
-                router.push(`/strategy/inspiracion/${data.session_id}`)
-              }
-            } finally {
-              setLanzandoInspiracion(false)
-            }
-          }}
-          className="flex items-center gap-2 text-xs text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-3 py-2 transition-colors"
-        >
-          {lanzandoInspiracion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-          Lanzar Agente de Inspiracion antes del briefing
-        </button>
       )}
 
       {/* Contenido del paso */}
