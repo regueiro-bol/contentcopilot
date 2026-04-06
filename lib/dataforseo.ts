@@ -417,3 +417,70 @@ export async function getCompetitorKeywords(
       intent    : (item.keyword_data?.keyword_info as any)?.main_intent ?? null,
     }))
 }
+
+// ─────────────────────────────────────────────────────────────
+// Google Trends via DataForSEO
+// ─────────────────────────────────────────────────────────────
+
+export interface TrendingKw {
+  keyword:     string
+  values:      number[]  // trend values over time
+  avg_value:   number
+}
+
+interface TrendsExploreResult {
+  items?: Array<{
+    keywords?: string[]
+    data?:     Array<{
+      date_from?: string
+      date_to?:   string
+      values?:    number[]
+      timestamp?: number
+    }>
+  }>
+}
+
+/**
+ * Obtiene datos de Google Trends para keywords del sector via DataForSEO.
+ * Endpoint: /keywords_data/google_trends/explore/live
+ */
+export async function getTrendingKeywords(
+  keywords: string[],
+  locationCode = 2724,
+): Promise<TrendingKw[]> {
+  if (keywords.length === 0) return []
+
+  // Google Trends acepta max 5 keywords por request
+  const kws = keywords.slice(0, 5)
+
+  const data = await post<TrendsExploreResult>(
+    '/keywords_data/google_trends/explore/live',
+    [{
+      keywords:      kws,
+      location_code: locationCode,
+      language_code: 'es',
+      type:          'web',
+      time_range:    'past_7_days',
+    }],
+  )
+
+  const items = data.tasks?.[0]?.result?.[0]?.items ?? []
+  const results: TrendingKw[] = []
+
+  // Cada item tiene una keyword y sus valores de tendencia
+  for (let i = 0; i < kws.length; i++) {
+    const kw = kws[i]
+    // Los valores de tendencia vienen en el array data de cada item
+    const itemData = items[0]?.data ?? []
+    const values = itemData.map((d) => (d.values?.[i] ?? 0))
+    const avg = values.length > 0
+      ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
+      : 0
+
+    results.push({ keyword: kw, values, avg_value: avg })
+  }
+
+  console.log(`[DataForSEO] Trends: ${results.length} keywords, avg values: ${results.map((r) => `${r.keyword}=${r.avg_value}`).join(', ')}`)
+
+  return results
+}

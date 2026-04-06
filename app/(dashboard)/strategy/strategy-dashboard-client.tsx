@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   Search,
   Map,
@@ -14,9 +15,15 @@ import {
   Layers,
   Users,
   Lightbulb,
+  Zap,
+  Calendar,
+  Loader2,
+  AlertCircle,
+  ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { formatearFecha } from '@/lib/utils'
 
 // ─────────────────────────────────────────────────────────────
@@ -380,6 +387,9 @@ export default function StrategyDashboardClient({
         </CardContent>
       </Card>
 
+      {/* ── Oportunidades de Actualidad ────────────────────── */}
+      {clienteId && <OportunidadesActualidad clienteId={clienteId} />}
+
       {/* ── Historial de sesiones ──────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
@@ -437,5 +447,226 @@ export default function StrategyDashboardClient({
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Oportunidades de Actualidad
+// ─────────────────────────────────────────────────────────────
+
+interface OportunidadItem {
+  id: string; tipo: string; titulo: string; keyword: string | null
+  descripcion: string | null; urgencia: string | null; relevancia: string | null
+  fecha_evento: string | null; contexto: string | null; trending_pct: number | null
+}
+
+const URGENCIA_BADGE: Record<string, { label: string; cls: string }> = {
+  '24h':   { label: 'Urgente',    cls: 'bg-red-100 text-red-700' },
+  semana:  { label: 'Esta semana', cls: 'bg-amber-100 text-amber-700' },
+  mes:     { label: 'Este mes',    cls: 'bg-blue-100 text-blue-700' },
+}
+
+const RELEVANCIA_BADGE: Record<string, { label: string; cls: string }> = {
+  alta:  { label: 'Alta',  cls: 'bg-red-100 text-red-700' },
+  media: { label: 'Media', cls: 'bg-amber-100 text-amber-700' },
+  baja:  { label: 'Baja',  cls: 'bg-gray-100 text-gray-600' },
+}
+
+function OportunidadesActualidad({ clienteId }: { clienteId: string }) {
+  const router = useRouter()
+  const [trending, setTrending]       = useState<OportunidadItem[]>([])
+  const [estacional, setEstacional]   = useState<OportunidadItem[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [generating, setGenerating]   = useState(false)
+  const [error, setError]             = useState<string | null>(null)
+  const [creando, setCreando]         = useState<string | null>(null)
+
+  const fetchData = useCallback(async (forceGenerate = false) => {
+    if (forceGenerate) {
+      setGenerating(true)
+    } else {
+      setLoading(true)
+    }
+    setError(null)
+
+    try {
+      // Primero intentar GET (datos frescos)
+      if (!forceGenerate) {
+        const getRes = await fetch(`/api/strategy/actualidad/${clienteId}`)
+        if (getRes.ok) {
+          const data = await getRes.json() as { trending: OportunidadItem[]; estacional: OportunidadItem[] }
+          if (data.trending.length > 0 || data.estacional.length > 0) {
+            setTrending(data.trending)
+            setEstacional(data.estacional)
+            setLoading(false)
+            return
+          }
+        }
+      }
+
+      // Si no hay datos o force → generar
+      const postRes = await fetch('/api/strategy/actualidad', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clienteId, force: forceGenerate }),
+      })
+
+      if (!postRes.ok) {
+        const errData = await postRes.json().catch(() => ({}))
+        throw new Error((errData as { error?: string }).error ?? 'Error generando')
+      }
+
+      const data = await postRes.json() as { trending: OportunidadItem[]; estacional: OportunidadItem[] }
+      setTrending(data.trending)
+      setEstacional(data.estacional)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error cargando oportunidades')
+    } finally {
+      setLoading(false)
+      setGenerating(false)
+    }
+  }, [clienteId])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  async function handleCrearContenido(op: OportunidadItem) {
+    setCreando(op.id)
+    try {
+      const res = await fetch('/api/strategy/actualidad/crear-contenido', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: clienteId,
+          titulo: op.titulo,
+          keyword: op.keyword,
+          contexto: op.contexto ?? op.descripcion,
+          urgencia: op.urgencia,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { contenido_id: string }
+        router.push(`/contenidos/${data.contenido_id}`)
+      }
+    } finally {
+      setCreando(null)
+    }
+  }
+
+  const isEmpty = trending.length === 0 && estacional.length === 0
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <Zap className="h-4 w-4 text-amber-500" />
+            Oportunidades de Actualidad
+          </CardTitle>
+          <Button size="sm" variant="outline" className="text-xs gap-1.5 h-7"
+            onClick={() => fetchData(true)} disabled={generating}>
+            {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Actualizar
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {/* Loading */}
+        {(loading || generating) && (
+          <div className="flex items-center justify-center py-8 gap-2 text-gray-400">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">{generating ? 'Analizando tendencias del sector...' : 'Cargando...'}</span>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && !loading && (
+          <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+            <AlertCircle className="h-4 w-4 shrink-0" /> {error}
+          </div>
+        )}
+
+        {/* Empty */}
+        {!loading && !generating && !error && isEmpty && (
+          <p className="text-sm text-gray-400 text-center py-6">
+            Pulsa &quot;Actualizar&quot; para detectar oportunidades de actualidad.
+          </p>
+        )}
+
+        {/* Contenido */}
+        {!loading && !generating && !isEmpty && (
+          <div className="space-y-5">
+            {/* Estacionales */}
+            {estacional.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5" /> Oportunidades estacionales
+                </p>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {estacional.map((op) => {
+                    const urg = URGENCIA_BADGE[op.urgencia ?? 'mes'] ?? URGENCIA_BADGE.mes
+                    return (
+                      <div key={op.id} className="flex-none w-64 rounded-lg border border-gray-200 bg-white p-3.5">
+                        <div className="flex items-center justify-between mb-2">
+                          {op.fecha_evento && (
+                            <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {new Date(op.fecha_evento).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                            </span>
+                          )}
+                          <Badge className={`text-[10px] ${urg.cls}`}>{urg.label}</Badge>
+                        </div>
+                        <p className="text-sm font-semibold text-gray-900 leading-snug mb-1">{op.titulo}</p>
+                        {op.keyword && (
+                          <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">{op.keyword}</span>
+                        )}
+                        {op.descripcion && (
+                          <p className="text-xs text-gray-500 mt-1.5 line-clamp-2">{op.descripcion}</p>
+                        )}
+                        <button type="button" onClick={() => handleCrearContenido(op)} disabled={creando === op.id}
+                          className="mt-2.5 inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
+                          {creando === op.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+                          Crear contenido
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Trending */}
+            {trending.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <TrendingUp className="h-3.5 w-3.5" /> Trending en el sector
+                </p>
+                <div className="space-y-2">
+                  {trending.map((op) => {
+                    const rel = RELEVANCIA_BADGE[op.relevancia ?? 'media'] ?? RELEVANCIA_BADGE.media
+                    return (
+                      <div key={op.id} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3.5 py-2.5">
+                        <span className="text-sm">📈</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <p className="text-sm font-medium text-gray-900 truncate">{op.titulo}</p>
+                            <Badge className={`text-[10px] shrink-0 ${rel.cls}`}>{rel.label}</Badge>
+                          </div>
+                          {op.contexto && <p className="text-xs text-gray-500 truncate">{op.contexto}</p>}
+                        </div>
+                        <button type="button" onClick={() => handleCrearContenido(op)} disabled={creando === op.id}
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 rounded-lg px-2 py-1 transition-colors">
+                          {creando === op.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                          Urgente
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
