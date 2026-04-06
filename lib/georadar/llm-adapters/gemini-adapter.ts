@@ -8,27 +8,38 @@ export async function geminiAdapter(query: string) {
     throw new Error('GOOGLE_AI_API_KEY no configurada');
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+  const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);
+  const models = ['gemini-1.5-flash', 'gemini-pro'];
 
-    const result = await model.generateContent(query);
-    const text = result.response.text();
-    const usage = result.response.usageMetadata;
+  for (const modelName of models) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(query);
+      const text = result.response.text();
+      const usage = result.response.usageMetadata;
 
-    const tokensIn = usage?.promptTokenCount || 0;
-    const tokensOut = usage?.candidatesTokenCount || 0;
+      const tokensIn = usage?.promptTokenCount || 0;
+      const tokensOut = usage?.candidatesTokenCount || 0;
 
-    console.log(`[GEORadar Gemini] Query: ${query.substring(0, 60)} | Respuesta: ${text.length} chars`);
+      console.log(`[GEORadar Gemini] ${modelName} | Query: ${query.substring(0, 60)} | Respuesta: ${text.length} chars`);
 
-    return {
-      respuesta_raw: text,
-      tokens_entrada: tokensIn,
-      tokens_salida: tokensOut,
-      coste_usd: tokensIn * COST_IN + tokensOut * COST_OUT,
-    };
-  } catch (err) {
-    console.error(`[GEORadar Gemini] ERROR query "${query.substring(0, 60)}":`, err instanceof Error ? err.message : err);
-    throw err;
+      return {
+        respuesta_raw: text,
+        tokens_entrada: tokensIn,
+        tokens_salida: tokensOut,
+        coste_usd: tokensIn * COST_IN + tokensOut * COST_OUT,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const is404 = msg.includes('404') || msg.includes('not found') || msg.includes('not available');
+      console.warn(`[GEORadar Gemini] ${modelName} fallo: ${msg.substring(0, 100)}`);
+      if (!is404 || modelName === models[models.length - 1]) {
+        console.error(`[GEORadar Gemini] ERROR definitivo query "${query.substring(0, 60)}":`, msg);
+        throw err;
+      }
+      console.log(`[GEORadar Gemini] Intentando fallback...`);
+    }
   }
+
+  throw new Error('Gemini: ningun modelo disponible (gemini-1.5-flash, gemini-pro)');
 }
