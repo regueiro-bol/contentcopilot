@@ -27,12 +27,22 @@ const navItems = [
     titulo: 'Dashboard',
     href: '/dashboard',
     icono: LayoutDashboard,
-    showBadge: true,  // muestra el badge de urgentes
+    showBadge: true,
   },
   {
     titulo: 'Clientes',
     href: '/clientes',
     icono: Users,
+  },
+  {
+    titulo: 'Inspiracion',
+    href: '/inspiracion',
+    icono: Lightbulb,
+  },
+  {
+    titulo: 'Estrategia',
+    href: '/strategy',
+    icono: TrendingUp,
   },
   {
     titulo: 'Pedidos',
@@ -46,34 +56,24 @@ const navItems = [
     icono: FileText,
   },
   {
-    titulo: 'Copiloto',
-    href: '/copiloto',
-    icono: Sparkles,
-  },
-  {
-    titulo: 'Agentes',
-    href: '/agentes',
-    icono: Cpu,
-  },
-  {
-    titulo: 'Estrategia',
-    href: '/strategy',
-    icono: TrendingUp,
-  },
-  {
-    titulo: 'Inspiracion',
-    href: '/inspiracion',
-    icono: Lightbulb,
-  },
-  {
     titulo: 'GEORadar',
     href: '/georadar',
     icono: Radio,
   },
   {
+    titulo: 'Copiloto',
+    href: '/copiloto',
+    icono: Sparkles,
+  },
+  {
     titulo: 'Costes',
     href: '/costes',
     icono: Calculator,
+  },
+  {
+    titulo: 'Agentes',
+    href: '/agentes',
+    icono: Cpu,
   },
 ]
 
