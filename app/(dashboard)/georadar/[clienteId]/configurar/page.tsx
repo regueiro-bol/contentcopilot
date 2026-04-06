@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2, Download } from 'lucide-react';
 import Link from 'next/link';
 
 const LLMS_DISPONIBLES = ['claude', 'gpt4', 'gemini', 'perplexity'];
@@ -25,6 +25,8 @@ export default function GeoRadarConfigurarPage() {
   const [frecuencia, setFrecuencia] = useState('mensual');
   const [queries, setQueries] = useState<Array<{ query: string; categoria: string }>>([]);
   const [competidores, setCompetidores] = useState<Array<{ nombre: string; dominio: string; aliases: string }>>([]);
+  const [importando, setImportando] = useState(false);
+  const [importMsg, setImportMsg] = useState<{ text: string; tipo: 'ok' | 'error' } | null>(null);
 
   useEffect(() => {
     async function cargar() {
@@ -88,6 +90,62 @@ export default function GeoRadarConfigurarPage() {
 
   function removeCompetidor(i: number) {
     setCompetidores(prev => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function importarCompetidores() {
+    setImportando(true);
+    setImportMsg(null);
+    try {
+      const res = await fetch(`/api/clientes/${clienteId}/referencias`);
+      if (!res.ok) throw new Error('Error cargando referencias');
+      const { referencias } = await res.json() as {
+        referencias: Array<{
+          nombre: string;
+          tipo: string;
+          activo: boolean;
+          presencias: Array<{ plataforma: string; url: string | null }>;
+        }>;
+      };
+
+      // Filtrar competidores editoriales/publicitarios con URL web
+      const competidoresRef = referencias.filter(
+        (r) => r.activo && (r.tipo === 'competidor_editorial' || r.tipo === 'competidor_publicitario')
+      );
+
+      if (competidoresRef.length === 0) {
+        setImportMsg({ text: 'no_refs', tipo: 'error' });
+        return;
+      }
+
+      // Extraer dominios unicos
+      const dominiosExistentes = new Set(competidores.map((c) => c.dominio.toLowerCase()).filter(Boolean));
+      let importados = 0;
+
+      for (const ref of competidoresRef) {
+        const webPres = (ref.presencias ?? []).find((p) => p.plataforma === 'web' && p.url);
+        let dominio = '';
+        if (webPres?.url) {
+          try { dominio = new URL(webPres.url).hostname.replace('www.', ''); } catch { /* skip */ }
+        }
+
+        if (dominio && !dominiosExistentes.has(dominio.toLowerCase())) {
+          setCompetidores((prev) => [...prev, { nombre: ref.nombre, dominio, aliases: '' }]);
+          dominiosExistentes.add(dominio.toLowerCase());
+          importados++;
+        } else if (!dominio && !dominiosExistentes.has(ref.nombre.toLowerCase())) {
+          // Sin URL web — anadir solo con nombre
+          setCompetidores((prev) => [...prev, { nombre: ref.nombre, dominio: '', aliases: '' }]);
+          dominiosExistentes.add(ref.nombre.toLowerCase());
+          importados++;
+        }
+      }
+
+      setImportMsg({ text: `${importados} competidor${importados !== 1 ? 'es' : ''} importado${importados !== 1 ? 's' : ''}`, tipo: 'ok' });
+    } catch {
+      setImportMsg({ text: 'Error importando competidores', tipo: 'error' });
+    } finally {
+      setImportando(false);
+    }
   }
 
   async function sugerirQueriesIA() {
@@ -284,16 +342,40 @@ export default function GeoRadarConfigurarPage() {
             <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wide">
               Paso 3 — Competidores
             </CardTitle>
-            <Button variant="outline" size="sm" onClick={addCompetidor} className="text-xs">
-              <Plus className="h-3 w-3 mr-1" />
-              Añadir
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={importarCompetidores} disabled={importando} className="text-xs gap-1">
+                {importando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                Importar del cliente
+              </Button>
+              <Button variant="outline" size="sm" onClick={addCompetidor} className="text-xs">
+                <Plus className="h-3 w-3 mr-1" />
+                Añadir
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {competidores.length === 0 && (
+          {importMsg && (
+            importMsg.text === 'no_refs' ? (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                No hay competidores configurados en la ficha del cliente.{' '}
+                <Link href={`/clientes/${clienteId}?tab=referencias`} className="underline font-medium hover:text-amber-900">
+                  Configurar referencias
+                </Link>
+              </div>
+            ) : importMsg.tipo === 'ok' ? (
+              <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-2">
+                {importMsg.text}
+              </div>
+            ) : (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-2">
+                {importMsg.text}
+              </div>
+            )
+          )}
+          {competidores.length === 0 && !importMsg && (
             <p className="text-sm text-gray-400 text-center py-4">
-              Sin competidores. Añade los que quieres comparar en el análisis.
+              Sin competidores. Añade manualmente o importa desde la ficha del cliente.
             </p>
           )}
           {competidores.map((c, i) => (
