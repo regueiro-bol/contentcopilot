@@ -34,6 +34,14 @@ interface VideoScene {
   video_clip_url: string | null
   audio_url: string | null
   status: string
+  shot_type: string | null
+  camera_angle: string | null
+  camera_movement: string | null
+  lens: string | null
+  lighting: string | null
+  background: string | null
+  text_overlay: string | null
+  seedance_prompt: string | null
 }
 
 interface VideoProject {
@@ -44,8 +52,26 @@ interface VideoProject {
   script: string | null
   video_type: 'images_audio' | 'animation' | 'infographic'
   duration_seconds: number
-  format: '9x16' | '16x9' | 'both'
+  format: '9x16' | '16x9' | '1x1' | 'both'
   elevenlabs_voice_id: string | null
+  apply_brand_assets: boolean | null
+}
+
+const CAMERA_MOTION: Record<string, string> = {
+  estatico: 'static shot, locked camera, no movement',
+  dolly_in: 'slow push in, camera moving forward',
+  dolly_out: 'slow pull back, camera moving backward',
+  pan_left: 'slow pan left, horizontal camera movement',
+  pan_right: 'slow pan right, horizontal camera movement',
+  tilt_up: 'slow tilt up, vertical camera movement',
+  tilt_down: 'slow tilt down, vertical camera movement',
+  zoom_in: 'slow zoom in, lens compression',
+  zoom_out: 'slow zoom out, revealing shot',
+}
+
+function getCameraMotionPrompt(movement: string | null | undefined): string {
+  if (!movement) return CAMERA_MOTION.estatico
+  return CAMERA_MOTION[movement] ?? CAMERA_MOTION.estatico
 }
 
 interface FluxImageResult {
@@ -69,11 +95,15 @@ async function pLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<voi
   await Promise.all(workers)
 }
 
-function formatToAspect(fmt: '9x16' | '16x9'): string {
-  return fmt === '9x16' ? '9:16' : '16:9'
+type ImageFormat = '9x16' | '16x9' | '1x1'
+
+function formatToAspect(fmt: ImageFormat): string {
+  if (fmt === '9x16') return '9:16'
+  if (fmt === '1x1') return '1:1'
+  return '16:9'
 }
 
-async function generateImage(prompt: string, format: '9x16' | '16x9'): Promise<string | null> {
+async function generateImage(prompt: string, format: ImageFormat): Promise<string | null> {
   try {
     const result = (await fal.subscribe(FLUX_MODEL, {
       input: {
@@ -96,17 +126,18 @@ async function animateImage(params: {
   imageUrl: string
   prompt: string
   duration: number
-  format: '9x16' | '16x9'
+  format: ImageFormat
 }): Promise<string | null> {
   try {
+    const input: Record<string, unknown> = {
+      image_url: params.imageUrl,
+      prompt: `${params.prompt}, smooth cinematic motion`,
+      duration: String(Math.min(Math.max(params.duration, 3), 12)),
+      resolution: '480p',
+      aspect_ratio: formatToAspect(params.format),
+    }
     const result = (await fal.subscribe(SEEDANCE_MODEL, {
-      input: {
-        image_url: params.imageUrl,
-        prompt: `${params.prompt}, smooth cinematic motion`,
-        duration: Math.min(Math.max(params.duration, 3), 12),
-        resolution: '480p',
-        aspect_ratio: formatToAspect(params.format),
-      },
+      input: input as never,
     })) as { data: SeedanceResult }
     return result.data?.video?.url ?? null
   } catch (err) {
@@ -194,34 +225,46 @@ export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
     project.video_type === 'animation' ||
     project.video_type === 'infographic'
 
-  const fmtForImage: '9x16' | '16x9' = project.format === '16x9' ? '16x9' : '9x16'
+  const fmtForImage: ImageFormat =
+    project.format === '16x9' ? '16x9' : project.format === '1x1' ? '1x1' : '9x16'
 
   // Batch 2-en-paralelo (Seedance tarda 2-3 min/clip; con maxDuration=300s
   // un batch de 2 deja margen suficiente para 6 escenas como máximo).
   await pLimit(scenes, 2, async (scene) => {
-    await supabase.from('video_scenes').update({ status: 'generating' }).eq('id', scene.id)
+    const typedScene = scene as VideoScene
+    await supabase.from('video_scenes').update({ status: 'generating' }).eq('id', typedScene.id)
 
-    const imagePrompt = stylePrefix
-      ? `${stylePrefix}. ${scene.description}`
-      : scene.description
+    const useBrand = (project.apply_brand_assets ?? true) && stylePrefix
+    // Prompt base para FLUX: la descripción visual enriquecida con brand si procede.
+    const imagePrompt = useBrand
+      ? `${stylePrefix}. ${typedScene.description}`
+      : typedScene.description
 
     const imageUrl = await generateImage(imagePrompt, fmtForImage)
 
     let videoClipUrl: string | null = null
     if (needsAnimation && imageUrl) {
+      // Usa el seedance_prompt generado por el director de arte y le añade
+      // el movimiento de cámara traducido.
+      const motion = getCameraMotionPrompt(typedScene.camera_movement)
+      const seedancePrompt =
+        [typedScene.seedance_prompt?.trim(), motion, 'cinematic, 24fps']
+          .filter(Boolean)
+          .join(', ') || typedScene.description
+
       videoClipUrl = await animateImage({
         imageUrl,
-        prompt: scene.description,
-        duration: scene.duration_seconds || 5,
+        prompt: seedancePrompt,
+        duration: typedScene.duration_seconds || 5,
         format: fmtForImage,
       })
     }
 
     const audioUrl = await generateAndUploadAudio(
-      scene.narration_text,
+      typedScene.narration_text,
       voiceId,
       project.id,
-      scene.id,
+      typedScene.id,
       elevenLabsErrors,
     )
 
@@ -234,7 +277,7 @@ export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
         audio_url: audioUrl,
         status,
       })
-      .eq('id', scene.id)
+      .eq('id', typedScene.id)
   })
 
   // Recargar escenas con URLs

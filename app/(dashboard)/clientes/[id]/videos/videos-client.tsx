@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Dialog,
@@ -23,11 +23,15 @@ import {
   XCircle,
   Pencil,
   PlayCircle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
-type VideoType = 'images_audio' | 'animation' | 'infographic'
-type VideoFormat = '9x16' | '16x9' | 'both'
+type Platform = 'tiktok' | 'instagram_reels' | 'youtube_shorts' | 'linkedin'
+type VideoFormat = '9x16' | '16x9' | '1x1' | 'both'
+type Tone = 'divulgativo' | 'periodistico' | 'cercano' | 'tecnico'
+type Intention = 'informativo' | 'educativo' | 'promocional'
 type VideoStatus =
   | 'draft_script'
   | 'script_approved'
@@ -39,17 +43,21 @@ type VideoStatus =
 interface VideoProject {
   id: string
   client_id: string
+  content_id: string | null
   title: string
   brief: string
   script: string | null
-  video_type: VideoType
+  narrative_hook: string | null
+  platform: Platform | null
+  tone: Tone | null
+  intention: Intention | null
+  apply_brand_assets: boolean | null
+  show_logo: boolean | null
   duration_seconds: number
   format: VideoFormat
   status: VideoStatus
   video_url: string | null
-  thumbnail_url: string | null
   created_at: string
-  updated_at: string
 }
 
 interface VideoScene {
@@ -63,6 +71,20 @@ interface VideoScene {
   video_clip_url: string | null
   audio_url: string | null
   status: 'pending' | 'generating' | 'ready' | 'error'
+  shot_type: string | null
+  camera_angle: string | null
+  camera_movement: string | null
+  lens: string | null
+  lighting: string | null
+  background: string | null
+  text_overlay: string | null
+  seedance_prompt: string | null
+}
+
+interface ContenidoOption {
+  id: string
+  titulo: string
+  estado: string
 }
 
 interface Props {
@@ -70,9 +92,12 @@ interface Props {
   clientNombre: string
   initialProjects: VideoProject[]
   initialScenesByProject: Record<string, unknown[]>
+  contenidos: ContenidoOption[]
+  prefillContentId?: string
+  openModalOnMount?: boolean
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────
 const STATUS_LABEL: Record<VideoStatus, string> = {
   draft_script: 'Borrador de guión',
   script_approved: 'Guión aprobado',
@@ -81,7 +106,6 @@ const STATUS_LABEL: Record<VideoStatus, string> = {
   approved: 'Aprobado',
   rejected: 'Rechazado',
 }
-
 const STATUS_COLOR: Record<VideoStatus, string> = {
   draft_script: 'bg-amber-100 text-amber-800 border-amber-200',
   script_approved: 'bg-blue-100 text-blue-800 border-blue-200',
@@ -90,12 +114,34 @@ const STATUS_COLOR: Record<VideoStatus, string> = {
   approved: 'bg-green-100 text-green-800 border-green-200',
   rejected: 'bg-red-100 text-red-800 border-red-200',
 }
-
-const TYPE_LABEL: Record<VideoType, string> = {
-  images_audio: 'Imágenes + audio',
-  animation: 'Animación',
-  infographic: 'Infografía',
+const PLATFORM_LABEL: Record<Platform, string> = {
+  tiktok: 'TikTok',
+  instagram_reels: 'Instagram Reels',
+  youtube_shorts: 'YouTube Shorts',
+  linkedin: 'LinkedIn',
 }
+
+const SHOT_TYPES = [
+  'primer_plano',
+  'plano_detalle',
+  'plano_medio',
+  'plano_general',
+  'plano_americano',
+] as const
+const CAMERA_ANGLES = ['normal', 'picado', 'contrapicado', 'cenital'] as const
+const CAMERA_MOVEMENTS = [
+  'estatico',
+  'dolly_in',
+  'dolly_out',
+  'pan_left',
+  'pan_right',
+  'tilt_up',
+  'tilt_down',
+  'zoom_in',
+  'zoom_out',
+] as const
+const LENSES = ['24mm', '35mm', '50mm', '85mm', '135mm'] as const
+const LIGHTINGS = ['natural_calida', 'natural_fria', 'estudio', 'dramatica', 'suave'] as const
 
 // ─── Component ─────────────────────────────────────────────────────────────
 export default function VideosClient({
@@ -103,6 +149,9 @@ export default function VideosClient({
   clientNombre,
   initialProjects,
   initialScenesByProject,
+  contenidos,
+  prefillContentId,
+  openModalOnMount,
 }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -112,22 +161,34 @@ export default function VideosClient({
     initialScenesByProject as Record<string, VideoScene[]>,
   )
 
-  const [openNew, setOpenNew] = useState(false)
+  const [openNew, setOpenNew] = useState(openModalOnMount ?? false)
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
 
-  // ── Modal state
+  // Modal form state
+  const [contentId, setContentId] = useState<string>(prefillContentId ?? '')
   const [brief, setBrief] = useState('')
-  const [videoType, setVideoType] = useState<VideoType>('images_audio')
-  const [duration, setDuration] = useState<15 | 30 | 60>(30)
+  const [platform, setPlatform] = useState<Platform>('instagram_reels')
   const [format, setFormat] = useState<VideoFormat>('9x16')
+  const [duration, setDuration] = useState<15 | 30 | 60>(15)
+  const [tone, setTone] = useState<Tone>('cercano')
+  const [intention, setIntention] = useState<Intention>('informativo')
+  const [applyBrand, setApplyBrand] = useState(true)
+  const [showLogo, setShowLogo] = useState(true)
+
+  useEffect(() => {
+    if (openModalOnMount) setOpenNew(true)
+  }, [openModalOnMount])
 
   function refresh() {
     startTransition(() => router.refresh())
   }
 
   async function handleCreate() {
-    if (!brief.trim()) return
+    if (!contentId && !brief.trim()) {
+      alert('Elige un contenido o escribe un brief')
+      return
+    }
     setCreating(true)
     try {
       const res = await fetch('/api/videos/generate-script', {
@@ -135,10 +196,15 @@ export default function VideosClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           client_id: clientId,
-          brief,
-          video_type: videoType,
-          duration_seconds: duration,
+          content_id: contentId || undefined,
+          brief: brief.trim() || undefined,
+          platform,
           format,
+          duration_seconds: duration,
+          tone,
+          intention,
+          apply_brand_assets: applyBrand,
+          show_logo: showLogo,
         }),
       })
       const data = await res.json()
@@ -147,6 +213,7 @@ export default function VideosClient({
       setScenesByProject((m) => ({ ...m, [data.project.id]: data.scenes }))
       setOpenNew(false)
       setBrief('')
+      setContentId('')
       setEditingId(data.project.id)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error desconocido')
@@ -157,7 +224,6 @@ export default function VideosClient({
 
   async function handleSaveScript(
     projectId: string,
-    script: string,
     scenes: VideoScene[],
     approve = false,
   ) {
@@ -165,12 +231,19 @@ export default function VideosClient({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        script,
         scenes: scenes.map((s) => ({
           id: s.id,
           description: s.description,
           narration_text: s.narration_text,
           duration_seconds: s.duration_seconds,
+          shot_type: s.shot_type ?? undefined,
+          camera_angle: s.camera_angle ?? undefined,
+          camera_movement: s.camera_movement ?? undefined,
+          lens: s.lens ?? undefined,
+          lighting: s.lighting ?? undefined,
+          background: s.background ?? undefined,
+          text_overlay: s.text_overlay ?? undefined,
+          seedance_prompt: s.seedance_prompt ?? undefined,
         })),
         approve,
       }),
@@ -207,12 +280,12 @@ export default function VideosClient({
       body: JSON.stringify({ status }),
     })
     const data = await res.json()
-    if (!res.ok) {
-      alert(data.error || 'Error al actualizar estado')
-      return
-    }
+    if (!res.ok) return alert(data.error || 'Error')
     setProjects((p) => p.map((x) => (x.id === projectId ? data.project : x)))
   }
+
+  const totalDuration = (sceneList: VideoScene[]) =>
+    sceneList.reduce((sum, s) => sum + (s.duration_seconds || 0), 0)
 
   return (
     <div className="space-y-6">
@@ -235,7 +308,6 @@ export default function VideosClient({
           <CardContent className="py-16 text-center text-gray-500">
             <Film className="h-12 w-12 mx-auto mb-3 text-gray-300" />
             <p>Aún no hay vídeos para este cliente.</p>
-            <p className="text-sm mt-1">Pulsa “Nuevo vídeo” para empezar.</p>
           </CardContent>
         </Card>
       ) : (
@@ -247,14 +319,13 @@ export default function VideosClient({
               scenes={scenesByProject[p.id] ?? []}
               isEditing={editingId === p.id}
               onToggleEdit={() => setEditingId(editingId === p.id ? null : p.id)}
-              onSaveScript={(script, scenes, approve) =>
-                handleSaveScript(p.id, script, scenes, approve)
-              }
+              onSaveScript={(scenes, approve) => handleSaveScript(p.id, scenes, approve)}
               onGenerate={() => handleGenerate(p.id)}
               onStatus={(s) => handleStatus(p.id, s)}
               onUpdateScenes={(scenes) =>
                 setScenesByProject((m) => ({ ...m, [p.id]: scenes }))
               }
+              totalDuration={totalDuration(scenesByProject[p.id] ?? [])}
             />
           ))}
         </div>
@@ -262,33 +333,68 @@ export default function VideosClient({
 
       {/* Modal nuevo vídeo */}
       <Dialog open={openNew} onOpenChange={setOpenNew}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nuevo vídeo</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
+            {contenidos.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>Contenido existente (opcional)</Label>
+                <select
+                  className="w-full border rounded-md h-9 px-2 text-sm"
+                  value={contentId}
+                  onChange={(e) => setContentId(e.target.value)}
+                >
+                  <option value="">— Sin contenido (brief manual) —</option>
+                  {contenidos.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      [{c.estado}] {c.titulo}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="space-y-1.5">
-              <Label>Brief</Label>
+              <Label>Brief {contentId ? '(opcional)' : ''}</Label>
               <Textarea
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
-                rows={4}
-                placeholder="Describe el vídeo que quieres generar…"
+                rows={3}
+                placeholder={
+                  contentId
+                    ? 'Instrucciones adicionales para el director de arte…'
+                    : 'Describe el vídeo que quieres generar…'
+                }
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">Tipo</Label>
+                <Label className="text-xs">Plataforma</Label>
                 <select
                   className="w-full border rounded-md h-9 px-2 text-sm"
-                  value={videoType}
-                  onChange={(e) => setVideoType(e.target.value as VideoType)}
+                  value={platform}
+                  onChange={(e) => setPlatform(e.target.value as Platform)}
                 >
-                  <option value="images_audio">Imágenes + audio</option>
-                  <option value="animation">Animación</option>
-                  <option value="infographic">Infografía</option>
+                  <option value="tiktok">TikTok</option>
+                  <option value="instagram_reels">Instagram Reels</option>
+                  <option value="youtube_shorts">YouTube Shorts</option>
+                  <option value="linkedin">LinkedIn</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Formato</Label>
+                <select
+                  className="w-full border rounded-md h-9 px-2 text-sm"
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value as VideoFormat)}
+                >
+                  <option value="9x16">9:16 vertical</option>
+                  <option value="16x9">16:9 horizontal</option>
+                  <option value="1x1">1:1 cuadrado</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -304,24 +410,59 @@ export default function VideosClient({
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Formato</Label>
+                <Label className="text-xs">Tono</Label>
                 <select
                   className="w-full border rounded-md h-9 px-2 text-sm"
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value as VideoFormat)}
+                  value={tone}
+                  onChange={(e) => setTone(e.target.value as Tone)}
                 >
-                  <option value="9x16">9:16</option>
-                  <option value="16x9">16:9</option>
-                  <option value="both">Ambos</option>
+                  <option value="divulgativo">Divulgativo</option>
+                  <option value="periodistico">Periodístico</option>
+                  <option value="cercano">Cercano</option>
+                  <option value="tecnico">Técnico</option>
+                </select>
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs">Intención</Label>
+                <select
+                  className="w-full border rounded-md h-9 px-2 text-sm"
+                  value={intention}
+                  onChange={(e) => setIntention(e.target.value as Intention)}
+                >
+                  <option value="informativo">Informativo</option>
+                  <option value="educativo">Educativo</option>
+                  <option value="promocional">Promocional</option>
                 </select>
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex gap-4 pt-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={applyBrand}
+                  onChange={(e) => setApplyBrand(e.target.checked)}
+                />
+                Aplicar assets de marca
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showLogo}
+                  onChange={(e) => setShowLogo(e.target.checked)}
+                />
+                Mostrar logo
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
               <Button variant="outline" onClick={() => setOpenNew(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleCreate} disabled={creating || !brief.trim()}>
+              <Button
+                onClick={handleCreate}
+                disabled={creating || (!contentId && !brief.trim())}
+              >
                 {creating ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
@@ -347,21 +488,25 @@ function ProjectCard({
   onGenerate,
   onStatus,
   onUpdateScenes,
+  totalDuration,
 }: {
   project: VideoProject
   scenes: VideoScene[]
   isEditing: boolean
   onToggleEdit: () => void
-  onSaveScript: (script: string, scenes: VideoScene[], approve: boolean) => void
+  onSaveScript: (scenes: VideoScene[], approve: boolean) => void
   onGenerate: () => void
   onStatus: (s: 'approved' | 'rejected') => void
   onUpdateScenes: (s: VideoScene[]) => void
+  totalDuration: number
 }) {
-  const [scriptDraft, setScriptDraft] = useState(project.script ?? '')
   const [savingApprove, setSavingApprove] = useState(false)
-
+  const [expandedScene, setExpandedScene] = useState<string | null>(null)
   const isGenerating = project.status === 'generating'
   const hasVideo = !!project.video_url
+
+  const updateScene = (id: string, patch: Partial<VideoScene>) =>
+    onUpdateScenes(scenes.map((s) => (s.id === id ? { ...s, ...patch } : s)))
 
   return (
     <Card>
@@ -376,13 +521,20 @@ function ProjectCard({
               >
                 {STATUS_LABEL[project.status]}
               </Badge>
+              {project.platform && (
+                <Badge variant="outline" className="text-xs">
+                  {PLATFORM_LABEL[project.platform]}
+                </Badge>
+              )}
               <Badge variant="outline" className="text-xs">
-                {TYPE_LABEL[project.video_type]}
-              </Badge>
-              <Badge variant="outline" className="text-xs">
-                {project.duration_seconds}s · {project.format}
+                {totalDuration || project.duration_seconds}s · {project.format}
               </Badge>
             </div>
+            {project.narrative_hook && (
+              <p className="text-sm text-indigo-700 mt-1 italic">
+                “{project.narrative_hook}”
+              </p>
+            )}
             <p className="text-sm text-gray-500 mt-1 line-clamp-2">{project.brief}</p>
           </div>
 
@@ -397,68 +549,200 @@ function ProjectCard({
           </div>
         </div>
 
-        {/* Editor de guión */}
         {isEditing && (
-          <div className="mt-5 space-y-4 border-t pt-4">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Guión completo</Label>
-              <Textarea
-                value={scriptDraft}
-                onChange={(e) => setScriptDraft(e.target.value)}
-                rows={5}
-              />
-            </div>
+          <div className="mt-5 space-y-3 border-t pt-4">
+            <Label className="text-xs">Escenas</Label>
+            {scenes.map((s, idx) => {
+              const isOpen = expandedScene === s.id
+              return (
+                <div key={s.id} className="border rounded-md bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedScene(isOpen ? null : s.id)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-left"
+                  >
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-medium text-gray-700">
+                        Escena {idx + 1}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {s.duration_seconds}s · {s.shot_type ?? '—'} ·{' '}
+                        {s.camera_movement ?? '—'}
+                      </span>
+                    </div>
+                    {isOpen ? (
+                      <ChevronUp className="h-4 w-4 text-gray-400" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-gray-400" />
+                    )}
+                  </button>
 
-            <div className="space-y-3">
-              <Label className="text-xs">Escenas</Label>
-              {scenes.map((s, idx) => (
-                <div key={s.id} className="border rounded-md p-3 bg-gray-50 space-y-2">
-                  <div className="text-xs font-medium text-gray-500">
-                    Escena {idx + 1} · {s.duration_seconds}s
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-gray-500">
-                        Descripción visual
-                      </Label>
-                      <Textarea
-                        rows={3}
-                        value={s.description}
-                        onChange={(e) =>
-                          onUpdateScenes(
-                            scenes.map((x) =>
-                              x.id === s.id ? { ...x, description: e.target.value } : x,
-                            ),
-                          )
-                        }
-                      />
+                  {isOpen && (
+                    <div className="px-3 pb-3 space-y-3 border-t bg-white">
+                      <div className="grid grid-cols-2 gap-3 pt-3">
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-gray-500">
+                            Duración (s)
+                          </Label>
+                          <Input
+                            type="number"
+                            min={2}
+                            max={15}
+                            value={s.duration_seconds}
+                            onChange={(e) =>
+                              updateScene(s.id, {
+                                duration_seconds: Number(e.target.value),
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-gray-500">Plano</Label>
+                          <select
+                            className="w-full border rounded-md h-9 px-2 text-sm"
+                            value={s.shot_type ?? ''}
+                            onChange={(e) =>
+                              updateScene(s.id, { shot_type: e.target.value })
+                            }
+                          >
+                            <option value="">—</option>
+                            {SHOT_TYPES.map((t) => (
+                              <option key={t} value={t}>
+                                {t.replace('_', ' ')}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-gray-500">Ángulo</Label>
+                          <select
+                            className="w-full border rounded-md h-9 px-2 text-sm"
+                            value={s.camera_angle ?? ''}
+                            onChange={(e) =>
+                              updateScene(s.id, { camera_angle: e.target.value })
+                            }
+                          >
+                            <option value="">—</option>
+                            {CAMERA_ANGLES.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-gray-500">
+                            Movimiento
+                          </Label>
+                          <select
+                            className="w-full border rounded-md h-9 px-2 text-sm"
+                            value={s.camera_movement ?? ''}
+                            onChange={(e) =>
+                              updateScene(s.id, { camera_movement: e.target.value })
+                            }
+                          >
+                            <option value="">—</option>
+                            {CAMERA_MOVEMENTS.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-gray-500">Objetivo</Label>
+                          <select
+                            className="w-full border rounded-md h-9 px-2 text-sm"
+                            value={s.lens ?? ''}
+                            onChange={(e) =>
+                              updateScene(s.id, { lens: e.target.value })
+                            }
+                          >
+                            <option value="">—</option>
+                            {LENSES.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-gray-500">
+                            Iluminación
+                          </Label>
+                          <select
+                            className="w-full border rounded-md h-9 px-2 text-sm"
+                            value={s.lighting ?? ''}
+                            onChange={(e) =>
+                              updateScene(s.id, { lighting: e.target.value })
+                            }
+                          >
+                            <option value="">—</option>
+                            {LIGHTINGS.map((t) => (
+                              <option key={t} value={t}>
+                                {t.replace('_', ' ')}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-gray-500">Narración</Label>
+                        <Textarea
+                          rows={2}
+                          value={s.narration_text}
+                          onChange={(e) =>
+                            updateScene(s.id, { narration_text: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-gray-500">
+                          Descripción visual
+                        </Label>
+                        <Textarea
+                          rows={2}
+                          value={s.description}
+                          onChange={(e) =>
+                            updateScene(s.id, { description: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-gray-500">
+                          Texto en pantalla
+                        </Label>
+                        <Input
+                          value={s.text_overlay ?? ''}
+                          onChange={(e) =>
+                            updateScene(s.id, { text_overlay: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-gray-500">
+                          Prompt de Seedance (en inglés)
+                        </Label>
+                        <Textarea
+                          rows={3}
+                          value={s.seedance_prompt ?? ''}
+                          onChange={(e) =>
+                            updateScene(s.id, { seedance_prompt: e.target.value })
+                          }
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-gray-500">Narración</Label>
-                      <Textarea
-                        rows={3}
-                        value={s.narration_text}
-                        onChange={(e) =>
-                          onUpdateScenes(
-                            scenes.map((x) =>
-                              x.id === s.id
-                                ? { ...x, narration_text: e.target.value }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              )
+            })}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 pt-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onSaveScript(scriptDraft, scenes, false)}
+                onClick={() => onSaveScript(scenes, false)}
               >
                 Guardar cambios
               </Button>
@@ -468,7 +752,7 @@ function ProjectCard({
                 onClick={async () => {
                   setSavingApprove(true)
                   try {
-                    await onSaveScript(scriptDraft, scenes, true)
+                    await onSaveScript(scenes, true)
                     onGenerate()
                   } finally {
                     setSavingApprove(false)
@@ -486,7 +770,6 @@ function ProjectCard({
           </div>
         )}
 
-        {/* Reproductor */}
         {hasVideo && project.video_url && (
           <div className="mt-5 border-t pt-4 space-y-3">
             <div className="flex items-center gap-2 text-sm text-gray-700">

@@ -1417,6 +1417,17 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
           <TabsTrigger value="imagen">
             Imagen{galeriaImagenes.length > 0 ? ` (${galeriaImagenes.length})` : ''}
           </TabsTrigger>
+          <TabsTrigger
+            value="video"
+            onClick={(e) => {
+              e.preventDefault()
+              if (proyecto?.cliente_id) {
+                window.location.href = `/clientes/${proyecto.cliente_id}/videos?open=1&content_id=${contenido.id}`
+              }
+            }}
+          >
+            Vídeo
+          </TabsTrigger>
           <TabsTrigger value="entrega">Entrega</TabsTrigger>
         </TabsList>
 

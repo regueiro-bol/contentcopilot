@@ -11,7 +11,29 @@ interface SceneEdit {
   description?: string
   narration_text?: string
   duration_seconds?: number
+  shot_type?: string
+  camera_angle?: string
+  camera_movement?: string
+  lens?: string
+  lighting?: string
+  background?: string
+  text_overlay?: string
+  seedance_prompt?: string
 }
+
+const SCENE_FIELDS = [
+  'description',
+  'narration_text',
+  'duration_seconds',
+  'shot_type',
+  'camera_angle',
+  'camera_movement',
+  'lens',
+  'lighting',
+  'background',
+  'text_overlay',
+  'seedance_prompt',
+] as const
 interface Body {
   script?: string
   scenes?: SceneEdit[]
@@ -42,9 +64,10 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
       for (const s of body.scenes) {
         if (!s?.id) continue
         const upd: Record<string, unknown> = {}
-        if (typeof s.description === 'string') upd.description = s.description
-        if (typeof s.narration_text === 'string') upd.narration_text = s.narration_text
-        if (typeof s.duration_seconds === 'number') upd.duration_seconds = s.duration_seconds
+        for (const f of SCENE_FIELDS) {
+          const v = (s as unknown as Record<string, unknown>)[f]
+          if (v !== undefined) upd[f] = v
+        }
         if (Object.keys(upd).length === 0) continue
         const { error } = await supabase.from('video_scenes').update(upd).eq('id', s.id)
         if (error) console.error('[script PATCH] scene error:', error)
