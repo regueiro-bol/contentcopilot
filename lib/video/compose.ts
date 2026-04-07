@@ -57,21 +57,13 @@ function escapeDrawText(text: string): string {
 
 function buildVideoFilter(
   format: VideoFormat,
-  caption: string | null | undefined,
-  duration: number,
+  _caption: string | null | undefined,
+  _duration: number,
 ): string {
   const { w, h } = FORMAT_DIMS[format]
-  const scale = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1`
-  if (!caption) return scale
-
-  const text = escapeDrawText(caption.slice(0, 140))
-  // banda inferior con subtítulo
-  const draw =
-    `drawbox=x=0:y=h-200:w=w:h=200:color=black@0.55:t=fill,` +
-    `drawtext=text='${text}':fontcolor=white:fontsize=44:` +
-    `x=(w-text_w)/2:y=h-130:line_spacing=8:` +
-    `box=0:borderw=0`
-  return `${scale},${draw}`
+  // Solo scale + crop. Subtítulos requieren drawtext con fontfile,
+  // y la lambda de Vercel no incluye fuentes del sistema.
+  return `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1`
 }
 
 async function renderScene(params: {
