@@ -56,8 +56,7 @@ export async function synthesizeSpeech(params: {
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    const shape = `len=${apiKey.length} prefix=${apiKey.slice(0, 6)} suffix=${apiKey.slice(-4)} voice=${voice}`
-    throw new Error(`ElevenLabs error ${res.status} [${shape}]: ${body.slice(0, 200)}`)
+    throw new Error(`ElevenLabs error ${res.status}: ${body.slice(0, 300)}`)
   }
 
   const arr = await res.arrayBuffer()
