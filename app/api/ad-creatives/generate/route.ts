@@ -27,7 +27,7 @@ import { composeCreative } from '@/lib/ad-creatives/compose'
 import { ensureAdCreativesBucket, uploadAdCreative } from '@/lib/ad-creatives/storage'
 import { guardarRegistroCoste } from '@/lib/costes'
 
-export const maxDuration = 300
+export const maxDuration = 120
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos

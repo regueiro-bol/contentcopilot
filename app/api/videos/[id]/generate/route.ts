@@ -126,9 +126,14 @@ async function generateAndUploadAudio(
 
 // ── handler ────────────────────────────────────────────────
 
-export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
+  const internalKey = req.headers.get('x-internal-trigger')
+  const isInternal =
+    internalKey && internalKey === (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '')
+  if (!isInternal) {
+    const { userId } = await auth()
+    if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+  }
 
   const id = ctx.params.id
   const supabase = createAdminClient()
