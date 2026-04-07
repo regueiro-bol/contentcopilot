@@ -6,15 +6,32 @@
 
 const ELEVEN_API = 'https://api.elevenlabs.io/v1/text-to-speech'
 
-// Voice ID Bella multilingual
-export const DEFAULT_VOICE_ID =
-  (process.env.ELEVENLABS_DEFAULT_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL').trim()
+/**
+ * Normaliza el valor de una env var de ElevenLabs.
+ * Protege contra valores mal pegados como "NOMBRE=valor" en el dashboard
+ * de Vercel (el nombre dentro del propio campo value).
+ */
+function cleanEnv(raw: string | undefined): string {
+  if (!raw) return ''
+  let v = raw.trim()
+  // Si hay un '=' dentro del valor, descarta todo hasta el último '='.
+  const eq = v.lastIndexOf('=')
+  if (eq !== -1) v = v.slice(eq + 1).trim()
+  return v
+}
+
+// Bella multilingual (voz española)
+const FALLBACK_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL'
+const envVoice = cleanEnv(process.env.ELEVENLABS_DEFAULT_VOICE_ID)
+export const DEFAULT_VOICE_ID = /^[A-Za-z0-9]{20}$/.test(envVoice)
+  ? envVoice
+  : FALLBACK_VOICE_ID
 
 export async function synthesizeSpeech(params: {
   text: string
   voiceId?: string
 }): Promise<Buffer> {
-  const apiKey = process.env.ELEVENLABS_API_KEY?.trim()
+  const apiKey = cleanEnv(process.env.ELEVENLABS_API_KEY)
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY no configurada')
 
   const voice = (params.voiceId || DEFAULT_VOICE_ID).trim()
