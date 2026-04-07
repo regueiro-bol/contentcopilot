@@ -18,7 +18,7 @@ import { synthesizeSpeech, DEFAULT_VOICE_ID } from '@/lib/video/elevenlabs'
 import { uploadVideoAsset, ensureVideosBucket } from '@/lib/video/storage'
 import { buildVideo, type SceneInput, type VideoFormat } from '@/lib/video/compose'
 
-export const maxDuration = 800
+export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
 const FLUX_MODEL = 'fal-ai/flux-pro/v1.1-ultra'
