@@ -6,8 +6,12 @@
 
 const ELEVEN_API = 'https://api.elevenlabs.io/v1/text-to-speech'
 
+// Voice ID Sarah multilingual — usamos el hardcoded como fallback robusto
+// porque la variable de entorno puede contener typos.
+const FALLBACK_VOICE = 'EXAVITQu4vr4xnSDxMaA'
+const envVoice = (process.env.ELEVENLABS_DEFAULT_VOICE_ID || '').trim()
 export const DEFAULT_VOICE_ID =
-  process.env.ELEVENLABS_DEFAULT_VOICE_ID || 'EXAVITQu4vr4xnSDxMaA' // Sarah multilingual
+  envVoice && /^[A-Za-z0-9]{20}$/.test(envVoice) ? envVoice : FALLBACK_VOICE
 
 export async function synthesizeSpeech(params: {
   text: string

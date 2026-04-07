@@ -16,6 +16,13 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '52mb',
     },
+    // Incluye el binario estático de ffmpeg en el bundle serverless
+    // de las rutas de generación de vídeo.
+    outputFileTracingIncludes: {
+      'app/api/videos/**': [
+        './node_modules/@ffmpeg-installer/**',
+      ],
+    },
   },
 };
 
