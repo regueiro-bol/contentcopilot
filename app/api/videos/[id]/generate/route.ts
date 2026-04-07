@@ -120,6 +120,7 @@ async function generateAndUploadAudio(
   voiceId: string,
   projectId: string,
   sceneId: string,
+  errorSink: string[],
 ): Promise<string | null> {
   if (!text?.trim()) return null
   try {
@@ -127,7 +128,9 @@ async function generateAndUploadAudio(
     const path = `${projectId}/audio/${sceneId}.mp3`
     return await uploadVideoAsset({ buffer: buf, path, contentType: 'audio/mpeg' })
   } catch (err) {
-    console.error('[video/generate] elevenlabs error:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[video/generate] elevenlabs error:', msg)
+    errorSink.push(`scene=${sceneId.slice(0, 8)}: ${msg}`)
     return null
   }
 }
@@ -147,6 +150,8 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 
   fal.config({ credentials: process.env.FAL_KEY ?? process.env.FAL_API_KEY })
   await ensureVideosBucket()
+
+  const elevenLabsErrors: string[] = []
 
   const { data: projectRaw, error: pErr } = await supabase
     .from('video_projects')
@@ -221,6 +226,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       voiceId,
       project.id,
       scene.id,
+      elevenLabsErrors,
     )
 
     const status = imageUrl ? 'ready' : 'error'
@@ -295,6 +301,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       status: 'draft_video',
       generation_meta: {
         renders: results,
+        elevenlabs_errors: elevenLabsErrors.slice(),
       },
     })
     .eq('id', id)
@@ -304,5 +311,10 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     .select('*')
     .eq('id', id)
     .single()
-  return NextResponse.json({ project: finalProject, scenes: readyScenes ?? [], renders: results })
+  return NextResponse.json({
+    project: finalProject,
+    scenes: readyScenes ?? [],
+    renders: results,
+    elevenlabs_errors: elevenLabsErrors.slice(),
+  })
 }
