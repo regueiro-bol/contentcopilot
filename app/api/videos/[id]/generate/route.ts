@@ -126,15 +126,9 @@ async function generateAndUploadAudio(
 
 // ── handler ────────────────────────────────────────────────
 
-export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
-  const internalKey = req.headers.get('x-internal-trigger')
-  // Temporary one-shot test bypass (remove after first run)
-  const TEMP_TEST_TOKEN = 'cc-video-test-2026-04-07-seras'
-  const isInternal = internalKey === TEMP_TEST_TOKEN
-  if (!isInternal) {
-    const { userId } = await auth()
-    if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
+export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
+  const { userId } = await auth()
+  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const id = ctx.params.id
   const supabase = createAdminClient()
