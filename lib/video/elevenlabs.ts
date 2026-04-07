@@ -57,7 +57,11 @@ export async function synthesizeSpeech(params: {
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`ElevenLabs error ${res.status}: ${body.slice(0, 300)}`)
+    // Debug: muestra forma de la key sin filtrarla entera.
+    const prefix = apiKey.slice(0, 6)
+    const suffix = apiKey.slice(-4)
+    const shape = `len=${apiKey.length} prefix=${prefix} suffix=${suffix}`
+    throw new Error(`ElevenLabs error ${res.status} [${shape}]: ${body.slice(0, 200)}`)
   }
 
   const arr = await res.arrayBuffer()
