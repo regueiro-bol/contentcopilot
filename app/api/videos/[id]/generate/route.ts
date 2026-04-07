@@ -233,6 +233,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     project.format === 'both' ? ['9x16', '16x9'] : [project.format as VideoFormat]
 
   const results: { format: VideoFormat; url: string }[] = []
+  const composeErrors: string[] = []
   for (const fmt of formats) {
     try {
       const sceneInputs: SceneInput[] = usable.map((s) => ({
@@ -252,13 +253,18 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       const url = await uploadVideoAsset({ buffer: buf, path, contentType: 'video/mp4' })
       if (url) results.push({ format: fmt, url })
     } catch (err) {
-      console.error(`[video/generate] ffmpeg error (${fmt}):`, err)
+      const msg = err instanceof Error ? `${err.message}` : String(err)
+      console.error(`[video/generate] ffmpeg error (${fmt}):`, msg)
+      composeErrors.push(`${fmt}: ${msg}`)
     }
   }
 
   if (results.length === 0) {
     await supabase.from('video_projects').update({ status: 'draft_script' }).eq('id', id)
-    return NextResponse.json({ error: 'Fallo al montar el vídeo' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Fallo al montar el vídeo', details: composeErrors },
+      { status: 500 },
+    )
   }
 
   const primary = results[0]
