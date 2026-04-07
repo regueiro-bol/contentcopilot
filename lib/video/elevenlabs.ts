@@ -9,15 +9,14 @@ const ELEVEN_API = 'https://api.elevenlabs.io/v1/text-to-speech'
 /**
  * Normaliza el valor de una env var de ElevenLabs.
  * Protege contra valores mal pegados como "NOMBRE=valor" en el dashboard
- * de Vercel (el nombre dentro del propio campo value).
+ * de Vercel: solo recorta el prefijo si es un identificador tipo ENV_VAR=.
  */
 function cleanEnv(raw: string | undefined): string {
   if (!raw) return ''
-  let v = raw.trim()
-  // Si hay un '=' dentro del valor, descarta todo hasta el último '='.
-  const eq = v.lastIndexOf('=')
-  if (eq !== -1) v = v.slice(eq + 1).trim()
-  return v
+  const v = raw.trim()
+  // Strip only if the prefix is a valid env var name (uppercase + underscore)
+  const m = v.match(/^[A-Z][A-Z0-9_]*=(.*)$/s)
+  return (m ? m[1] : v).trim()
 }
 
 // Bella multilingual (voz española)
