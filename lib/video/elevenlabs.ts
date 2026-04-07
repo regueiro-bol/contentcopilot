@@ -6,18 +6,18 @@
 
 const ELEVEN_API = 'https://api.elevenlabs.io/v1/text-to-speech'
 
-// Voice ID Sarah multilingual — hardcoded para garantizar una voz válida
-// (la variable de entorno puede tener typos sutiles).
-export const DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaA'
+// Voice ID Bella multilingual
+export const DEFAULT_VOICE_ID =
+  (process.env.ELEVENLABS_DEFAULT_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL').trim()
 
 export async function synthesizeSpeech(params: {
   text: string
   voiceId?: string
 }): Promise<Buffer> {
-  const apiKey = process.env.ELEVENLABS_API_KEY
+  const apiKey = process.env.ELEVENLABS_API_KEY?.trim()
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY no configurada')
 
-  const voice = params.voiceId || DEFAULT_VOICE_ID
+  const voice = (params.voiceId || DEFAULT_VOICE_ID).trim()
 
   const res = await fetch(`${ELEVEN_API}/${voice}?output_format=mp3_44100_128`, {
     method: 'POST',
