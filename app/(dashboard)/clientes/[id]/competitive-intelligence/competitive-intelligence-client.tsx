@@ -279,6 +279,41 @@ function CompetidoresSection({
           ))}
         </div>
       )}
+
+      {/* Leyenda de ayuda para encontrar los IDs */}
+      <div className="mt-5 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-2">
+        <p className="font-medium text-gray-600">¿Cómo encuentro el ID del anunciante?</p>
+        <div className="flex items-start gap-2">
+          <span className="inline-block w-14 shrink-0 font-medium text-blue-700">Google</span>
+          <span>
+            Busca la marca en el{' '}
+            <a
+              href="https://adstransparency.google.com/?authuser=0&region=ES"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              Centro de Transparencia de Google Ads
+            </a>
+            . El ID aparece en la URL y empieza por <code className="px-1 py-0.5 bg-gray-100 rounded font-mono">AR</code> seguido de números (ej. <code className="px-1 py-0.5 bg-gray-100 rounded font-mono">AR17828074650563772417</code>).
+          </span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="inline-block w-14 shrink-0 font-medium text-indigo-700">Meta</span>
+          <span>
+            Busca la página en la{' '}
+            <a
+              href="https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ES&is_targeted_country=false&media_type=all&sort_data[mode]=total_impressions&sort_data[direction]=desc&source=fb-logo"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:underline"
+            >
+              Biblioteca de anuncios de Meta
+            </a>
+            . El ID es el valor del parámetro <code className="px-1 py-0.5 bg-gray-100 rounded font-mono">id=</code> al final de la URL.
+          </span>
+        </div>
+      </div>
     </div>
   )
 }
