@@ -17,6 +17,8 @@ import {
   Radio,
   Lightbulb,
   Settings,
+  Archive,
+  CalendarDays,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -44,6 +46,16 @@ const navItems = [
     titulo: 'Estrategia',
     href: '/strategy',
     icono: TrendingUp,
+  },
+  {
+    titulo: 'Almacén',
+    href: '/strategy/almacen',
+    icono: Archive,
+  },
+  {
+    titulo: 'Calendario',
+    href: '/strategy/calendario',
+    icono: CalendarDays,
   },
   {
     titulo: 'Pedidos',

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -17,6 +17,10 @@ import {
   Calendar,
   Plus,
   Search,
+  Check,
+  X,
+  Minus,
+  Filter,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -65,6 +69,58 @@ const PRIORITY_STYLE: Record<number, { label: string; cls: string }> = {
   2: { label: 'Media', cls: 'bg-gray-100 text-gray-600' },
   3: { label: 'Baja',  cls: 'bg-gray-50 text-gray-400' },
 }
+
+// ── Sprint 2 helpers ──────────────────────────────────────────
+
+function TipoArticuloBadge({ tipo }: { tipo: 'nuevo' | 'actualizacion' | 'mejora' | null }) {
+  if (!tipo || tipo === 'nuevo') return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-green-100 text-green-700">Nuevo</span>
+  )
+  if (tipo === 'mejora') return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-700">Mejora</span>
+  )
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-blue-100 text-blue-700">Actual.</span>
+  )
+}
+
+function PrioridadFinalBadge({ item }: { item: MapItem }) {
+  const p = item.prioridad_final ?? item.priority
+  const label = p === 1 ? 'P1' : p === 2 ? 'P2' : 'P3'
+  const cls = p === 1
+    ? 'bg-red-100 text-red-700'
+    : p === 2
+      ? 'bg-amber-100 text-amber-700'
+      : 'bg-gray-100 text-gray-500'
+
+  let tooltip = label
+  if (item.p4_manual != null) {
+    tooltip = `${label} forzado manualmente por consultor`
+  } else if (item.p3_actualizacion) {
+    tooltip = `${label} marcado manualmente por SEO`
+  } else if (item.p2_oportunidad != null) {
+    tooltip = `${label} por oportunidad (score ${item.p2_oportunidad.toLocaleString('es-ES')})`
+    if (item.p1_volumen != null) tooltip += ` · ${item.p1_volumen.toLocaleString('es-ES')} búsquedas/mes`
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold cursor-help ${cls}`}
+      title={tooltip}
+    >
+      {label}
+    </span>
+  )
+}
+
+const VALIDACION_STYLE: Record<string, { label: string; cls: string }> = {
+  propuesto: { label: 'Propuesto', cls: 'bg-gray-100 text-gray-500'    },
+  aprobado : { label: 'Aprobado',  cls: 'bg-green-100 text-green-700'  },
+  rechazado: { label: 'Rechazado', cls: 'bg-red-100 text-red-700'      },
+  revision : { label: 'Revisión',  cls: 'bg-amber-100 text-amber-700'  },
+}
+
+// ─────────────────────────────────────────────────────────────
 
 function FunnelBadge({ stage }: { stage: 'tofu' | 'mofu' | 'bofu' | null }) {
   if (!stage) return <span className="text-gray-300 text-xs">—</span>
@@ -184,13 +240,61 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   // ── Estado: gap analysis ────────────────────────────────────
   const [analizandoGaps, setAnalizandoGaps] = useState(false)
   const [errorGaps, setErrorGaps]           = useState<string | null>(null)
-  const [gapSummary, setGapSummary]         = useState<{ gap: number; existing_content: number; partial: number } | null>(null)
+
+  // ── Estado: exportar Excel ───────────────────────────────────
+  const [exportandoExcel, setExportandoExcel] = useState(false)
+  const [errorExcel, setErrorExcel]           = useState<string | null>(null)
+
+  async function exportarExcel() {
+    if (!map) return
+    setExportandoExcel(true)
+    setErrorExcel(null)
+    try {
+      const res = await fetch(`/api/strategy/${session.id}/export-excel`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `Error ${res.status}` }))
+        throw new Error(err.error ?? `Error ${res.status}`)
+      }
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url
+      const cd = res.headers.get('Content-Disposition') ?? ''
+      const fnMatch = cd.match(/filename="([^"]+)"/)
+      a.download = fnMatch?.[1] ?? `mapa-contenidos-${Date.now()}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('[exportarExcel]', e)
+      setErrorExcel(e instanceof Error ? e.message : 'Error al generar el Excel')
+    } finally {
+      setExportandoExcel(false)
+    }
+  }
+  // gapSummary: se deriva de los items para que persista entre recargas
+  // Si ningún item tiene content_status, el análisis no se ha ejecutado aún
+  const [gapForcedHide, setGapForcedHide] = useState(false)
+
+  // ── Estado Sprint 2: filtros ──────────────────────────────────
+  const [filtroTipo, setFiltroTipo]             = useState<'todos' | 'nuevo' | 'mejora' | 'actualizacion'>('todos')
+  const [filtroValidacion, setFiltroValidacion] = useState<'todos' | 'propuesto' | 'aprobado' | 'rechazado' | 'revision'>('todos')
+  const [filtroPrioridad, setFiltroPrioridad]   = useState<'todos' | '1' | '2' | '3'>('todos')
+  const [filtroPedido, setFiltroPedido]         = useState<'todos' | 'con_pedido' | 'sin_pedido'>('todos')
+
+  // ── Estado Sprint 2: validación ───────────────────────────────
+  const [validandoItems, setValidandoItems]       = useState<Set<string>>(new Set())
+  const [motivoPendiente, setMotivoPendiente]     = useState<Record<string, string>>({})
+  const [rechazoPendienteId, setRechazoPendienteId] = useState<string | null>(null)
+  // Overrides optimistas: itemId → cambios parciales
+  const [localOverrides, setLocalOverrides]       = useState<Record<string, Partial<MapItem>>>({})
 
   async function handleAnalizarGaps() {
     if (!clientId || !map) return
     setAnalizandoGaps(true)
     setErrorGaps(null)
-    setGapSummary(null)
+    setGapForcedHide(false)
     try {
       const res = await fetch('/api/strategy/check-existing', {
         method : 'POST',
@@ -199,7 +303,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error analizando gaps')
-      setGapSummary(data.summary)
+      // El resumen se derivará automáticamente de los items tras router.refresh()
       router.refresh()
     } catch (e) {
       setErrorGaps(e instanceof Error ? e.message : 'Error desconocido')
@@ -240,24 +344,90 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
     }
   }
 
+  async function handleValidar(
+    itemId : string,
+    mapId  : string,
+    validacion: 'propuesto' | 'aprobado' | 'rechazado' | 'revision',
+    motivo?: string,
+  ) {
+    setValidandoItems((prev) => new Set(prev).add(itemId))
+    // Optimistic update
+    setLocalOverrides((prev) => ({
+      ...prev,
+      [itemId]: { validacion, motivo_rechazo: motivo ?? null, fecha_validacion: new Date().toISOString() },
+    }))
+    setRechazoPendienteId(null)
+    try {
+      const res = await fetch(`/api/strategy/mapa/${mapId}/validar`, {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify([{ item_id: itemId, validacion, motivo_rechazo: motivo }]),
+      })
+      if (!res.ok) throw new Error(`Error ${res.status}`)
+    } catch {
+      // revertir optimistic update si falla
+      setLocalOverrides((prev) => {
+        const next = { ...prev }
+        delete next[itemId]
+        return next
+      })
+    } finally {
+      setValidandoItems((prev) => { const n = new Set(prev); n.delete(itemId); return n })
+    }
+  }
+
   // ── Estado: colapso de secciones de mes ───────────────────
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set<string>())
 
+  // ── Items con overrides optimistas aplicados ──────────────
+  const itemsMerged: MapItem[] = useMemo(
+    () => items.map((i) => localOverrides[i.id] ? { ...i, ...localOverrides[i.id] } : i),
+    [items, localOverrides],
+  )
+
+  // ── Filtrado ───────────────────────────────────────────────
+  const filteredItems: MapItem[] = useMemo(() => {
+    return itemsMerged.filter((i) => {
+      if (filtroTipo !== 'todos' && (i.tipo_articulo ?? 'nuevo') !== filtroTipo) return false
+      if (filtroValidacion !== 'todos' && (i.validacion ?? 'propuesto') !== filtroValidacion) return false
+      if (filtroPrioridad !== 'todos' && String(i.prioridad_final ?? i.priority) !== filtroPrioridad) return false
+      const tienePedido = !!(pedidosCreados[i.id] ?? i.contenido_id)
+      if (filtroPedido === 'con_pedido'  && !tienePedido) return false
+      if (filtroPedido === 'sin_pedido'  &&  tienePedido) return false
+      return true
+    })
+  }, [itemsMerged, filtroTipo, filtroValidacion, filtroPrioridad, filtroPedido, pedidosCreados])
+
   // ── Agrupar por mes ────────────────────────────────────────
-  const monthGroups: [string, MapItem[]][] = (() => {
+  const monthGroups: [string, MapItem[]][] = useMemo(() => {
     const groupMap: Record<string, MapItem[]> = {}
-    for (const item of items) {
+    for (const item of filteredItems) {
       const key = item.suggested_month ?? 'Sin mes'
       if (!groupMap[key]) groupMap[key] = []
       groupMap[key].push(item)
     }
     return Object.entries(groupMap).sort(([a], [b]) => a.localeCompare(b))
-  })()
+  }, [filteredItems])
+
+  // ── Gap summary derivado de los datos (persistente) ───────
+  const gapSummaryDerived = useMemo(() => {
+    const itemsConGap = itemsMerged.filter((i) => i.content_status !== null)
+    if (itemsConGap.length === 0) return null
+    return {
+      gap             : itemsMerged.filter((i) => i.content_status === 'gap').length,
+      existing_content: itemsMerged.filter((i) => i.content_status === 'existing_content').length,
+      partial         : itemsMerged.filter((i) => i.content_status === 'partial').length,
+    }
+  }, [itemsMerged])
+
+  const gapEjecutado = gapSummaryDerived !== null
 
   // ── KPIs ───────────────────────────────────────────────────
-  const totalTofu = items.filter((i: MapItem) => i.funnel_stage === 'tofu').length
-  const totalMofu = items.filter((i: MapItem) => i.funnel_stage === 'mofu').length
-  const totalBofu = items.filter((i: MapItem) => i.funnel_stage === 'bofu').length
+  const totalNuevos        = itemsMerged.filter((i) => (i.tipo_articulo ?? 'nuevo') === 'nuevo').length
+  const totalMejoras       = itemsMerged.filter((i) => i.tipo_articulo === 'mejora').length
+  const totalActualizacion = itemsMerged.filter((i) => i.tipo_articulo === 'actualizacion').length
+  const totalValidados     = itemsMerged.filter((i) => (i.validacion ?? 'propuesto') !== 'propuesto').length
+  const totalConPedido     = itemsMerged.filter((i) => !!(pedidosCreados[i.id] ?? i.contenido_id)).length
 
   // ── Acción: generar mapa ───────────────────────────────────
   async function handleGenerarMapa() {
@@ -320,9 +490,62 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               >
                 {analizandoGaps
                   ? <><Loader2 className="h-4 w-4 animate-spin" />Analizando...</>
-                  : <><Search className="h-4 w-4" />Analizar gaps</>
+                  : gapEjecutado
+                    ? <><Search className="h-4 w-4" />Re-analizar gaps</>
+                    : <><Search className="h-4 w-4" />Analizar gaps</>
                 }
               </Button>
+              {/* Filtros */}
+              <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1">
+                <Filter className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                <select
+                  value={filtroTipo}
+                  onChange={(e) => setFiltroTipo(e.target.value as typeof filtroTipo)}
+                  className="text-xs text-gray-600 bg-transparent outline-none cursor-pointer"
+                >
+                  <option value="todos">Tipo: todos</option>
+                  <option value="nuevo">Nuevo</option>
+                  <option value="mejora">Mejora</option>
+                  <option value="actualizacion">Actualización</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1">
+                <select
+                  value={filtroValidacion}
+                  onChange={(e) => setFiltroValidacion(e.target.value as typeof filtroValidacion)}
+                  className="text-xs text-gray-600 bg-transparent outline-none cursor-pointer"
+                >
+                  <option value="todos">Validación: todos</option>
+                  <option value="propuesto">Propuesto</option>
+                  <option value="aprobado">Aprobado</option>
+                  <option value="rechazado">Rechazado</option>
+                  <option value="revision">En revisión</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1">
+                <select
+                  value={filtroPrioridad}
+                  onChange={(e) => setFiltroPrioridad(e.target.value as typeof filtroPrioridad)}
+                  className="text-xs text-gray-600 bg-transparent outline-none cursor-pointer"
+                >
+                  <option value="todos">Prioridad: todos</option>
+                  <option value="1">P1</option>
+                  <option value="2">P2</option>
+                  <option value="3">P3</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1">
+                <select
+                  value={filtroPedido}
+                  onChange={(e) => setFiltroPedido(e.target.value as typeof filtroPedido)}
+                  className="text-xs text-gray-600 bg-transparent outline-none cursor-pointer"
+                >
+                  <option value="todos">Pedido: todos</option>
+                  <option value="con_pedido">Con pedido</option>
+                  <option value="sin_pedido">Sin pedido</option>
+                </select>
+              </div>
+
               <Button
                 variant="outline"
                 size="sm"
@@ -331,6 +554,21 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               >
                 <Download className="h-4 w-4" />
                 Exportar CSV
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportarExcel}
+                disabled={exportandoExcel || !map}
+                className="gap-2 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                title={errorExcel ?? undefined}
+              >
+                {exportandoExcel
+                  ? <><Loader2 className="h-4 w-4 animate-spin" />Generando...</>
+                  : errorExcel
+                    ? <><AlertCircle className="h-4 w-4 text-red-500" />Error Excel</>
+                    : <><Download className="h-4 w-4" />Exportar Excel</>
+                }
               </Button>
             </>
           )}
@@ -346,22 +584,41 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs + barra de validación */}
       {items.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Total artículos',  value: items.length,  color: 'text-gray-700' },
-            { label: 'TOFU',             value: totalTofu,     color: 'text-green-700' },
-            { label: 'MOFU',             value: totalMofu,     color: 'text-amber-700' },
-            { label: 'BOFU',             value: totalBofu,     color: 'text-red-700' },
-          ].map(({ label, value, color }) => (
-            <Card key={label}>
-              <CardContent className="p-3">
-                <p className={`text-xl font-bold ${color}`}>{value}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {[
+              { label: 'Total',         value: items.length,       color: 'text-gray-700'   },
+              { label: 'Nuevos',        value: totalNuevos,        color: 'text-green-700'  },
+              { label: 'Mejoras',       value: totalMejoras,       color: 'text-amber-700'  },
+              { label: 'Actualizac.',   value: totalActualizacion, color: 'text-blue-700'   },
+              { label: 'Validados',     value: totalValidados,     color: 'text-indigo-700' },
+              { label: 'Con pedido',    value: totalConPedido,     color: 'text-violet-700' },
+            ].map(({ label, value, color }) => (
+              <Card key={label}>
+                <CardContent className="p-2.5">
+                  <p className={`text-lg font-bold tabular-nums ${color}`}>{value}</p>
+                  <p className="text-[11px] text-gray-500 mt-0.5">{label}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          {/* Barra de progreso de validación */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 shrink-0">
+              {totalValidados}/{items.length} artículos validados
+            </span>
+            <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                style={{ width: `${items.length > 0 ? Math.round(totalValidados / items.length * 100) : 0}%` }}
+              />
+            </div>
+            <span className="text-xs font-semibold text-indigo-600 shrink-0 tabular-nums">
+              {items.length > 0 ? Math.round(totalValidados / items.length * 100) : 0}%
+            </span>
+          </div>
         </div>
       )}
 
@@ -378,13 +635,20 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
           {errorGaps}
         </div>
       )}
-      {gapSummary && !analizandoGaps && (
+      {gapSummaryDerived && !analizandoGaps && !gapForcedHide && (
         <div className="space-y-3">
           <div className="flex items-center gap-4 text-xs bg-gray-50 rounded-lg px-4 py-2.5">
-            <span className="font-semibold text-gray-600">Resultado gap analysis:</span>
-            <span className="text-emerald-700">🟢 {gapSummary.gap} nuevos</span>
-            <span className="text-amber-700">🟡 {gapSummary.existing_content} existentes</span>
-            <span className="text-blue-700">🔵 {gapSummary.partial} parciales</span>
+            <span className="font-semibold text-gray-600">Gap analysis:</span>
+            <span className="text-emerald-700">🟢 {gapSummaryDerived.gap} nuevos</span>
+            <span className="text-amber-700">🟡 {gapSummaryDerived.existing_content} existentes</span>
+            <span className="text-blue-700">🔵 {gapSummaryDerived.partial} parciales</span>
+            <button
+              type="button"
+              onClick={() => setGapForcedHide(true)}
+              className="ml-auto text-gray-400 hover:text-gray-600 text-[11px]"
+            >
+              Ocultar
+            </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
@@ -586,7 +850,8 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                           <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 hidden sm:table-cell">Volumen</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Dificultad</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Prioridad</th>
-                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Gap</th>
+                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Tipo</th>
+                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden md:table-cell">Validación</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">Acción</th>
                         </tr>
                       </thead>
@@ -640,14 +905,70 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                               ) : <span className="text-gray-300 text-xs">—</span>}
                             </td>
                             <td className="px-3 py-3 hidden md:table-cell">
-                              <PriorityBadge p={item.priority} />
+                              <PrioridadFinalBadge item={item} />
                             </td>
                             <td className="px-3 py-3 text-center hidden sm:table-cell">
-                              <GapBadge
-                                status={item.content_status}
-                                url={item.existing_url}
-                                score={item.similarity_score}
-                              />
+                              <TipoArticuloBadge tipo={item.tipo_articulo} />
+                            </td>
+                            <td className="px-3 py-3 text-center hidden md:table-cell">
+                              {rechazoPendienteId === item.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    placeholder="Motivo..."
+                                    value={motivoPendiente[item.id] ?? ''}
+                                    onChange={(e) => setMotivoPendiente((p) => ({ ...p, [item.id]: e.target.value }))}
+                                    className="text-[11px] border border-red-200 rounded px-1.5 py-0.5 w-28 focus:outline-none focus:border-red-400"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleValidar(item.id, map!.id, 'rechazado', motivoPendiente[item.id])
+                                      if (e.key === 'Escape') setRechazoPendienteId(null)
+                                    }}
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleValidar(item.id, map!.id, 'rechazado', motivoPendiente[item.id])}
+                                    className="text-red-600 hover:text-red-800"
+                                    title="Confirmar rechazo"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              ) : validandoItems.has(item.id) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 mx-auto" />
+                              ) : (
+                                <div className="flex items-center justify-center gap-1">
+                                  {(item.validacion ?? 'propuesto') !== 'propuesto' && (
+                                    <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${VALIDACION_STYLE[item.validacion ?? 'propuesto']?.cls ?? ''}`}>
+                                      {VALIDACION_STYLE[item.validacion ?? 'propuesto']?.label}
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    title="Aprobar"
+                                    onClick={() => handleValidar(item.id, map!.id, 'aprobado')}
+                                    className="rounded p-0.5 hover:bg-green-100 text-gray-400 hover:text-green-700 transition-colors"
+                                  >
+                                    <Check className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Rechazar"
+                                    onClick={() => setRechazoPendienteId(item.id)}
+                                    className="rounded p-0.5 hover:bg-red-100 text-gray-400 hover:text-red-700 transition-colors"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="En revisión"
+                                    onClick={() => handleValidar(item.id, map!.id, 'revision')}
+                                    className="rounded p-0.5 hover:bg-amber-100 text-gray-400 hover:text-amber-700 transition-colors"
+                                  >
+                                    <Minus className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              )}
                             </td>
                             <td className="px-3 py-3 text-center">
                               {(() => {

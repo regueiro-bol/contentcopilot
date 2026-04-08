@@ -26,6 +26,18 @@ export interface MapItem {
   content_status    : 'gap' | 'existing_content' | 'partial' | null
   existing_url      : string | null
   similarity_score  : number | null
+  // Sprint 2
+  tipo_articulo     : 'nuevo' | 'actualizacion' | 'mejora' | null
+  p1_volumen        : number | null
+  p2_oportunidad    : number | null
+  p3_actualizacion  : boolean
+  p4_manual         : number | null
+  prioridad_final   : number | null
+  validacion        : 'propuesto' | 'aprobado' | 'rechazado' | 'revision' | null
+  motivo_rechazo    : string | null
+  fecha_validacion  : string | null
+  fecha_calendario  : string | null
+  redactor_asignado : string | null
 }
 
 export default async function MapaPage({ params }: PageProps) {
@@ -50,15 +62,28 @@ export default async function MapaPage({ params }: PageProps) {
     .single()
 
   // ── Cargar artículos del mapa (si existe) ──────────────────
+  // Intentamos con los campos Sprint 2; si la migración 029 no está aplicada,
+  // reintentamos solo con los campos base para no romper la carga de la página.
+  const SELECT_FULL = 'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order, content_status, existing_url, similarity_score, tipo_articulo, p1_volumen, p2_oportunidad, p3_actualizacion, p4_manual, prioridad_final, validacion, motivo_rechazo, fecha_validacion, fecha_calendario, redactor_asignado'
+  const SELECT_BASE = 'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order, content_status, existing_url, similarity_score'
+
   let items: MapItem[] = []
   if (map) {
-    const { data: rawItems } = await supabase
+    let { data: rawItems, error: itemsError } = await supabase
       .from('content_map_items')
-      .select(
-        'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order, content_status, existing_url, similarity_score',
-      )
+      .select(SELECT_FULL)
       .eq('map_id', map.id)
       .order('sort_order', { ascending: true })
+
+    // Fallback: migración 029 aún no aplicada
+    if (itemsError?.code === 'PGRST204') {
+      const { data: fallbackItems } = await supabase
+        .from('content_map_items')
+        .select(SELECT_BASE)
+        .eq('map_id', map.id)
+        .order('sort_order', { ascending: true })
+      rawItems = fallbackItems
+    }
 
     items = (rawItems ?? []).map((i) => ({
       id                : String(i.id),
@@ -78,6 +103,17 @@ export default async function MapaPage({ params }: PageProps) {
       content_status    : (i.content_status as 'gap' | 'existing_content' | 'partial' | null) ?? null,
       existing_url      : (i.existing_url as string | null) ?? null,
       similarity_score  : i.similarity_score != null ? Number(i.similarity_score) : null,
+      tipo_articulo     : (i.tipo_articulo as 'nuevo' | 'actualizacion' | 'mejora' | null) ?? null,
+      p1_volumen        : i.p1_volumen != null ? Number(i.p1_volumen) : null,
+      p2_oportunidad    : i.p2_oportunidad != null ? Number(i.p2_oportunidad) : null,
+      p3_actualizacion  : Boolean(i.p3_actualizacion),
+      p4_manual         : i.p4_manual != null ? Number(i.p4_manual) : null,
+      prioridad_final   : i.prioridad_final != null ? Number(i.prioridad_final) : null,
+      validacion        : (i.validacion as 'propuesto' | 'aprobado' | 'rechazado' | 'revision' | null) ?? null,
+      motivo_rechazo    : (i.motivo_rechazo as string | null) ?? null,
+      fecha_validacion  : (i.fecha_validacion as string | null) ?? null,
+      fecha_calendario  : (i.fecha_calendario as string | null) ?? null,
+      redactor_asignado : (i.redactor_asignado as string | null) ?? null,
     }))
   }
 

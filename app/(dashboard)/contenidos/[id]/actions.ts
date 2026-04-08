@@ -24,6 +24,16 @@ export async function actualizarEstadoContenido(
     .eq('id', id)
 
   if (error) throw new Error(error.message)
+
+  // Sincronizar estado con content_map_items si el artículo proviene del almacén
+  if (estado === 'en_redaccion' || estado === 'publicado') {
+    const statusMapa = estado === 'publicado' ? 'published' : 'in_progress'
+    await supabase
+      .from('content_map_items')
+      .update({ status: statusMapa })
+      .eq('contenido_id', id)
+  }
+
   revalidatePath(path(id))
   revalidateListas()
 }
@@ -116,6 +126,13 @@ export async function publicarContenido(
     .eq('id', id)
 
   if (error) throw new Error(error.message)
+
+  // Sincronizar: marcar el artículo del almacén como publicado
+  await supabase
+    .from('content_map_items')
+    .update({ status: 'published' })
+    .eq('contenido_id', id)
+
   revalidatePath(path(id))
   revalidateListas()
 }

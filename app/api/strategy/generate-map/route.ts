@@ -396,25 +396,67 @@ export async function POST(request: NextRequest) {
         if (articles.length === 0) continue
 
         // ── Insertar items en Supabase inmediatamente ────────
-        const items = articles.map((a) => ({
-          map_id            : map.id,
-          title             : a.title,
-          slug              : a.slug,
-          main_keyword      : a.main_keyword,
-          secondary_keywords: a.secondary_keywords,
-          cluster           : a.cluster,
-          funnel_stage      : a.funnel_stage,
-          volume            : a.volume,
-          difficulty        : a.difficulty,
-          priority          : a.priority,
-          suggested_month   : monthsList.includes(a.suggested_month) ? a.suggested_month : monthsList[0],
-          sort_order        : sortOrder++,
-          status            : 'planned',
-        }))
+        const items = articles.map((a) => {
+          const vol  = a.volume
+          const diff = a.difficulty
+          const p1   = vol ?? null
+          const p2   = (vol != null && diff != null)
+            ? Math.round(vol * (100 - diff) / 100)
+            : null
 
-        const { error: itemsError } = await supabase
+          // Prioridad final: p4 > p3 > p2_oportunidad > legacy priority
+          let prioridad_final: number
+          if (p2 != null) {
+            if (p2 > 3000)     prioridad_final = 1
+            else if (p2 > 1000) prioridad_final = 2
+            else                prioridad_final = 3
+          } else {
+            prioridad_final = typeof a.priority === 'number' ? a.priority : 2
+          }
+
+          const base = {
+            map_id            : map.id,
+            title             : a.title,
+            slug              : a.slug,
+            main_keyword      : a.main_keyword,
+            secondary_keywords: a.secondary_keywords,
+            cluster           : a.cluster,
+            funnel_stage      : a.funnel_stage,
+            volume            : vol,
+            difficulty        : diff,
+            priority          : a.priority,
+            suggested_month   : monthsList.includes(a.suggested_month) ? a.suggested_month : monthsList[0],
+            sort_order        : sortOrder++,
+            status            : 'planned',
+          }
+
+          // Campos Sprint 2 — solo se incluyen si la migración 029 está aplicada
+          const sprint2 = {
+            tipo_articulo    : 'nuevo' as const,
+            p1_volumen       : p1,
+            p2_oportunidad   : p2,
+            p3_actualizacion : false,
+            p4_manual        : null as number | null,
+            prioridad_final,
+            validacion       : 'propuesto' as const,
+          }
+
+          return { ...base, ...sprint2 }
+        })
+
+        let { error: itemsError } = await supabase
           .from('content_map_items')
           .insert(items)
+
+        // Si la migración 029 no está aplicada, reintentar sin los campos Sprint 2
+        if (itemsError?.code === 'PGRST204') {
+          console.warn(`[GenerateMap] Campos Sprint 2 no disponibles, reintentando sin ellos`)
+          const itemsBase = items.map(({ tipo_articulo: _ta, p1_volumen: _p1, p2_oportunidad: _p2, p3_actualizacion: _p3, p4_manual: _p4, prioridad_final: _pf, validacion: _v, ...rest }) => rest)
+          const { error: retryError } = await supabase
+            .from('content_map_items')
+            .insert(itemsBase)
+          itemsError = retryError ?? null
+        }
 
         if (itemsError) {
           console.error(`[GenerateMap] Batch ${batchIdx + 1} — error insertando items:`, itemsError)
