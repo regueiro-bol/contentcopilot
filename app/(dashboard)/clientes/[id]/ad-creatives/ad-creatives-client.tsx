@@ -38,7 +38,7 @@ type PublicationIntent = 'organic_informative' | 'organic_brand' | 'paid_campaig
 type AdFormat          = '1x1' | '9x16' | '1.91x1'
 type CreativeStatus    = 'draft' | 'approved' | 'rejected'
 
-interface AdCreative {
+export interface AdCreative {
   id:                 string
   client_id:          string
   brief:              string

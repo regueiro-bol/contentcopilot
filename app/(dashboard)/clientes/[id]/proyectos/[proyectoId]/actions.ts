@@ -1,9 +1,31 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { DocumentoProyecto, Proyecto } from '@/types'
+
+// ─── Archivar / Eliminar proyecto ────────────────────────────────────────────
+
+export async function archivarProyecto(id: string, clienteId: string) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('proyectos')
+    .update({ estado: 'archivado' })
+    .eq('id', id)
+  if (error) throw new Error(`Error al archivar: ${error.message}`)
+  revalidatePath(`/clientes/${clienteId}`)
+  revalidatePath(`/clientes/${clienteId}/proyectos/${id}`)
+}
+
+export async function eliminarProyecto(id: string, clienteId: string) {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('proyectos').delete().eq('id', id)
+  if (error) throw new Error(`Error al eliminar: ${error.message}`)
+  revalidatePath(`/clientes/${clienteId}`)
+  redirect(`/clientes/${clienteId}`)
+}
 
 function slugify(text: string): string {
   return text

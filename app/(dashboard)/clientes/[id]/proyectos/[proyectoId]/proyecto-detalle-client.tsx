@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronRight, Edit, Plus, FileText, Globe, FolderOpen,
@@ -28,8 +28,15 @@ import {
   crearContenido,
   subirDocumento,
   eliminarDocumento,
+  archivarProyecto,
+  eliminarProyecto,
 } from './actions'
 import type { Proyecto, Contenido, DocumentoProyecto, PerfilAutor } from '@/types'
+import type {
+  InspiracionSummary,
+  StrategySummary,
+  GeoradarSummary,
+} from './page'
 
 const etiquetasModo: Record<string, string> = {
   drive: 'Google Drive', cms: 'CMS / WordPress', word: 'Word', email: 'Email',
@@ -572,13 +579,21 @@ export default function ProyectoDetalleClient({
   contenidos,
   cliente,
   autores,
+  lastInspiracion,
+  lastStrategy,
+  lastGeoradar,
 }: {
   proyecto: Proyecto
   contenidos: Contenido[]
   cliente: { id: string; nombre: string }
   autores: PerfilAutor[]
+  lastInspiracion: InspiracionSummary | null
+  lastStrategy: StrategySummary | null
+  lastGeoradar: GeoradarSummary[]
 }) {
   const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [archiving, setArchiving] = useState(false)
   const [editTab, setEditTab] = useState<'configuracion' | 'seo' | 'accesos' | 'entrega' | null>(null)
   const [modoCreativo, setModoCreativo] = useState(proyecto.modo_creativo)
   const [modalContenido, setModalContenido] = useState(false)
@@ -747,11 +762,11 @@ export default function ProyectoDetalleClient({
       <Tabs defaultValue="configuracion">
         <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="configuracion">Configuración</TabsTrigger>
-          <TabsTrigger value="estrategia">Estrategia</TabsTrigger>
           <TabsTrigger value="docs">Base documental</TabsTrigger>
           <TabsTrigger value="seo">SEO / GEO</TabsTrigger>
           <TabsTrigger value="contenidos">Contenidos ({contenidos.length})</TabsTrigger>
           <TabsTrigger value="entrega">Entrega</TabsTrigger>
+          <TabsTrigger value="estrategia">Estrategia</TabsTrigger>
         </TabsList>
 
         {/* ── Tab 1: Configuración ── */}
@@ -811,13 +826,27 @@ export default function ProyectoDetalleClient({
                   variant="outline"
                   size="sm"
                   className="text-xs h-7 gap-1 text-amber-700 border-amber-200 hover:bg-amber-50"
+                  disabled={archiving || isPending}
                   onClick={() => {
-                    // TODO: llamar a server action `archivarProyecto(proyecto.id)` cuando exista
-                    alert('TODO: archivar proyecto (server action pendiente)')
+                    setArchiving(true)
+                    startTransition(async () => {
+                      try {
+                        await archivarProyecto(proyecto.id, cliente.id)
+                        router.refresh()
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : 'Error al archivar'
+                        alert(msg)
+                      } finally {
+                        setArchiving(false)
+                      }
+                    })
                   }}
                 >
-                  <Archive className="h-3 w-3" />
-                  Archivar proyecto
+                  {archiving ? (
+                    <><Loader2 className="h-3 w-3 animate-spin" /> Archivando…</>
+                  ) : (
+                    <><Archive className="h-3 w-3" /> Archivar proyecto</>
+                  )}
                 </Button>
               </div>
               <Separator />
@@ -843,7 +872,7 @@ export default function ProyectoDetalleClient({
           </Card>
         </TabsContent>
 
-        {/* ── Tab: Estrategia ── */}
+        {/* ── Tab: Estrategia (mini-dashboard con datos reales del cliente) ── */}
         <TabsContent value="estrategia">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Inspiración */}
@@ -855,38 +884,84 @@ export default function ProyectoDetalleClient({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Badge variant="secondary" className="text-xs">Sin datos</Badge>
-                <p className="text-xs text-gray-500">
-                  Fuentes, referencias e insights para inspirar nuevos contenidos.
-                </p>
-                <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
-                  <Link href={`/inspiracion?clientId=${cliente.id}`}>
-                    Ver
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </Button>
+                {lastInspiracion ? (
+                  <>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-gray-900">
+                        {Array.isArray(lastInspiracion.resultado?.oportunidades)
+                          ? lastInspiracion.resultado!.oportunidades!.length
+                          : 0}
+                      </span>
+                      <span className="text-xs text-gray-500">oportunidades</span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      Último análisis: {new Date(lastInspiracion.created_at).toLocaleDateString('es-ES')}
+                    </p>
+                    <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                      <Link href={`/inspiracion/${lastInspiracion.id}`}>
+                        Ver informe
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Badge variant="secondary" className="text-xs">Sin análisis todavía</Badge>
+                    <p className="text-xs text-gray-500">
+                      Fuentes, referencias e insights para inspirar nuevos contenidos.
+                    </p>
+                    <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                      <Link href={`/inspiracion?clienteId=${cliente.id}`}>
+                        Crear análisis
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
 
-            {/* Estrategia */}
+            {/* Estrategia de Contenidos */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
                   <Map className="h-4 w-4 text-emerald-500" />
-                  Estrategia
+                  Estrategia de Contenidos
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Badge variant="secondary" className="text-xs">Sin datos</Badge>
-                <p className="text-xs text-gray-500">
-                  Plan estratégico, objetivos y pilares de contenido.
-                </p>
-                <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
-                  <Link href={`/strategy?clientId=${cliente.id}`}>
-                    Ver
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </Button>
+                {lastStrategy ? (
+                  <>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-gray-900">
+                        {lastStrategy.keywords_incluidas ?? lastStrategy.total_keywords ?? 0}
+                      </span>
+                      <span className="text-xs text-gray-500">keywords mapeadas</span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      {lastStrategy.num_clusters ?? 0} clusters · {new Date(lastStrategy.created_at).toLocaleDateString('es-ES')}
+                    </p>
+                    <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                      <Link href={`/strategy?clienteId=${cliente.id}`}>
+                        Ver estrategia
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Badge variant="secondary" className="text-xs">Sin estrategia todavía</Badge>
+                    <p className="text-xs text-gray-500">
+                      Plan estratégico, objetivos y pilares de contenido.
+                    </p>
+                    <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                      <Link href={`/strategy?clienteId=${cliente.id}`}>
+                        Crear estrategia
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
 
@@ -894,21 +969,56 @@ export default function ProyectoDetalleClient({
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
-                  <Radar className="h-4 w-4 text-violet-500" />
+                  <Radar className="h-4 w-4 text-amber-500" />
                   GEORadar
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Badge variant="secondary" className="text-xs">Sin datos</Badge>
-                <p className="text-xs text-gray-500">
-                  Monitorización de presencia en IA generativa y búsquedas GEO.
-                </p>
-                <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
-                  <Link href={`/georadar/${cliente.id}`}>
-                    Ver
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </Button>
+                {lastGeoradar?.[0] ? (() => {
+                  const current = lastGeoradar[0]
+                  const previous = lastGeoradar[1]
+                  const currentScore = current.score_global ?? 0
+                  const previousScore = previous?.score_global ?? null
+                  const diff = previousScore !== null ? currentScore - previousScore : 0
+                  const trendArrow = diff > 0 ? '↑' : diff < 0 ? '↓' : '→'
+                  const trendColor =
+                    diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'
+                  return (
+                    <>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-gray-900">
+                          {Math.round(currentScore)}
+                        </span>
+                        <span className="text-xs text-gray-500">/100</span>
+                        <span className={`text-sm font-semibold ${trendColor}`}>
+                          {trendArrow}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Último scan: {new Date(current.fecha_scan).toLocaleDateString('es-ES')}
+                      </p>
+                      <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                        <Link href={`/georadar/${cliente.id}`}>
+                          Ver informe
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    </>
+                  )
+                })() : (
+                  <>
+                    <Badge variant="secondary" className="text-xs">Sin datos todavía</Badge>
+                    <p className="text-xs text-gray-500">
+                      Monitorización de presencia en IA generativa y búsquedas GEO.
+                    </p>
+                    <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                      <Link href={`/georadar/${cliente.id}/configurar`}>
+                        Configurar GEORadar
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1287,17 +1397,25 @@ export default function ProyectoDetalleClient({
               variant="destructive"
               disabled={deleteTyped !== proyecto.nombre || deletingProyecto}
               onClick={async () => {
-                // TODO: llamar a server action de eliminación real cuando exista
                 setDeletingProyecto(true)
-                alert('TODO: eliminar proyecto (server action pendiente)')
-                setDeletingProyecto(false)
-                setConfirmDelete(false)
-                setDeleteTyped('')
+                try {
+                  await eliminarProyecto(proyecto.id, cliente.id)
+                  // eliminarProyecto hace redirect() — esta línea no se ejecuta
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : 'Error al eliminar'
+                  alert(msg)
+                  setDeletingProyecto(false)
+                  setConfirmDelete(false)
+                  setDeleteTyped('')
+                }
               }}
               className="gap-2"
             >
-              <Trash2 className="h-4 w-4" />
-              Eliminar definitivamente
+              {deletingProyecto ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Eliminando…</>
+              ) : (
+                <><Trash2 className="h-4 w-4" /> Eliminar definitivamente</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

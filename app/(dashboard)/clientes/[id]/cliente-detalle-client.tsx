@@ -29,8 +29,24 @@ import {
   eliminarCliente,
 } from './actions'
 import ReferenciasTab from './referencias-tab'
+import BrandAssetsClient from './brand-assets/brand-assets-client'
+import AdCreativesClient from './ad-creatives/ad-creatives-client'
+import VideosClient from './videos/videos-client'
+import CompetitiveIntelligenceClient from './competitive-intelligence/competitive-intelligence-client'
 import type { Cliente, Proyecto, ProyectoFormData } from '@/types'
-import type { BrandAssetsCoverage, GenerationStatus } from '@/types/brand-assets'
+import type {
+  BrandAssetRow,
+  BrandAssetsCoverage,
+  BrandContextRow,
+  GenerationStatus,
+} from '@/types/brand-assets'
+import type {
+  Competitor,
+  CompetitorAdRow,
+  CiReportRow,
+} from './competitive-intelligence/page'
+import type { AdCreative } from './ad-creatives/ad-creatives-client'
+import type { VideoProject, ContenidoOption } from './videos/videos-client'
 
 type ProyectoConCount = Proyecto & { num_contenidos: number }
 
@@ -1028,10 +1044,32 @@ export default function ClienteDetalleClient({
   cliente,
   proyectos,
   coverage,
+  brandAssets,
+  brandAssetsCoverage,
+  brandContext,
+  hasBrandContext,
+  adCreatives,
+  videoProjects,
+  videoScenesByProject,
+  videoContenidos,
+  competitors,
+  competitorAds,
+  latestCiReport,
 }: {
   cliente: Cliente
   proyectos: ProyectoConCount[]
   coverage?: BrandAssetsCoverage | null
+  brandAssets: BrandAssetRow[]
+  brandAssetsCoverage: BrandAssetsCoverage
+  brandContext: BrandContextRow | null
+  hasBrandContext: boolean
+  adCreatives: AdCreative[]
+  videoProjects: VideoProject[]
+  videoScenesByProject: Record<string, unknown[]>
+  videoContenidos: ContenidoOption[]
+  competitors: Competitor[]
+  competitorAds: CompetitorAdRow[]
+  latestCiReport: CiReportRow | null
 }) {
   const router = useRouter()
   const [editando, setEditando] = useState<'identidad' | 'marca' | null>(null)
@@ -1267,73 +1305,55 @@ export default function ClienteDetalleClient({
             </CardContent>
           </Card>
         </TabsContent>
-        {/* ── Tab 3: Inteligencia (Competidores + Referentes + Sector) ── */}
+        {/* ── Tab 3: Inteligencia (Competidores + Referentes + Publicidad competencia) ── */}
         <TabsContent value="inteligencia">
           <Tabs defaultValue="competidores">
             <TabsList>
               <TabsTrigger value="competidores">Competidores</TabsTrigger>
               <TabsTrigger value="referentes">Referentes</TabsTrigger>
-              <TabsTrigger value="sector">Sector</TabsTrigger>
+              <TabsTrigger value="publicidad">Publicidad competencia</TabsTrigger>
             </TabsList>
 
             <TabsContent value="competidores">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-semibold">Competitive Intelligence</CardTitle>
-                  <div className="flex items-center gap-2">
-                    {/* TODO: modal configurar periodicidad (state-only) */}
-                    <Button variant="outline" size="sm" className="gap-1.5" asChild>
-                      <Link href={`/clientes/${cliente.id}/competitive-intelligence`}>
-                        Configurar periodicidad
-                      </Link>
-                    </Button>
-                    <Button size="sm" className="gap-1.5" asChild>
-                      <Link href={`/clientes/${cliente.id}/competitive-intelligence?refresh=1`}>
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        Actualizar ahora
-                      </Link>
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <Button variant="outline" className="w-full h-auto py-6 gap-2 flex-col" asChild>
-                    <Link href={`/clientes/${cliente.id}/competitive-intelligence`}>
-                      <span className="text-sm font-semibold text-gray-800">Abrir panel de competidores</span>
-                      <span className="text-xs text-gray-500">Análisis, señales y comparativas</span>
-                      <ArrowRight className="h-4 w-4 mt-1" />
-                    </Link>
-                  </Button>
-                </CardContent>
-              </Card>
+              <CompetitiveIntelligenceClient
+                clientId={cliente.id}
+                clientNombre={cliente.nombre}
+                initialCompetitors={competitors}
+                initialAds={competitorAds}
+                latestReport={latestCiReport}
+              />
             </TabsContent>
 
             <TabsContent value="referentes">
               <ReferenciasTab clienteId={cliente.id} />
             </TabsContent>
 
-            <TabsContent value="sector">
-              <ReferenciasTab clienteId={cliente.id} />
+            <TabsContent value="publicidad">
+              {/* TODO: Filtrar CompetitiveIntelligenceClient a modo "solo publicidad" (Google Ads + Meta).
+                  El componente aún no expone una prop `initialTab`/`onlyAds`, así que de momento
+                  se embebe el mismo panel completo que en "Competidores". Cuando se añada la prop,
+                  pasarla aquí para restringir la vista a la sección de anuncios. */}
+              <CompetitiveIntelligenceClient
+                clientId={cliente.id}
+                clientNombre={cliente.nombre}
+                initialCompetitors={competitors}
+                initialAds={competitorAds}
+                latestReport={latestCiReport}
+              />
             </TabsContent>
           </Tabs>
         </TabsContent>
 
         {/* ── Tab 4: Brand Assets ── */}
         <TabsContent value="brand-assets">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Brand Assets</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Button variant="outline" className="w-full h-auto py-8 gap-2 flex-col" asChild>
-                <Link href={`/clientes/${cliente.id}/brand-assets`}>
-                  <ImageIcon className="h-6 w-6 text-gray-400" />
-                  <span className="text-sm font-semibold text-gray-800">Abrir Brand Assets</span>
-                  <span className="text-xs text-gray-500">Logos, colores, brand book y contexto</span>
-                  <ArrowRight className="h-4 w-4 mt-1" />
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
+          <BrandAssetsClient
+            clientId={cliente.id}
+            clientNombre={cliente.nombre}
+            initialAssets={brandAssets}
+            coverage={brandAssetsCoverage}
+            hasContext={hasBrandContext}
+            initialContext={brandContext}
+          />
         </TabsContent>
 
         {/* ── Tab 5: Creatividades (Imágenes/anuncios + Vídeos) ── */}
@@ -1344,32 +1364,20 @@ export default function ClienteDetalleClient({
               <TabsTrigger value="videos">Vídeos</TabsTrigger>
             </TabsList>
             <TabsContent value="imagenes">
-              <Card>
-                <CardContent className="pt-6">
-                  <Button variant="outline" className="w-full h-auto py-8 gap-2 flex-col" asChild>
-                    <Link href={`/clientes/${cliente.id}/ad-creatives`}>
-                      <ImageIcon className="h-6 w-6 text-gray-400" />
-                      <span className="text-sm font-semibold text-gray-800">Abrir Imágenes y anuncios</span>
-                      <span className="text-xs text-gray-500">Ad creatives y variantes</span>
-                      <ArrowRight className="h-4 w-4 mt-1" />
-                    </Link>
-                  </Button>
-                </CardContent>
-              </Card>
+              <AdCreativesClient
+                clientId={cliente.id}
+                clientNombre={cliente.nombre}
+                initialCreatives={adCreatives}
+              />
             </TabsContent>
             <TabsContent value="videos">
-              <Card>
-                <CardContent className="pt-6">
-                  <Button variant="outline" className="w-full h-auto py-8 gap-2 flex-col" asChild>
-                    <Link href={`/clientes/${cliente.id}/videos`}>
-                      <Sparkles className="h-6 w-6 text-gray-400" />
-                      <span className="text-sm font-semibold text-gray-800">Abrir Vídeos</span>
-                      <span className="text-xs text-gray-500">Generación de vídeo y director de arte</span>
-                      <ArrowRight className="h-4 w-4 mt-1" />
-                    </Link>
-                  </Button>
-                </CardContent>
-              </Card>
+              <VideosClient
+                clientId={cliente.id}
+                clientNombre={cliente.nombre}
+                initialProjects={videoProjects}
+                initialScenesByProject={videoScenesByProject}
+                contenidos={videoContenidos}
+              />
             </TabsContent>
           </Tabs>
         </TabsContent>

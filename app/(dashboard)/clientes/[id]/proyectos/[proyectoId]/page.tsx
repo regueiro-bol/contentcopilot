@@ -3,6 +3,31 @@ import { notFound } from 'next/navigation'
 import ProyectoDetalleClient from './proyecto-detalle-client'
 import type { Proyecto, Contenido, PerfilAutor } from '@/types'
 
+export interface InspiracionSummary {
+  id: string
+  status: string | null
+  created_at: string
+  resultado: { oportunidades?: unknown[] } | null
+  oportunidades_marcadas?: unknown
+}
+
+export interface StrategySummary {
+  id: string
+  status: string | null
+  created_at: string
+  total_keywords: number | null
+  keywords_incluidas: number | null
+  num_clusters: number | null
+}
+
+export interface GeoradarSummary {
+  id: string
+  fecha_scan: string
+  score_global: number | null
+  estado: string | null
+  scores_por_llm: unknown
+}
+
 export default async function ProyectoDetallePage({
   params,
 }: {
@@ -15,11 +40,36 @@ export default async function ProyectoDetallePage({
     { data: contenidosRaw },
     { data: clienteRaw, error: errCliente },
     { data: autoresRaw },
+    { data: lastInspiracionRaw },
+    { data: lastStrategyRaw },
+    { data: lastGeoradarRaw },
   ] = await Promise.all([
     supabase.from('proyectos').select('*').eq('id', params.proyectoId).single(),
     supabase.from('contenidos').select('*').eq('proyecto_id', params.proyectoId).order('created_at', { ascending: false }),
     supabase.from('clientes').select('id, nombre').eq('id', params.id).single(),
     supabase.from('perfiles_autor').select('id, nombre, email, especialidad, activo').eq('activo', true).order('nombre'),
+    supabase
+      .from('inspiracion_sessions')
+      .select('id, status, created_at, resultado, oportunidades_marcadas')
+      .eq('client_id', params.id)
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('vista_strategy_sessions')
+      .select('id, status, created_at, total_keywords, keywords_incluidas, num_clusters')
+      .eq('client_id', params.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('georadar_scans')
+      .select('id, fecha_scan, score_global, estado, scores_por_llm')
+      .eq('cliente_id', params.id)
+      .eq('estado', 'completado')
+      .order('fecha_scan', { ascending: false })
+      .limit(2),
   ])
 
   if (errProyecto || !proyectoRaw || errCliente || !clienteRaw) notFound()
@@ -64,12 +114,19 @@ export default async function ProyectoDetallePage({
     created_at: '',
   }))
 
+  const lastInspiracion = (lastInspiracionRaw ?? null) as InspiracionSummary | null
+  const lastStrategy = (lastStrategyRaw ?? null) as StrategySummary | null
+  const lastGeoradar = (lastGeoradarRaw ?? []) as GeoradarSummary[]
+
   return (
     <ProyectoDetalleClient
       proyecto={proyecto}
       contenidos={contenidos}
       cliente={{ id: clienteRaw.id, nombre: clienteRaw.nombre }}
       autores={autores}
+      lastInspiracion={lastInspiracion}
+      lastStrategy={lastStrategy}
+      lastGeoradar={lastGeoradar}
     />
   )
 }

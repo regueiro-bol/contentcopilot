@@ -40,7 +40,7 @@ type VideoStatus =
   | 'approved'
   | 'rejected'
 
-interface VideoProject {
+export interface VideoProject {
   id: string
   client_id: string
   content_id: string | null
@@ -81,7 +81,7 @@ interface VideoScene {
   seedance_prompt: string | null
 }
 
-interface ContenidoOption {
+export interface ContenidoOption {
   id: string
   titulo: string
   estado: string
