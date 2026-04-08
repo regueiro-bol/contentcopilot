@@ -25,6 +25,10 @@ interface Props {
   initialAds:           CompetitorAdRow[]
   latestReport:         CiReportRow | null
   embedded?:            boolean
+  /** Solo gestión CRUD de competidores: oculta escaneo, ads y reports. */
+  manageOnly?:          boolean
+  /** Solo lectura de competidores: oculta añadir/editar/eliminar, deja escaneo y reports. */
+  readOnlyCompetitors?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +70,8 @@ function CompetidoresSection({
   onScanGoogle,
   scanning,
   scanningGoogle,
+  hideScanButtons = false,
+  hideCrudButtons = false,
 }: {
   clientId:       string
   competitors:    Competitor[]
@@ -75,6 +81,8 @@ function CompetidoresSection({
   onScanGoogle:   () => void
   scanning:       boolean
   scanningGoogle: boolean
+  hideScanButtons?: boolean
+  hideCrudButtons?: boolean
 }) {
   const [showForm, setShowForm]   = useState(false)
   const [pageName, setPageName]   = useState('')
@@ -124,44 +132,50 @@ function CompetidoresSection({
           <Badge className="bg-gray-100 text-gray-600 border-0 text-xs">{competitors.length}</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onScanGoogle}
-            disabled={scanningGoogle || googleCompetitors.length === 0}
-            className="gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
-            title="Escanear Google Ads Transparency Center (requiere SERPAPI_KEY)"
-          >
-            {scanningGoogle
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <RefreshCw className="h-3.5 w-3.5" />}
-            Escanear Google
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onScan}
-            disabled={scanning || metaCompetitors.length === 0}
-            className="gap-1.5 text-xs"
-          >
-            {scanning
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <RefreshCw className="h-3.5 w-3.5" />}
-            Escanear Meta
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => setShowForm(!showForm)}
-            className="gap-1.5 text-xs"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Añadir competidor
-          </Button>
+          {!hideScanButtons && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onScanGoogle}
+                disabled={scanningGoogle || googleCompetitors.length === 0}
+                className="gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                title="Escanear Google Ads Transparency Center (requiere SERPAPI_KEY)"
+              >
+                {scanningGoogle
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <RefreshCw className="h-3.5 w-3.5" />}
+                Escanear Google
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onScan}
+                disabled={scanning || metaCompetitors.length === 0}
+                className="gap-1.5 text-xs"
+              >
+                {scanning
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <RefreshCw className="h-3.5 w-3.5" />}
+                Escanear Meta
+              </Button>
+            </>
+          )}
+          {!hideCrudButtons && (
+            <Button
+              size="sm"
+              onClick={() => setShowForm(!showForm)}
+              className="gap-1.5 text-xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Añadir competidor
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Formulario inline */}
-      {showForm && (
+      {showForm && !hideCrudButtons && (
         <form onSubmit={handleAdd} className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
           <p className="text-xs font-medium text-gray-700">Nuevo competidor</p>
           <div className="grid grid-cols-3 gap-3">
@@ -248,13 +262,15 @@ function CompetidoresSection({
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => handleDelete(comp.id)}
-                className="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded"
-                title="Eliminar competidor"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              {!hideCrudButtons && (
+                <button
+                  onClick={() => handleDelete(comp.id)}
+                  className="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded"
+                  title="Eliminar competidor"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -692,6 +708,8 @@ export default function CompetitiveIntelligenceClient({
   initialAds,
   latestReport,
   embedded = false,
+  manageOnly = false,
+  readOnlyCompetitors = false,
 }: Props) {
   const router = useRouter()
   const [competitors, setCompetitors]       = useState<Competitor[]>(initialCompetitors)
@@ -813,17 +831,23 @@ export default function CompetitiveIntelligenceClient({
         onScanGoogle={handleScanGoogle}
         scanning={scanning}
         scanningGoogle={scanningGoogle}
+        hideScanButtons={manageOnly}
+        hideCrudButtons={readOnlyCompetitors}
       />
 
-      {/* Sección ads */}
-      <AdsSection ads={ads} />
+      {!manageOnly && (
+        <>
+          {/* Sección ads */}
+          <AdsSection ads={ads} />
 
-      {/* Sección informe */}
-      <InformeSection
-        clientId={clientId}
-        report={report}
-        onReportGenerated={setReport}
-      />
+          {/* Sección informe */}
+          <InformeSection
+            clientId={clientId}
+            report={report}
+            onReportGenerated={setReport}
+          />
+        </>
+      )}
 
       <ToastList toasts={toasts} />
     </div>

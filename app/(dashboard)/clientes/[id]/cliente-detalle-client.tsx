@@ -1309,29 +1309,20 @@ export default function ClienteDetalleClient({
             </CardContent>
           </Card>
         </TabsContent>
-        {/* ── Tab 3: Competencia (Competencia + Referentes) ── */}
+        {/* ── Tab 3: Competencia (gestión de competidores + referentes manuales) ── */}
         <TabsContent value="competencia">
-          <Tabs defaultValue="competencia">
-            <TabsList>
-              <TabsTrigger value="competencia">Competencia</TabsTrigger>
-              <TabsTrigger value="referentes">Referentes</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="competencia">
-              <CompetitiveIntelligenceClient
-                clientId={cliente.id}
-                clientNombre={cliente.nombre}
-                initialCompetitors={competitors}
-                initialAds={competitorAds}
-                latestReport={latestCiReport}
-                embedded
-              />
-            </TabsContent>
-
-            <TabsContent value="referentes">
-              <ReferenciasTab clienteId={cliente.id} />
-            </TabsContent>
-          </Tabs>
+          <div className="space-y-6">
+            <CompetitiveIntelligenceClient
+              clientId={cliente.id}
+              clientNombre={cliente.nombre}
+              initialCompetitors={competitors}
+              initialAds={competitorAds}
+              latestReport={latestCiReport}
+              embedded
+              manageOnly
+            />
+            <ReferenciasTab clienteId={cliente.id} />
+          </div>
         </TabsContent>
 
         {/* ── Tab 4: Brand Assets ── */}
@@ -1377,7 +1368,7 @@ export default function ClienteDetalleClient({
           <GA4AnalyticsTab clienteId={cliente.id} />
         </TabsContent>
 
-        {/* ── Tab 7: Publicidad (Google Ads + Meta) ── */}
+        {/* ── Tab 7: Publicidad (Google Ads + Meta) — solo ejecución y visualización ── */}
         <TabsContent value="publicidad">
           <CompetitiveIntelligenceClient
             clientId={cliente.id}
@@ -1386,6 +1377,7 @@ export default function ClienteDetalleClient({
             initialAds={competitorAds}
             latestReport={latestCiReport}
             embedded
+            readOnlyCompetitors
           />
         </TabsContent>
 
