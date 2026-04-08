@@ -6,7 +6,7 @@ import {
   Edit, Trash2, Plus, Sparkles, ChevronRight, ChevronDown,
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
   Loader2, Link2, Globe, AlertCircle, AlertTriangle, BarChart2,
-  RefreshCw, Plug, RotateCcw,
+  RefreshCw, Plug, RotateCcw, Megaphone,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -1102,9 +1102,9 @@ export default function ClienteDetalleClient({
           <TabsTrigger value="proyectos">
             Proyectos ({proyectos.length})
           </TabsTrigger>
-          <TabsTrigger value="inteligencia" className="gap-1.5">
+          <TabsTrigger value="competencia" className="gap-1.5">
             <Link2 className="h-3.5 w-3.5" />
-            Inteligencia
+            Competencia
           </TabsTrigger>
           <TabsTrigger value="brand-assets" className="gap-1.5">
             <ImageIcon className="h-3.5 w-3.5" />
@@ -1117,6 +1117,10 @@ export default function ClienteDetalleClient({
           <TabsTrigger value="analitica" className="gap-1.5">
             <BarChart2 className="h-3.5 w-3.5" />
             Analítica
+          </TabsTrigger>
+          <TabsTrigger value="publicidad" className="gap-1.5">
+            <Megaphone className="h-3.5 w-3.5" />
+            Publicidad
           </TabsTrigger>
           <TabsTrigger value="conexiones" className="gap-1.5">
             <Plug className="h-3.5 w-3.5" />
@@ -1305,16 +1309,15 @@ export default function ClienteDetalleClient({
             </CardContent>
           </Card>
         </TabsContent>
-        {/* ── Tab 3: Inteligencia (Competidores + Referentes + Publicidad competencia) ── */}
-        <TabsContent value="inteligencia">
-          <Tabs defaultValue="competidores">
+        {/* ── Tab 3: Competencia (Competencia editorial + Referentes) ── */}
+        <TabsContent value="competencia">
+          <Tabs defaultValue="editorial">
             <TabsList>
-              <TabsTrigger value="competidores">Competidores</TabsTrigger>
+              <TabsTrigger value="editorial">Competencia editorial</TabsTrigger>
               <TabsTrigger value="referentes">Referentes</TabsTrigger>
-              <TabsTrigger value="publicidad">Publicidad competencia</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="competidores">
+            <TabsContent value="editorial">
               <CompetitiveIntelligenceClient
                 clientId={cliente.id}
                 clientNombre={cliente.nombre}
@@ -1326,20 +1329,6 @@ export default function ClienteDetalleClient({
 
             <TabsContent value="referentes">
               <ReferenciasTab clienteId={cliente.id} />
-            </TabsContent>
-
-            <TabsContent value="publicidad">
-              {/* TODO: Filtrar CompetitiveIntelligenceClient a modo "solo publicidad" (Google Ads + Meta).
-                  El componente aún no expone una prop `initialTab`/`onlyAds`, así que de momento
-                  se embebe el mismo panel completo que en "Competidores". Cuando se añada la prop,
-                  pasarla aquí para restringir la vista a la sección de anuncios. */}
-              <CompetitiveIntelligenceClient
-                clientId={cliente.id}
-                clientNombre={cliente.nombre}
-                initialCompetitors={competitors}
-                initialAds={competitorAds}
-                latestReport={latestCiReport}
-              />
             </TabsContent>
           </Tabs>
         </TabsContent>
@@ -1387,7 +1376,18 @@ export default function ClienteDetalleClient({
           <GA4AnalyticsTab clienteId={cliente.id} />
         </TabsContent>
 
-        {/* ── Tab 7: Conexiones digitales ── */}
+        {/* ── Tab 7: Publicidad (Google Ads + Meta) ── */}
+        <TabsContent value="publicidad">
+          <CompetitiveIntelligenceClient
+            clientId={cliente.id}
+            clientNombre={cliente.nombre}
+            initialCompetitors={competitors}
+            initialAds={competitorAds}
+            latestReport={latestCiReport}
+          />
+        </TabsContent>
+
+        {/* ── Tab 8: Conexiones digitales ── */}
         <TabsContent value="conexiones">
           <GoogleConnectionsSection clienteId={cliente.id} />
         </TabsContent>
