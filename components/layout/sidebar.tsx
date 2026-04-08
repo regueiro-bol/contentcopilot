@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Radio,
   Lightbulb,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -74,6 +75,11 @@ const navItems = [
     titulo: 'Agentes',
     href: '/agentes',
     icono: Cpu,
+  },
+  {
+    titulo: 'Ajustes',
+    href: '/settings/google-accounts',
+    icono: Settings,
   },
 ]
 

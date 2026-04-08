@@ -15,6 +15,7 @@ const titulosPagina: Record<string, string> = {
   '/costes': 'Calculadora de costes',
   '/strategy': 'Estrategia de Contenidos',
   '/georadar': 'GEORadar',
+  '/settings': 'Ajustes',
 }
 
 export function DashboardShell({
