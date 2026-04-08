@@ -1047,7 +1047,7 @@ export default function ClienteDetalleClient({
           </div>
           <div>
             <div className="flex items-center gap-3">
-              <h2 className="text-2xl font-bold text-gray-900">{cliente.nombre}</h2>
+              <h1 className="text-2xl font-bold text-gray-900">{cliente.nombre}</h1>
               <Badge variant={cliente.activo ? 'success' : 'secondary'}>
                 {cliente.activo ? 'Activo' : 'Inactivo'}
               </Badge>
@@ -1055,33 +1055,30 @@ export default function ClienteDetalleClient({
             <p className="text-gray-500 text-sm mt-0.5">{cliente.sector}</p>
           </div>
         </div>
-        <Button size="sm" className="gap-2" asChild>
-          <Link href={`/copiloto?cliente=${cliente.id}`}>
-            <Sparkles className="h-4 w-4" />
-            Usar copiloto
-          </Link>
-        </Button>
       </div>
 
       {/* Tabs */}
       <Tabs defaultValue="identidad">
-        <TabsList>
+        <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="identidad">Identidad</TabsTrigger>
-          <TabsTrigger value="marca">Marca global</TabsTrigger>
           <TabsTrigger value="proyectos">
             Proyectos ({proyectos.length})
+          </TabsTrigger>
+          <TabsTrigger value="inteligencia" className="gap-1.5">
+            <Link2 className="h-3.5 w-3.5" />
+            Inteligencia
           </TabsTrigger>
           <TabsTrigger value="brand-assets" className="gap-1.5">
             <ImageIcon className="h-3.5 w-3.5" />
             Brand Assets
           </TabsTrigger>
+          <TabsTrigger value="creatividades" className="gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            Creatividades
+          </TabsTrigger>
           <TabsTrigger value="analitica" className="gap-1.5">
             <BarChart2 className="h-3.5 w-3.5" />
             Analítica
-          </TabsTrigger>
-          <TabsTrigger value="referencias" className="gap-1.5">
-            <Link2 className="h-3.5 w-3.5" />
-            Referencias
           </TabsTrigger>
           <TabsTrigger value="conexiones" className="gap-1.5">
             <Plug className="h-3.5 w-3.5" />
@@ -1089,117 +1086,118 @@ export default function ClienteDetalleClient({
           </TabsTrigger>
         </TabsList>
 
-        {/* ── Tab 1: Identidad ── */}
+        {/* ── Tab 1: Identidad (fusiona Datos del cliente + Identidad de marca) ── */}
         <TabsContent value="identidad">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-semibold">Identidad corporativa</CardTitle>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditando('identidad')}>
-                <Edit className="h-3.5 w-3.5" />
-                Editar
-              </Button>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nombre</p>
-                <p className="text-sm text-gray-800">{cliente.nombre}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Sector</p>
-                <p className="text-sm text-gray-800">{cliente.sector || '—'}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">URL web</p>
-                {cliente.url_web ? (
-                  <a href={cliente.url_web} target="_blank" rel="noopener noreferrer"
-                    className="text-sm text-indigo-600 hover:underline">{cliente.url_web}</a>
-                ) : (
-                  <span className="text-sm text-gray-400">—</span>
-                )}
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Account Manager</p>
-                <p className="text-sm text-gray-800">{cliente.account_manager_id || '—'}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Alta</p>
-                <p className="text-sm text-gray-800">
-                  {new Date(cliente.created_at).toLocaleDateString('es-ES', {
-                    year: 'numeric', month: 'long', day: 'numeric',
-                  })}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Estado</p>
-                <Badge variant={
-                  (cliente as unknown as { estado?: string }).estado === 'archivado' ? 'outline'
-                  : cliente.activo ? 'success' : 'secondary'
-                }>
-                  {(cliente as unknown as { estado?: string }).estado === 'archivado' ? 'Archivado'
-                   : cliente.activo ? 'Activo' : 'Inactivo'}
-                </Badge>
-              </div>
-              <div className="sm:col-span-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Descripción corporativa</p>
-                <p className="text-sm text-gray-800">{cliente.descripcion || '—'}</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Reactivar (solo si archivado) */}
-          {(cliente as unknown as { estado?: string }).estado === 'archivado' && (
-            <Card className="border-emerald-200 bg-emerald-50/30 mt-4">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-emerald-800">Cliente archivado</p>
-                  <p className="text-xs text-emerald-600">Este cliente no aparece en los modulos activos.</p>
-                </div>
-                <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
-                  onClick={async () => { await reactivarCliente(cliente.id); router.refresh() }}>
-                  <RotateCcw className="h-3.5 w-3.5" /> Reactivar
+          <div className="space-y-4">
+            {/* Sección A: Datos del cliente */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-semibold">Datos del cliente</CardTitle>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditando('identidad')}>
+                  <Edit className="h-3.5 w-3.5" />
+                  Editar
                 </Button>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nombre</p>
+                  <p className="text-sm text-gray-800">{cliente.nombre}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Sector</p>
+                  <p className="text-sm text-gray-800">{cliente.sector || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">URL web</p>
+                  {cliente.url_web ? (
+                    <a href={cliente.url_web} target="_blank" rel="noopener noreferrer"
+                      className="text-sm text-indigo-600 hover:underline">{cliente.url_web}</a>
+                  ) : (
+                    <span className="text-sm text-gray-400">—</span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Account Manager</p>
+                  <p className="text-sm text-gray-800">{cliente.account_manager_id || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Alta</p>
+                  <p className="text-sm text-gray-800">
+                    {new Date(cliente.created_at).toLocaleDateString('es-ES', {
+                      year: 'numeric', month: 'long', day: 'numeric',
+                    })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Estado</p>
+                  <Badge variant={
+                    (cliente as unknown as { estado?: string }).estado === 'archivado' ? 'outline'
+                    : cliente.activo ? 'success' : 'secondary'
+                  }>
+                    {(cliente as unknown as { estado?: string }).estado === 'archivado' ? 'Archivado'
+                     : cliente.activo ? 'Activo' : 'Inactivo'}
+                  </Badge>
+                </div>
+                <div className="sm:col-span-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Descripción corporativa</p>
+                  <p className="text-sm text-gray-800">{cliente.descripcion || '—'}</p>
+                </div>
               </CardContent>
             </Card>
-          )}
 
-          {/* Zona peligrosa — acordeon colapsado */}
-          <ZonaPeligrosa clienteId={cliente.id} clienteNombre={cliente.nombre} />
-        </TabsContent>
-
-        {/* ── Tab 2: Marca global ── */}
-        <TabsContent value="marca">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-semibold">Identidad de marca global</CardTitle>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditando('marca')}>
-                <Edit className="h-3.5 w-3.5" />
-                Editar
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Identidad corporativa</p>
-                {cliente.identidad_corporativa ? (
-                  <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3 border border-gray-100">
-                    {cliente.identidad_corporativa}
+            {/* Sección B: Identidad de marca */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-semibold">Identidad de marca</CardTitle>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditando('marca')}>
+                  <Edit className="h-3.5 w-3.5" />
+                  Editar
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Identidad corporativa (tono / voz)</p>
+                  {cliente.identidad_corporativa ? (
+                    <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                      {cliente.identidad_corporativa}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-400">Sin definir.</p>
+                  )}
+                </div>
+                <Separator />
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                    Restricciones globales
+                    <span className="ml-2 font-normal text-gray-400 normal-case">(aplican a todos los proyectos)</span>
                   </p>
-                ) : (
-                  <p className="text-sm text-gray-400">Sin definir.</p>
-                )}
-              </div>
-              <Separator />
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Restricciones globales
-                  <span className="ml-2 font-normal text-gray-400 normal-case">(aplican a todos los proyectos)</span>
-                </p>
-                <TagList items={cliente.restricciones_globales} color="bg-red-50 text-red-700" />
-              </div>
-            </CardContent>
-          </Card>
+                  <TagList items={cliente.restricciones_globales} color="bg-red-50 text-red-700" />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Reactivar (solo si archivado) */}
+            {(cliente as unknown as { estado?: string }).estado === 'archivado' && (
+              <Card className="border-emerald-200 bg-emerald-50/30">
+                <CardContent className="p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-800">Cliente archivado</p>
+                    <p className="text-xs text-emerald-600">Este cliente no aparece en los modulos activos.</p>
+                  </div>
+                  <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                    onClick={async () => { await reactivarCliente(cliente.id); router.refresh() }}>
+                    <RotateCcw className="h-3.5 w-3.5" /> Reactivar
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Zona peligrosa — acordeon colapsado */}
+            <ZonaPeligrosa clienteId={cliente.id} clienteNombre={cliente.nombre} />
+          </div>
         </TabsContent>
 
-        {/* ── Tab 3: Proyectos ── */}
+        {/* ── Tab 2: Proyectos ── */}
         <TabsContent value="proyectos">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -1269,19 +1267,116 @@ export default function ClienteDetalleClient({
             </CardContent>
           </Card>
         </TabsContent>
+        {/* ── Tab 3: Inteligencia (Competidores + Referentes + Sector) ── */}
+        <TabsContent value="inteligencia">
+          <Tabs defaultValue="competidores">
+            <TabsList>
+              <TabsTrigger value="competidores">Competidores</TabsTrigger>
+              <TabsTrigger value="referentes">Referentes</TabsTrigger>
+              <TabsTrigger value="sector">Sector</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="competidores">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-semibold">Competitive Intelligence</CardTitle>
+                  <div className="flex items-center gap-2">
+                    {/* TODO: modal configurar periodicidad (state-only) */}
+                    <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                      <Link href={`/clientes/${cliente.id}/competitive-intelligence`}>
+                        Configurar periodicidad
+                      </Link>
+                    </Button>
+                    <Button size="sm" className="gap-1.5" asChild>
+                      <Link href={`/clientes/${cliente.id}/competitive-intelligence?refresh=1`}>
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Actualizar ahora
+                      </Link>
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <Button variant="outline" className="w-full h-auto py-6 gap-2 flex-col" asChild>
+                    <Link href={`/clientes/${cliente.id}/competitive-intelligence`}>
+                      <span className="text-sm font-semibold text-gray-800">Abrir panel de competidores</span>
+                      <span className="text-xs text-gray-500">Análisis, señales y comparativas</span>
+                      <ArrowRight className="h-4 w-4 mt-1" />
+                    </Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="referentes">
+              <ReferenciasTab clienteId={cliente.id} />
+            </TabsContent>
+
+            <TabsContent value="sector">
+              <ReferenciasTab clienteId={cliente.id} />
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
         {/* ── Tab 4: Brand Assets ── */}
         <TabsContent value="brand-assets">
-          <BrandAssetsTab clienteId={cliente.id} coverage={coverage ?? null} />
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold">Brand Assets</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" className="w-full h-auto py-8 gap-2 flex-col" asChild>
+                <Link href={`/clientes/${cliente.id}/brand-assets`}>
+                  <ImageIcon className="h-6 w-6 text-gray-400" />
+                  <span className="text-sm font-semibold text-gray-800">Abrir Brand Assets</span>
+                  <span className="text-xs text-gray-500">Logos, colores, brand book y contexto</span>
+                  <ArrowRight className="h-4 w-4 mt-1" />
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         </TabsContent>
 
-        {/* ── Tab 5: Analítica GA4 ── */}
+        {/* ── Tab 5: Creatividades (Imágenes/anuncios + Vídeos) ── */}
+        <TabsContent value="creatividades">
+          <Tabs defaultValue="imagenes">
+            <TabsList>
+              <TabsTrigger value="imagenes">Imágenes y anuncios</TabsTrigger>
+              <TabsTrigger value="videos">Vídeos</TabsTrigger>
+            </TabsList>
+            <TabsContent value="imagenes">
+              <Card>
+                <CardContent className="pt-6">
+                  <Button variant="outline" className="w-full h-auto py-8 gap-2 flex-col" asChild>
+                    <Link href={`/clientes/${cliente.id}/ad-creatives`}>
+                      <ImageIcon className="h-6 w-6 text-gray-400" />
+                      <span className="text-sm font-semibold text-gray-800">Abrir Imágenes y anuncios</span>
+                      <span className="text-xs text-gray-500">Ad creatives y variantes</span>
+                      <ArrowRight className="h-4 w-4 mt-1" />
+                    </Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="videos">
+              <Card>
+                <CardContent className="pt-6">
+                  <Button variant="outline" className="w-full h-auto py-8 gap-2 flex-col" asChild>
+                    <Link href={`/clientes/${cliente.id}/videos`}>
+                      <Sparkles className="h-6 w-6 text-gray-400" />
+                      <span className="text-sm font-semibold text-gray-800">Abrir Vídeos</span>
+                      <span className="text-xs text-gray-500">Generación de vídeo y director de arte</span>
+                      <ArrowRight className="h-4 w-4 mt-1" />
+                    </Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
+        {/* ── Tab 6: Analítica GA4 ── */}
         <TabsContent value="analitica">
           <GA4AnalyticsTab clienteId={cliente.id} />
-        </TabsContent>
-
-        {/* ── Tab 6: Referencias externas ── */}
-        <TabsContent value="referencias">
-          <ReferenciasTab clienteId={cliente.id} />
         </TabsContent>
 
         {/* ── Tab 7: Conexiones digitales ── */}

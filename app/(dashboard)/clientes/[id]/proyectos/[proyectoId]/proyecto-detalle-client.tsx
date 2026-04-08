@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   ChevronRight, Edit, Plus, FileText, Globe, FolderOpen,
   CheckCircle2, Upload, Sparkles, Trash2, ToggleLeft, ToggleRight,
-  ExternalLink, Brain, Loader2,
+  ExternalLink, Brain, Loader2, Map, Radar, ArrowRight, Archive, AlertTriangle,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -583,6 +583,9 @@ export default function ProyectoDetalleClient({
   const [modoCreativo, setModoCreativo] = useState(proyecto.modo_creativo)
   const [modalContenido, setModalContenido] = useState(false)
   const [modalDocumento, setModalDocumento] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteTyped, setDeleteTyped] = useState('')
+  const [deletingProyecto, setDeletingProyecto] = useState(false)
 
   // RAG: estado + número de chunks por documento
   // Se inicializa desde el campo estado_rag/chunks_generados persistido en el JSONB
@@ -738,21 +741,17 @@ export default function ProyectoDetalleClient({
             </p>
           </div>
         </div>
-        <Button size="sm" className="gap-2" asChild>
-          <Link href={`/copiloto?cliente=${cliente.id}&proyecto=${proyecto.id}`}>
-            <Sparkles className="h-4 w-4" />Usar copiloto
-          </Link>
-        </Button>
       </div>
 
       {/* Tabs */}
       <Tabs defaultValue="configuracion">
         <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="configuracion">Configuración</TabsTrigger>
-          <TabsTrigger value="seo">SEO / GEO</TabsTrigger>
+          <TabsTrigger value="estrategia">Estrategia</TabsTrigger>
           <TabsTrigger value="docs">Base documental</TabsTrigger>
-          <TabsTrigger value="entrega">Entrega</TabsTrigger>
+          <TabsTrigger value="seo">SEO / GEO</TabsTrigger>
           <TabsTrigger value="contenidos">Contenidos ({contenidos.length})</TabsTrigger>
+          <TabsTrigger value="entrega">Entrega</TabsTrigger>
         </TabsList>
 
         {/* ── Tab 1: Configuración ── */}
@@ -792,6 +791,127 @@ export default function ProyectoDetalleClient({
               </div>
             </CardContent>
           </Card>
+
+          {/* Zona peligrosa — discreta, dentro de Configuración */}
+          <Card className="border-red-200 mt-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold text-red-700 flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Zona peligrosa
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Archivar */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-700">Archivar proyecto</p>
+                  <p className="text-xs text-gray-500">El proyecto se conserva pero deja de aparecer como activo.</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-7 gap-1 text-amber-700 border-amber-200 hover:bg-amber-50"
+                  onClick={() => {
+                    // TODO: llamar a server action `archivarProyecto(proyecto.id)` cuando exista
+                    alert('TODO: archivar proyecto (server action pendiente)')
+                  }}
+                >
+                  <Archive className="h-3 w-3" />
+                  Archivar proyecto
+                </Button>
+              </div>
+              <Separator />
+              {/* Eliminar con confirmación en dos pasos */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-700">Eliminar proyecto</p>
+                  <p className="text-xs text-gray-500">
+                    Se eliminarán todos los contenidos asociados. Esta acción no se puede deshacer.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="text-xs h-7 gap-1"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Eliminar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Tab: Estrategia ── */}
+        <TabsContent value="estrategia">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Inspiración */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-indigo-500" />
+                  Inspiración
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Badge variant="secondary" className="text-xs">Sin datos</Badge>
+                <p className="text-xs text-gray-500">
+                  Fuentes, referencias e insights para inspirar nuevos contenidos.
+                </p>
+                <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                  <Link href={`/inspiracion?clientId=${cliente.id}`}>
+                    Ver
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Estrategia */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+                  <Map className="h-4 w-4 text-emerald-500" />
+                  Estrategia
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Badge variant="secondary" className="text-xs">Sin datos</Badge>
+                <p className="text-xs text-gray-500">
+                  Plan estratégico, objetivos y pilares de contenido.
+                </p>
+                <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                  <Link href={`/strategy?clientId=${cliente.id}`}>
+                    Ver
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* GEORadar */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+                  <Radar className="h-4 w-4 text-violet-500" />
+                  GEORadar
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Badge variant="secondary" className="text-xs">Sin datos</Badge>
+                <p className="text-xs text-gray-500">
+                  Monitorización de presencia en IA generativa y búsquedas GEO.
+                </p>
+                <Button size="sm" variant="outline" className="w-full gap-1.5" asChild>
+                  <Link href={`/georadar/${cliente.id}`}>
+                    Ver
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* ── Tab 2: SEO / GEO ── */}
@@ -1134,21 +1254,54 @@ export default function ProyectoDetalleClient({
         </TabsContent>
       </Tabs>
 
-      {/* Zona peligrosa */}
-      <Card className="border-red-200">
-        <CardHeader><CardTitle className="text-sm font-semibold text-red-700">Zona peligrosa</CardTitle></CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-700">Eliminar este proyecto</p>
-              <p className="text-xs text-gray-500">Se eliminarán todos los contenidos asociados. Esta acción no se puede deshacer.</p>
+      {/* ── Diálogo: confirmación de eliminación en dos pasos ── */}
+      <Dialog open={confirmDelete} onOpenChange={(v) => { if (!v) { setConfirmDelete(false); setDeleteTyped('') } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Eliminar proyecto</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-gray-600 leading-relaxed">
+              ¿Seguro que quieres eliminar el proyecto <strong>{proyecto.nombre}</strong>? Esta acción no se puede deshacer.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">
+                Escribe el nombre del proyecto para confirmar:
+              </Label>
+              <Input
+                value={deleteTyped}
+                onChange={(e) => setDeleteTyped(e.target.value)}
+                placeholder={proyecto.nombre}
+              />
             </div>
-            <Button variant="destructive" size="sm" className="gap-2">
-              <Trash2 className="h-4 w-4" />Eliminar proyecto
-            </Button>
           </div>
-        </CardContent>
-      </Card>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { setConfirmDelete(false); setDeleteTyped('') }}
+              disabled={deletingProyecto}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteTyped !== proyecto.nombre || deletingProyecto}
+              onClick={async () => {
+                // TODO: llamar a server action de eliminación real cuando exista
+                setDeletingProyecto(true)
+                alert('TODO: eliminar proyecto (server action pendiente)')
+                setDeletingProyecto(false)
+                setConfirmDelete(false)
+                setDeleteTyped('')
+              }}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              Eliminar definitivamente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Modales ── */}
       <EditConfiguracionModal proyecto={proyecto} clienteId={cliente.id} open={editTab === 'configuracion'} onClose={() => setEditTab(null)} />
