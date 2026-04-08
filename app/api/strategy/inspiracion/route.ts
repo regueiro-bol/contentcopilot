@@ -11,6 +11,11 @@ import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  guardarRegistroCoste,
+  PRECIOS,
+  calcularCosteClaudeUSD,
+} from '@/lib/costes'
 
 export const maxDuration = 120
 
@@ -68,6 +73,7 @@ async function analizarContenidoPropio(
 async function analizarCompetencia(
   supabase: ReturnType<typeof createAdminClient>,
   clientId: string,
+  registrarCoste: (query: string) => void,
 ): Promise<Array<{ competidor: string; temas: string[] }>> {
   // Cargar competidores editoriales con presencias web
   const { data: refs } = await supabase
@@ -93,13 +99,15 @@ async function analizarCompetencia(
     } catch { continue }
 
     // SerpApi: site:dominio
+    const serpQuery = `site:${dominio}`
     const data = await serpSearch({
       engine: 'google',
-      q: `site:${dominio}`,
+      q: serpQuery,
       num: '10',
       gl: 'es',
       hl: 'es',
     })
+    registrarCoste(serpQuery)
 
     const organicResults = (data.organic_results ?? []) as Array<{ title?: string; snippet?: string }>
     const temas = organicResults
@@ -116,6 +124,7 @@ async function analizarCompetencia(
 async function analizarTendencias(
   sector: string | null,
   descripcion: string | null,
+  registrarCoste: (query: string) => void,
 ): Promise<{ trending: string[]; preguntas: string[]; snippets: string[] }> {
   if (!sector) return { trending: [], preguntas: [], snippets: [] }
 
@@ -129,6 +138,7 @@ async function analizarTendencias(
     gl: 'es',
     hl: 'es',
   })
+  registrarCoste(query)
 
   const trending = ((orgData.organic_results ?? []) as Array<{ title?: string }>)
     .map((r) => r.title)
@@ -159,7 +169,7 @@ async function sintetizarConClaude(ctx: {
   contenidoPropio: { temas: string[]; titulos: string[] }
   competencia: Array<{ competidor: string; temas: string[] }>
   tendencias: { trending: string[]; preguntas: string[]; snippets: string[] }
-}): Promise<Record<string, unknown>> {
+}): Promise<{ resultado: Record<string, unknown>; tokens_input: number; tokens_output: number }> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const prompt = `Eres un estratega de contenidos experto. Analiza estos datos y genera un informe de oportunidades.
@@ -243,7 +253,11 @@ REGLAS:
   const jsonMatch = rawText.match(/\{[\s\S]*\}/)
   if (!jsonMatch) throw new Error('Claude no devolvio JSON valido')
 
-  return JSON.parse(jsonMatch[0]) as Record<string, unknown>
+  return {
+    resultado     : JSON.parse(jsonMatch[0]) as Record<string, unknown>,
+    tokens_input  : response.usage.input_tokens,
+    tokens_output : response.usage.output_tokens,
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -292,6 +306,21 @@ export async function POST(request: NextRequest) {
 
   console.log(`[Inspiracion] Sesion ${session.id} creada para ${cliente.nombre}`)
 
+  // Helper para registrar costes SerpApi fire-and-forget
+  const registrarCosteSerpApi = (query: string) => {
+    guardarRegistroCoste({
+      cliente_id    : client_id,
+      tipo_operacion: 'serpapi',
+      agente        : 'inspiracion',
+      modelo        : 'serpapi',
+      tokens_input  : 0,
+      tokens_output : 0,
+      unidades      : 1,
+      coste_usd     : PRECIOS.serpapi_busqueda,
+      metadatos     : { query, modulo: 'inspiracion' },
+    }).catch((e) => console.error('[Costes] Error registrando SerpApi (inspiracion):', e))
+  }
+
   try {
     // PASO 1 — Contenido propio
     console.log('[Inspiracion] Paso 1: Analizando contenido propio...')
@@ -300,17 +329,17 @@ export async function POST(request: NextRequest) {
 
     // PASO 2 — Competencia editorial
     console.log('[Inspiracion] Paso 2: Analizando competencia editorial...')
-    const competencia = await analizarCompetencia(supabase, client_id)
+    const competencia = await analizarCompetencia(supabase, client_id, registrarCosteSerpApi)
     console.log(`[Inspiracion] Paso 2 completado: ${competencia.length} competidores`)
 
     // PASO 3 — Tendencias
     console.log('[Inspiracion] Paso 3: Buscando tendencias del sector...')
-    const tendencias = await analizarTendencias(cliente.sector, cliente.descripcion)
+    const tendencias = await analizarTendencias(cliente.sector, cliente.descripcion, registrarCosteSerpApi)
     console.log(`[Inspiracion] Paso 3 completado: ${tendencias.trending.length} trending, ${tendencias.preguntas.length} preguntas`)
 
     // PASO 4 — Sintesis con Claude
     console.log('[Inspiracion] Paso 4: Sintetizando con Claude...')
-    const resultado = await sintetizarConClaude({
+    const { resultado, tokens_input, tokens_output } = await sintetizarConClaude({
       clienteNombre: cliente.nombre,
       clienteSector: cliente.sector,
       clienteDescripcion: cliente.descripcion,
@@ -319,6 +348,18 @@ export async function POST(request: NextRequest) {
       tendencias,
     })
     console.log('[Inspiracion] Paso 4 completado')
+
+    // Registrar coste Claude (fire-and-forget)
+    guardarRegistroCoste({
+      cliente_id    : client_id,
+      tipo_operacion: 'inspiracion',
+      agente        : 'inspiracion',
+      modelo        : 'claude-sonnet-4-5',
+      tokens_input,
+      tokens_output,
+      coste_usd     : calcularCosteClaudeUSD(tokens_input, tokens_output),
+      metadatos     : { session_id: session.id },
+    }).catch((e) => console.error('[Costes] Error registrando Claude (inspiracion):', e))
 
     // Guardar resultado
     await supabase

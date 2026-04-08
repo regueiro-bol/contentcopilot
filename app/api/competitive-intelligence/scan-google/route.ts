@@ -11,6 +11,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { guardarRegistroCoste, PRECIOS } from '@/lib/costes'
 
 export const maxDuration = 60
 
@@ -62,12 +63,14 @@ function isDomain(name: string): boolean {
 async function fetchGoogleAdsSingle(searchText: string): Promise<{
   ads: SerpApiAd[]
   error: string | null
+  queriesMade: number
 }> {
   const apiKey = process.env.SERPAPI_KEY
   if (!apiKey) {
     return {
       ads: [],
       error: 'SERPAPI_KEY no configurada. Consigue una clave en https://serpapi.com (100 búsquedas/mes gratis)',
+      queriesMade: 0,
     }
   }
 
@@ -88,8 +91,8 @@ async function fetchGoogleAdsSingle(searchText: string): Promise<{
 
     if (json.error) {
       const noResults = json.error.toLowerCase().includes("hasn't returned any results")
-      if (noResults) return { ads: [], error: null }
-      return { ads: [], error: `SerpApi error: ${json.error}` }
+      if (noResults) return { ads: [], error: null, queriesMade: 1 }
+      return { ads: [], error: `SerpApi error: ${json.error}`, queriesMade: 1 }
     }
 
     const ads = json.ad_creatives ?? []
@@ -102,9 +105,9 @@ async function fetchGoogleAdsSingle(searchText: string): Promise<{
       }
     }
 
-    return { ads, error: null }
+    return { ads, error: null, queriesMade: 1 }
   } catch (err) {
-    return { ads: [], error: err instanceof Error ? err.message : String(err) }
+    return { ads: [], error: err instanceof Error ? err.message : String(err), queriesMade: 0 }
   }
 }
 
@@ -118,10 +121,13 @@ async function fetchGoogleAdsSingle(searchText: string): Promise<{
 async function fetchGoogleAds(
   pageName: string,
   advertiserName: string | null,
-): Promise<{ ads: SerpApiAd[]; error: string | null }> {
+): Promise<{ ads: SerpApiAd[]; error: string | null; queriesMade: number }> {
+  let queriesMade = 0
+
   // 1. Búsqueda principal por page_name
-  const { ads: primaryAds, error: primaryError } = await fetchGoogleAdsSingle(pageName)
-  if (primaryError) return { ads: [], error: primaryError }
+  const { ads: primaryAds, error: primaryError, queriesMade: q1 } = await fetchGoogleAdsSingle(pageName)
+  queriesMade += q1
+  if (primaryError) return { ads: [], error: primaryError, queriesMade }
 
   const allAds = [...primaryAds]
   const seenIds = new Set(primaryAds.map((a) => a.ad_creative_id).filter(Boolean))
@@ -129,7 +135,8 @@ async function fetchGoogleAds(
   // 2. Si hay advertiser_name distinto al page_name → segunda búsqueda
   if (advertiserName && advertiserName.toLowerCase() !== pageName.toLowerCase()) {
     console.log(`[ci-scan-google] Búsqueda adicional por advertiser_name: "${advertiserName}"`)
-    const { ads: advAds } = await fetchGoogleAdsSingle(advertiserName)
+    const { ads: advAds, queriesMade: q2 } = await fetchGoogleAdsSingle(advertiserName)
+    queriesMade += q2
     for (const ad of advAds) {
       if (ad.ad_creative_id && seenIds.has(ad.ad_creative_id)) continue
       allAds.push(ad)
@@ -142,7 +149,8 @@ async function fetchGoogleAds(
     const withoutTld = pageName.replace(/\.[a-z]{2,}$/i, '')
     if (withoutTld !== pageName) {
       console.log(`[ci-scan-google] Fallback: buscando sin TLD "${withoutTld}"`)
-      const { ads: fallbackAds } = await fetchGoogleAdsSingle(withoutTld)
+      const { ads: fallbackAds, queriesMade: q3 } = await fetchGoogleAdsSingle(withoutTld)
+      queriesMade += q3
       for (const ad of fallbackAds) {
         if (ad.ad_creative_id && seenIds.has(ad.ad_creative_id)) continue
         allAds.push(ad)
@@ -151,8 +159,8 @@ async function fetchGoogleAds(
     }
   }
 
-  console.log(`[ci-scan-google] Total combinado para "${pageName}": ${allAds.length} ads únicos`)
-  return { ads: allAds, error: null }
+  console.log(`[ci-scan-google] Total combinado para "${pageName}": ${allAds.length} ads únicos (${queriesMade} queries SerpApi)`)
+  return { ads: allAds, error: null, queriesMade }
 }
 
 function extractCopyText(ad: SerpApiAd): string | null {
@@ -218,7 +226,22 @@ export async function POST(request: NextRequest) {
 
   for (const comp of competitors) {
     const advName = (comp.advertiser_name as string | null) ?? null
-    const { ads, error: fetchError } = await fetchGoogleAds(comp.page_name, advName)
+    const { ads, error: fetchError, queriesMade } = await fetchGoogleAds(comp.page_name, advName)
+
+    // Registrar coste SerpApi por queries realizadas (fire-and-forget)
+    if (queriesMade > 0) {
+      guardarRegistroCoste({
+        cliente_id    : client_id,
+        tipo_operacion: 'serpapi',
+        agente        : 'competitive_intelligence',
+        modelo        : 'serpapi',
+        tokens_input  : 0,
+        tokens_output : 0,
+        unidades      : queriesMade,
+        coste_usd     : PRECIOS.serpapi_busqueda * queriesMade,
+        metadatos     : { page_name: comp.page_name, engine: 'google_ads_transparency_center', queries: queriesMade },
+      }).catch((e) => console.error('[Costes] Error registrando SerpApi (ci-scan-google):', e))
+    }
 
     if (fetchError) {
       console.error(`[ci-scan-google] Error "${comp.page_name}":`, fetchError)

@@ -6,6 +6,18 @@ import { perplexityAdapter } from './llm-adapters/perplexity-adapter';
 import { analyzeResponse } from './analyzer';
 import { calculateScore, calculateGlobalScore } from './scorer';
 import type { LLMProvider } from './types';
+import {
+  guardarRegistroCoste,
+  type TipoOperacion,
+} from '@/lib/costes';
+
+// Mapa LLM → tipo_operacion + modelo
+const LLM_COSTE_META: Record<LLMProvider, { tipo: TipoOperacion; modelo: string }> = {
+  claude     : { tipo: 'georadar_claude',      modelo: 'claude-sonnet-4-20250514' },
+  gpt4       : { tipo: 'georadar_gpt4',        modelo: 'gpt-4o'                  },
+  gemini     : { tipo: 'georadar_gemini',      modelo: 'gemini-1.5-flash-8b'     },
+  perplexity : { tipo: 'georadar_perplexity',  modelo: 'sonar-pro'               },
+};
 
 const LLM_ADAPTERS: Record<LLMProvider, (query: string) => Promise<any>> = {
   claude: claudeAdapter,
@@ -129,6 +141,19 @@ export async function executeScan(scanId: string): Promise<void> {
         } else {
           console.log('[GEORadar] Resultado guardado:', llm, query.query);
         }
+
+        // Registrar coste por LLM en registros_costes
+        const meta = LLM_COSTE_META[llm];
+        guardarRegistroCoste({
+          cliente_id    : clienteIdScan,
+          tipo_operacion: meta.tipo,
+          agente        : 'georadar',
+          modelo        : meta.modelo,
+          tokens_input  : llmResponse.tokens_entrada,
+          tokens_output : llmResponse.tokens_salida,
+          coste_usd     : llmResponse.coste_usd,
+          metadatos     : { scan_id: scanId, query: query.query, llm },
+        }).catch((e) => console.error('[Costes] Error registrando coste GEORadar:', e));
 
         totalCoste += llmResponse.coste_usd;
         totalTokens += llmResponse.tokens_entrada + llmResponse.tokens_salida;

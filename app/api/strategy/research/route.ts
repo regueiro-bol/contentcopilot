@@ -11,6 +11,7 @@ import {
   type SearchVolumeItem,
   type CompetitorKeyword,
 } from '@/lib/dataforseo'
+import { guardarRegistroCoste, PRECIOS } from '@/lib/costes'
 import {
   getGSCKeywords,
   refreshAccessToken,
@@ -125,6 +126,20 @@ export async function POST(request: NextRequest) {
     try {
       ideas = await getKeywordIdeas(seedsLimpios)
       console.log(`[Research] keyword_ideas OK — ${ideas.length} resultados`)
+      // Registrar coste DataForSEO keyword_ideas (fire-and-forget)
+      if (ideas.length > 0) {
+        guardarRegistroCoste({
+          cliente_id    : cliente_id,
+          tipo_operacion: 'datasorseo',
+          agente        : 'strategy_research',
+          modelo        : 'datasorseo',
+          tokens_input  : 0,
+          tokens_output : 0,
+          unidades      : ideas.length,
+          coste_usd     : PRECIOS.datasorseo_keyword * ideas.length,
+          metadatos     : { endpoint: 'keyword_ideas', keywords_procesadas: ideas.length, session_id: sessionId },
+        }).catch((e) => console.error('[Costes] Error registrando DataForSEO keyword_ideas:', e))
+      }
     } catch (e) {
       console.error('[Research] Error en keyword_ideas:', e instanceof DataForSEOError ? e.message : e)
       // Continuamos aunque falle — intentamos con search_volume
@@ -136,6 +151,20 @@ export async function POST(request: NextRequest) {
     try {
       volumes = await getSearchVolume(seedsLimpios)
       console.log(`[Research] search_volume OK — ${volumes.length} resultados`)
+      // Registrar coste DataForSEO search_volume (fire-and-forget)
+      if (volumes.length > 0) {
+        guardarRegistroCoste({
+          cliente_id    : cliente_id,
+          tipo_operacion: 'datasorseo',
+          agente        : 'strategy_research',
+          modelo        : 'datasorseo',
+          tokens_input  : 0,
+          tokens_output : 0,
+          unidades      : volumes.length,
+          coste_usd     : PRECIOS.datasorseo_keyword * volumes.length,
+          metadatos     : { endpoint: 'search_volume', keywords_procesadas: volumes.length, session_id: sessionId },
+        }).catch((e) => console.error('[Costes] Error registrando DataForSEO search_volume:', e))
+      }
     } catch (e) {
       console.error('[Research] Error en search_volume:', e instanceof DataForSEOError ? e.message : e)
       // Continuamos aunque falle
@@ -216,6 +245,20 @@ export async function POST(request: NextRequest) {
         try {
           const compKws = await getCompetitorKeywords(domain)
           console.log(`[Research] Competidor ${domain}: ${compKws.length} keywords`)
+          // Registrar coste DataForSEO competitor keywords (fire-and-forget)
+          if (compKws.length > 0) {
+            guardarRegistroCoste({
+              cliente_id    : cliente_id,
+              tipo_operacion: 'datasorseo',
+              agente        : 'strategy_research',
+              modelo        : 'datasorseo',
+              tokens_input  : 0,
+              tokens_output : 0,
+              unidades      : compKws.length,
+              coste_usd     : PRECIOS.datasorseo_keyword * compKws.length,
+              metadatos     : { endpoint: 'competitor_keywords', domain, keywords_procesadas: compKws.length, session_id: sessionId },
+            }).catch((e) => console.error('[Costes] Error registrando DataForSEO competitor_keywords:', e))
+          }
           for (const ck of compKws) {
             const key = ck.keyword.toLowerCase().trim()
             if (!competitorMap.has(key)) {
