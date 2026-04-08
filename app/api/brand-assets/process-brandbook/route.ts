@@ -286,11 +286,16 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Límite de seguridad: 20 MB (PDFs muy grandes pueden exceder el contexto de Claude)
-  const MAX_PDF_BYTES = 20 * 1024 * 1024
+  // Límite real de la API de Claude para PDFs: 32 MB por documento.
+  const MAX_PDF_BYTES = 32 * 1024 * 1024
   if (pdfBuffer.length > MAX_PDF_BYTES) {
     return NextResponse.json(
-      { error: `El brand book pesa ${(pdfBuffer.length / 1024 / 1024).toFixed(1)} MB. El máximo soportado es 20 MB.` },
+      {
+        error:
+          `El brand book pesa ${(pdfBuffer.length / 1024 / 1024).toFixed(1)} MB. ` +
+          `El máximo soportado por Claude es 32 MB. ` +
+          `Comprime el PDF o divídelo en secciones antes de volver a procesarlo.`,
+      },
       { status: 413 },
     )
   }
