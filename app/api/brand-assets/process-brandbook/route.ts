@@ -22,6 +22,7 @@ import { revalidatePath } from 'next/cache'
 import { google, drive_v3 } from 'googleapis'
 import Anthropic from '@anthropic-ai/sdk'
 import type { DocumentBlockParam, TextBlockParam } from '@anthropic-ai/sdk/resources/messages/messages'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,6 +201,60 @@ async function extractBrandContextWithClaude(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Extracción con Gemini 2.5 Flash (soporta PDFs hasta 2 GB vía inlineData)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function extractBrandContextWithGemini(
+  pdfBuffer: Buffer,
+): Promise<ExtractedBrandContext> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY
+  if (!apiKey) throw new Error('GOOGLE_AI_API_KEY no configurada')
+
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    systemInstruction: EXTRACTION_SYSTEM_PROMPT,
+    generationConfig: {
+      responseMimeType: 'application/json',
+      maxOutputTokens: 8192,
+      temperature: 0.2,
+    },
+  })
+
+  const base64Pdf = pdfBuffer.toString('base64')
+
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        mimeType: 'application/pdf',
+        data: base64Pdf,
+      },
+    },
+    { text: EXTRACTION_USER_PROMPT },
+  ])
+
+  const raw = result.response.text().trim()
+  const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? null
+  const jsonStr = jsonMatch ? jsonMatch[1].trim() : raw
+
+  let parsed: ExtractedBrandContext
+  try {
+    parsed = JSON.parse(jsonStr) as ExtractedBrandContext
+  } catch {
+    throw new Error(`JSON inválido de Gemini: ${jsonStr.slice(0, 200)}`)
+  }
+
+  parsed.colors         = Array.isArray(parsed.colors)         ? parsed.colors         : []
+  parsed.typography     = Array.isArray(parsed.typography)     ? parsed.typography     : []
+  parsed.tone_of_voice  = parsed.tone_of_voice  ?? ''
+  parsed.style_keywords = Array.isArray(parsed.style_keywords) ? parsed.style_keywords : []
+  parsed.restrictions   = parsed.restrictions   ?? ''
+  parsed.raw_summary    = parsed.raw_summary    ?? ''
+
+  return parsed
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Handler principal
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -286,29 +341,55 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Límite real de la API de Claude para PDFs: 32 MB por documento.
-  const MAX_PDF_BYTES = 32 * 1024 * 1024
+  // Límite conservador. Gemini 2.5 Flash acepta hasta 2 GB vía inlineData
+  // (base64), pero el tamaño razonable para un brand book es 100 MB.
+  const MAX_PDF_BYTES = 100 * 1024 * 1024
   if (pdfBuffer.length > MAX_PDF_BYTES) {
     return NextResponse.json(
       {
         error:
           `El brand book pesa ${(pdfBuffer.length / 1024 / 1024).toFixed(1)} MB. ` +
-          `El máximo soportado por Claude es 32 MB. ` +
-          `Comprime el PDF o divídelo en secciones antes de volver a procesarlo.`,
+          `El máximo soportado es 100 MB. Comprime el PDF antes de volver a procesarlo.`,
       },
       { status: 413 },
     )
   }
 
-  // ── 5. Procesar con Claude ─────────────────────────────────────────────────
+  // ── 5. Procesar con IA (Gemini 2.5 Flash primero, Claude como fallback) ──
   let extracted: ExtractedBrandContext
+  let modelUsed = 'gemini-2.5-flash'
   try {
-    extracted = await extractBrandContextWithClaude(pdfBuffer)
-  } catch (err) {
-    return NextResponse.json(
-      { error: `Error procesando el brand book con IA: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 500 },
+    extracted = await extractBrandContextWithGemini(pdfBuffer)
+  } catch (geminiErr) {
+    console.warn(
+      '[process-brandbook] Gemini falló, intentando con Claude:',
+      geminiErr instanceof Error ? geminiErr.message : geminiErr,
     )
+    // Claude solo acepta hasta 32 MB
+    if (pdfBuffer.length > 32 * 1024 * 1024) {
+      return NextResponse.json(
+        {
+          error:
+            `Gemini no pudo procesar el PDF y el fallback de Claude no acepta PDFs > 32 MB. ` +
+            `Error original: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)}`,
+        },
+        { status: 500 },
+      )
+    }
+    try {
+      extracted = await extractBrandContextWithClaude(pdfBuffer)
+      modelUsed = 'claude-opus-4-5'
+    } catch (claudeErr) {
+      return NextResponse.json(
+        {
+          error:
+            `Error procesando el brand book con IA. ` +
+            `Gemini: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)}. ` +
+            `Claude: ${claudeErr instanceof Error ? claudeErr.message : String(claudeErr)}.`,
+        },
+        { status: 500 },
+      )
+    }
   }
 
   // ── 6. Guardar en brand_context (UPSERT por client_id) ────────────────────
@@ -356,6 +437,7 @@ export async function POST(request: NextRequest) {
       typography:     extracted.typography.length,
       style_keywords: extracted.style_keywords.length,
       pdf_size_kb:    Math.round(pdfBuffer.length / 1024),
+      model:          modelUsed,
     },
   })
 }
