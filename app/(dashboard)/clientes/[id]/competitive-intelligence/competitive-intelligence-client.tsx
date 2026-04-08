@@ -24,6 +24,7 @@ interface Props {
   initialCompetitors:   Competitor[]
   initialAds:           CompetitorAdRow[]
   latestReport:         CiReportRow | null
+  embedded?:            boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -690,6 +691,7 @@ export default function CompetitiveIntelligenceClient({
   initialCompetitors,
   initialAds,
   latestReport,
+  embedded = false,
 }: Props) {
   const router = useRouter()
   const [competitors, setCompetitors]       = useState<Competitor[]>(initialCompetitors)
@@ -775,12 +777,14 @@ export default function CompetitiveIntelligenceClient({
   }, [clientId, router])
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-      <ClienteSubNav
-        clientId={clientId}
-        clientNombre={clientNombre}
-        generationStatus={null}
-      />
+    <div className={embedded ? 'space-y-6' : 'max-w-6xl mx-auto px-4 py-6 space-y-6'}>
+      {!embedded && (
+        <ClienteSubNav
+          clientId={clientId}
+          clientNombre={clientNombre}
+          generationStatus={null}
+        />
+      )}
 
       {/* Header */}
       <div className="flex items-center gap-3">

@@ -1309,21 +1309,22 @@ export default function ClienteDetalleClient({
             </CardContent>
           </Card>
         </TabsContent>
-        {/* ── Tab 3: Competencia (Competencia editorial + Referentes) ── */}
+        {/* ── Tab 3: Competencia (Competencia + Referentes) ── */}
         <TabsContent value="competencia">
-          <Tabs defaultValue="editorial">
+          <Tabs defaultValue="competencia">
             <TabsList>
-              <TabsTrigger value="editorial">Competencia editorial</TabsTrigger>
+              <TabsTrigger value="competencia">Competencia</TabsTrigger>
               <TabsTrigger value="referentes">Referentes</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="editorial">
+            <TabsContent value="competencia">
               <CompetitiveIntelligenceClient
                 clientId={cliente.id}
                 clientNombre={cliente.nombre}
                 initialCompetitors={competitors}
                 initialAds={competitorAds}
                 latestReport={latestCiReport}
+                embedded
               />
             </TabsContent>
 
@@ -1384,6 +1385,7 @@ export default function ClienteDetalleClient({
             initialCompetitors={competitors}
             initialAds={competitorAds}
             latestReport={latestCiReport}
+            embedded
           />
         </TabsContent>
 
