@@ -4,13 +4,14 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { Button } from '@/components/ui/button';
 import { Settings, Radio } from 'lucide-react';
 import Link from 'next/link';
-import { ScanLauncher } from '@/components/georadar/ScanLauncher';
 import { PresenceScoreCard } from '@/components/georadar/PresenceScoreCard';
 import { LLMBreakdownChart } from '@/components/georadar/LLMBreakdownChart';
 import { NarrativaPanel } from '@/components/georadar/NarrativaPanel';
 import { CompetitorMatrix } from '@/components/georadar/CompetitorMatrix';
 import { FuentesPanel } from '@/components/georadar/FuentesPanel';
 import { RecomendacionesPanel } from '@/components/georadar/RecomendacionesPanel';
+import { RespuestasPanel } from '@/components/georadar/RespuestasPanel';
+import { ScanStatusZone } from '@/components/georadar/ScanStatusZone';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,32 +25,93 @@ export default async function GeoRadarClientePage({
 
   const supabase = createAdminClient();
 
-  const { data: cliente } = await supabase
-    .from('clientes')
-    .select('nombre')
-    .eq('id', params.clienteId)
-    .single();
+  const [
+    clienteRes,
+    configRes,
+    queriesRes,
+    refsRes,
+    seleccionRes,
+    ultimoScanRes,
+    scanActivoRes,
+  ] = await Promise.all([
+    supabase.from('clientes').select('nombre').eq('id', params.clienteId).single(),
+    supabase.from('georadar_configs').select('*').eq('cliente_id', params.clienteId).maybeSingle(),
+    supabase.from('georadar_queries').select('query').eq('cliente_id', params.clienteId).eq('activa', true),
+    supabase
+      .from('referencias_externas')
+      .select('id, nombre')
+      .eq('client_id', params.clienteId)
+      .eq('tipo', 'competidor_editorial')
+      .eq('activo', true),
+    supabase
+      .from('georadar_competidores_seleccion')
+      .select('referencia_id')
+      .eq('cliente_id', params.clienteId),
+    supabase
+      .from('georadar_scans')
+      .select('*')
+      .eq('cliente_id', params.clienteId)
+      .eq('estado', 'completado')
+      .order('fecha_scan', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('georadar_scans')
+      .select('*')
+      .eq('cliente_id', params.clienteId)
+      .in('estado', ['ejecutando', 'pendiente'])
+      .order('fecha_scan', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  // Cargar último scan completado directamente de georadar_scans
-  const { data: ultimoScan } = await supabase
-    .from('georadar_scans')
-    .select('*')
-    .eq('cliente_id', params.clienteId)
-    .eq('estado', 'completado')
-    .order('fecha_scan', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const cliente = clienteRes.data;
+  const config = configRes.data;
+  const ultimoScan = ultimoScanRes.data;
+  const scanActivo = scanActivoRes.data;
 
-  console.log('[GEORadar Page] ultimoScan:', JSON.stringify(ultimoScan)?.slice(0, 300));
+  const keywords = (queriesRes.data || []).map((q: any) => q.query).filter(Boolean);
 
-  const { data: scanActivo } = await supabase
-    .from('georadar_scans')
-    .select('*')
-    .eq('cliente_id', params.clienteId)
-    .eq('estado', 'ejecutando')
-    .maybeSingle();
+  // Competidores visibles = referencias editoriales activas filtradas por la selección.
+  // Si no hay filas en la pivote (virgen) → todos.
+  const refsAll = (refsRes.data || []) as Array<{ id: string; nombre: string }>;
+  const seleccionSet = new Set(((seleccionRes.data || []) as any[]).map(s => s.referencia_id));
+  const seleccionVirgen = seleccionSet.size === 0;
+  const competidores = refsAll
+    .filter(r => seleccionVirgen || seleccionSet.has(r.id))
+    .map(r => r.nombre)
+    .filter(Boolean);
+
+  const llms: string[] = (config?.llms || []) as string[];
 
   const score = ultimoScan?.score_global ? Number(ultimoScan.score_global) : null;
+
+  // Cargar resultados raw del último scan agrupados por query
+  let respuestasGrupos: Array<{ query: string; categoria?: string | null; resultados: Array<{ llm: string; respuesta_completa: string; menciona_marca: boolean; score: number | null }> }> = [];
+  if (ultimoScan) {
+    const { data: resultados } = await supabase
+      .from('georadar_resultados')
+      .select('llm, respuesta_completa, menciona_marca, score, query_id, georadar_queries(query, categoria)')
+      .eq('scan_id', ultimoScan.id);
+
+    const map = new Map<string, { query: string; categoria?: string | null; resultados: any[] }>();
+    for (const r of resultados ?? []) {
+      const q: any = (r as any).georadar_queries;
+      const key = (r as any).query_id ?? q?.query ?? 'sin-query';
+      if (!map.has(key)) {
+        map.set(key, { query: q?.query ?? 'Query sin título', categoria: q?.categoria ?? null, resultados: [] });
+      }
+      map.get(key)!.resultados.push({
+        llm: (r as any).llm,
+        respuesta_completa: (r as any).respuesta_completa ?? '',
+        menciona_marca: !!(r as any).menciona_marca,
+        score: (r as any).score != null ? Number((r as any).score) : null,
+      });
+    }
+    respuestasGrupos = Array.from(map.values());
+  }
+
+  const tieneConfig = !!config && (keywords.length > 0 || llms.length > 0);
 
   return (
     <div className="p-6 space-y-5">
@@ -76,14 +138,27 @@ export default async function GeoRadarClientePage({
               Configurar
             </Link>
           </Button>
-          <ScanLauncher
-            clienteId={params.clienteId}
-            scanActivo={scanActivo}
-          />
         </div>
       </div>
 
-      {!ultimoScan && !scanActivo && (
+      {/* Zona prominente: resumen de configuración + estado del scan */}
+      {tieneConfig && (
+        <ScanStatusZone
+          clienteId={params.clienteId}
+          clienteNombre={cliente?.nombre || 'Cliente'}
+          keywords={keywords}
+          competidores={competidores}
+          llms={llms}
+          scanActivo={scanActivo ? {
+            id: scanActivo.id,
+            estado: scanActivo.estado,
+            queries_completadas: scanActivo.queries_completadas,
+            total_queries: scanActivo.total_queries,
+          } : null}
+        />
+      )}
+
+      {!ultimoScan && !scanActivo && !tieneConfig && (
         <div className="text-center py-20 text-gray-400">
           <Radio className="h-10 w-10 mx-auto mb-3 opacity-30" />
           <p className="text-base mb-1">Sin datos todavía</p>
@@ -125,6 +200,8 @@ export default async function GeoRadarClientePage({
               />
             </div>
           </div>
+
+          <RespuestasPanel grupos={respuestasGrupos} />
         </>
       )}
     </div>

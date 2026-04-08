@@ -2,6 +2,43 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
+/**
+ * Carga los competidores disponibles desde referencias_externas
+ * (tipo=competidor_editorial, activo=true) con su URL web (si existe)
+ * desde referencia_presencias (plataforma='web').
+ */
+async function loadCompetidoresDisponibles(
+  supabase: ReturnType<typeof createAdminClient>,
+  clienteId: string
+) {
+  const { data: refs } = await supabase
+    .from('referencias_externas')
+    .select('id, nombre, categoria, created_at, referencia_presencias(url, handle, plataforma, activo)')
+    .eq('client_id', clienteId)
+    .eq('tipo', 'competidor_editorial')
+    .eq('activo', true)
+    .order('created_at', { ascending: true });
+
+  return (refs || []).map((r: any) => {
+    const webPres = (r.referencia_presencias || []).find(
+      (p: any) => p.plataforma === 'web' && p.activo && p.url
+    );
+    let dominio = '';
+    if (webPres?.url) {
+      try {
+        dominio = new URL(webPres.url).hostname.replace(/^www\./, '');
+      } catch { /* skip */ }
+    }
+    return {
+      id: r.id,
+      nombre: r.nombre,
+      categoria: r.categoria ?? null,
+      dominio,
+      web_url: webPres?.url ?? null,
+    };
+  });
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { clienteId: string } }
@@ -11,21 +48,29 @@ export async function GET(
 
   const supabase = createAdminClient();
 
-  const [clienteRes, configRes, queriesRes, competidoresRes, keywordsRes] = await Promise.all([
+  const [clienteRes, configRes, queriesRes, disponibles, seleccionRes, keywordsRes] = await Promise.all([
     supabase.from('clientes').select('id, nombre, sector, descripcion').eq('id', params.clienteId).single(),
     supabase.from('georadar_configs').select('*').eq('cliente_id', params.clienteId).single(),
     supabase.from('georadar_queries').select('*').eq('cliente_id', params.clienteId).eq('activa', true),
-    supabase.from('competitors').select('*').eq('client_id', params.clienteId),
+    loadCompetidoresDisponibles(supabase, params.clienteId),
+    supabase.from('georadar_competidores_seleccion').select('referencia_id').eq('cliente_id', params.clienteId),
     supabase.from('proyectos').select('keywords_objetivo').eq('cliente_id', params.clienteId).limit(1).single(),
   ]);
 
   const keywords = keywordsRes.data?.keywords_objetivo || [];
 
+  // Si no hay seleccion guardada aún → null (el front pre-marcará todos).
+  // Si hay al menos una fila → devolver el array (puede ser subset o vacío si deseleccionó todos).
+  const seleccionIds = seleccionRes.data ? (seleccionRes.data as any[]).map(s => s.referencia_id) : null;
+  const virgen = seleccionRes.data === null || (seleccionRes.data as any[]).length === 0;
+
   return NextResponse.json({
     cliente: clienteRes.data,
     config: configRes.data,
     queries: queriesRes.data || [],
-    competidores: competidoresRes.data || [],
+    competidores_disponibles: disponibles,
+    competidores_seleccionados: seleccionIds ?? [],
+    seleccion_virgen: virgen, // front pre-marca todos si true
     keywords,
   });
 }
@@ -39,7 +84,7 @@ export async function POST(
 
   const supabase = createAdminClient();
   const body = await req.json();
-  const { paquete, llms, max_queries, frecuencia, queries, competidores } = body;
+  const { paquete, llms, max_queries, frecuencia, queries, competidores_seleccionados } = body;
 
   const { data: config, error } = await supabase
     .from('georadar_configs')
@@ -57,13 +102,11 @@ export async function POST(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   if (queries?.length) {
-    // Primero desactivar todas
     await supabase
       .from('georadar_queries')
       .update({ activa: false })
       .eq('cliente_id', params.clienteId);
 
-    // Luego upsert de las que vienen del formulario
     for (const q of queries.filter((q: any) => q.query.trim())) {
       const { data: existente } = await supabase
         .from('georadar_queries')
@@ -91,40 +134,28 @@ export async function POST(
     }
   }
 
-  // Guardar competidores en tabla competitors
-  if (Array.isArray(competidores)) {
-    // Desactivar competidores existentes de tipo georadar
-    // (no tocamos los de platform meta/google que son de competitive intelligence)
-    const { data: existentes } = await supabase
-      .from('competitors')
-      .select('id, page_name')
-      .eq('client_id', params.clienteId);
+  // Selección de competidores: reemplazo completo de la pivote
+  if (Array.isArray(competidores_seleccionados)) {
+    await supabase
+      .from('georadar_competidores_seleccion')
+      .delete()
+      .eq('cliente_id', params.clienteId);
 
-    const nombresNuevos = new Set(
-      competidores.filter((c: any) => c.nombre?.trim()).map((c: any) => c.nombre.trim().toLowerCase()),
-    );
+    const filas = competidores_seleccionados
+      .filter((refId: any) => typeof refId === 'string' && refId.length)
+      .map((refId: string) => ({
+        cliente_id: params.clienteId,
+        referencia_id: refId,
+      }));
 
-    // Eliminar los que ya no estan en la lista
-    for (const ex of existentes ?? []) {
-      if (!nombresNuevos.has(ex.page_name.toLowerCase())) {
-        await supabase.from('competitors').delete().eq('id', ex.id);
+    if (filas.length) {
+      const { error: selErr } = await supabase
+        .from('georadar_competidores_seleccion')
+        .insert(filas);
+      if (selErr) {
+        console.error('[GEORadar Config] Error guardando selección de competidores:', selErr.message);
       }
     }
-
-    // Upsert de los nuevos/existentes
-    const nombresExistentes = new Set((existentes ?? []).map((e) => e.page_name.toLowerCase()));
-    for (const c of competidores.filter((c: any) => c.nombre?.trim())) {
-      if (!nombresExistentes.has(c.nombre.trim().toLowerCase())) {
-        await supabase.from('competitors').insert({
-          client_id: params.clienteId,
-          platform: 'google',
-          page_name: c.nombre.trim(),
-          active: true,
-        });
-      }
-    }
-
-    console.log(`[GEORadar Config] Competidores guardados: ${competidores.length}`);
   }
 
   return NextResponse.json({ ok: true });

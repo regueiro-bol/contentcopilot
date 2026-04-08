@@ -4,11 +4,19 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2, Download, AlertTriangle, ClipboardList } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Sparkles, Loader2, AlertTriangle, ClipboardList, Play, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 
 const LLMS_DISPONIBLES = ['claude', 'gpt4', 'gemini', 'perplexity'];
 const CATEGORIAS = ['marca', 'categoria', 'competidor', 'producto'];
+
+type CompDisponible = {
+  id: string;
+  nombre: string;
+  categoria: string | null;
+  dominio: string;
+  web_url: string | null;
+};
 
 export default function GeoRadarConfigurarPage() {
   const params = useParams();
@@ -17,6 +25,7 @@ export default function GeoRadarConfigurarPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [lanzando, setLanzando] = useState(false);
   const [sugiriendo, setSugiriendo] = useState(false);
   const [cliente, setCliente] = useState<any>(null);
 
@@ -24,9 +33,9 @@ export default function GeoRadarConfigurarPage() {
   const [maxQueries, setMaxQueries] = useState(30);
   const [frecuencia, setFrecuencia] = useState('mensual');
   const [queries, setQueries] = useState<Array<{ query: string; categoria: string }>>([]);
-  const [competidores, setCompetidores] = useState<Array<{ nombre: string; dominio: string; aliases: string }>>([]);
-  const [importando, setImportando] = useState(false);
-  const [importMsg, setImportMsg] = useState<{ text: string; tipo: 'ok' | 'error' } | null>(null);
+
+  const [competidoresDisponibles, setCompetidoresDisponibles] = useState<CompDisponible[]>([]);
+  const [competidoresSeleccionados, setCompetidoresSeleccionados] = useState<Set<string>>(new Set());
   const [guardado, setGuardado] = useState(false);
 
   useEffect(() => {
@@ -51,13 +60,17 @@ export default function GeoRadarConfigurarPage() {
           categoria: 'categoria',
         })));
       }
-      if (configData.competidores?.length) {
-        setCompetidores(configData.competidores.map((c: any) => ({
-          nombre: c.nombre || c.name || '',
-          dominio: c.website || c.dominio || '',
-          aliases: Array.isArray(c.aliases) ? c.aliases.join(', ') : '',
-        })));
+
+      const disponibles: CompDisponible[] = configData.competidores_disponibles || [];
+      setCompetidoresDisponibles(disponibles);
+
+      // Si es virgen → pre-marcar todos. Si no → usar la selección guardada.
+      if (configData.seleccion_virgen) {
+        setCompetidoresSeleccionados(new Set(disponibles.map(d => d.id)));
+      } else {
+        setCompetidoresSeleccionados(new Set(configData.competidores_seleccionados || []));
       }
+
       setLoading(false);
     }
     cargar();
@@ -81,72 +94,21 @@ export default function GeoRadarConfigurarPage() {
     setQueries(prev => prev.filter((_, idx) => idx !== i));
   }
 
-  function addCompetidor() {
-    setCompetidores(prev => [...prev, { nombre: '', dominio: '', aliases: '' }]);
+  function toggleCompetidor(refId: string) {
+    setCompetidoresSeleccionados(prev => {
+      const next = new Set(prev);
+      if (next.has(refId)) next.delete(refId);
+      else next.add(refId);
+      return next;
+    });
   }
 
-  function updateCompetidor(i: number, field: string, value: string) {
-    setCompetidores(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c));
+  function selectAll() {
+    setCompetidoresSeleccionados(new Set(competidoresDisponibles.map(c => c.id)));
   }
 
-  function removeCompetidor(i: number) {
-    setCompetidores(prev => prev.filter((_, idx) => idx !== i));
-  }
-
-  async function importarCompetidores() {
-    setImportando(true);
-    setImportMsg(null);
-    try {
-      const res = await fetch(`/api/clientes/${clienteId}/referencias`);
-      if (!res.ok) throw new Error('Error cargando referencias');
-      const { referencias } = await res.json() as {
-        referencias: Array<{
-          nombre: string;
-          tipo: string;
-          activo: boolean;
-          presencias: Array<{ plataforma: string; url: string | null }>;
-        }>;
-      };
-
-      // Filtrar competidores editoriales/publicitarios con URL web
-      const competidoresRef = referencias.filter(
-        (r) => r.activo && (r.tipo === 'competidor_editorial' || r.tipo === 'competidor_publicitario')
-      );
-
-      if (competidoresRef.length === 0) {
-        setImportMsg({ text: 'no_refs', tipo: 'error' });
-        return;
-      }
-
-      // Extraer dominios unicos
-      const dominiosExistentes = new Set(competidores.map((c) => c.dominio.toLowerCase()).filter(Boolean));
-      let importados = 0;
-
-      for (const ref of competidoresRef) {
-        const webPres = (ref.presencias ?? []).find((p) => p.plataforma === 'web' && p.url);
-        let dominio = '';
-        if (webPres?.url) {
-          try { dominio = new URL(webPres.url).hostname.replace('www.', ''); } catch { /* skip */ }
-        }
-
-        if (dominio && !dominiosExistentes.has(dominio.toLowerCase())) {
-          setCompetidores((prev) => [...prev, { nombre: ref.nombre, dominio, aliases: '' }]);
-          dominiosExistentes.add(dominio.toLowerCase());
-          importados++;
-        } else if (!dominio && !dominiosExistentes.has(ref.nombre.toLowerCase())) {
-          // Sin URL web — anadir solo con nombre
-          setCompetidores((prev) => [...prev, { nombre: ref.nombre, dominio: '', aliases: '' }]);
-          dominiosExistentes.add(ref.nombre.toLowerCase());
-          importados++;
-        }
-      }
-
-      setImportMsg({ text: `${importados} competidor${importados !== 1 ? 'es' : ''} importado${importados !== 1 ? 's' : ''}`, tipo: 'ok' });
-    } catch {
-      setImportMsg({ text: 'Error importando competidores', tipo: 'error' });
-    } finally {
-      setImportando(false);
-    }
+  function selectNone() {
+    setCompetidoresSeleccionados(new Set());
   }
 
   async function sugerirQueriesIA() {
@@ -166,25 +128,23 @@ export default function GeoRadarConfigurarPage() {
     setSugiriendo(false);
   }
 
+  function buildPayload() {
+    return {
+      paquete: 'personalizado',
+      llms,
+      max_queries: maxQueries,
+      frecuencia,
+      queries: queries.filter(q => q.query.trim()),
+      competidores_seleccionados: Array.from(competidoresSeleccionados),
+    };
+  }
+
   async function guardar() {
     setSaving(true);
-    console.log('[GEORadar Config] Guardando competidores:', competidores);
     const res = await fetch(`/api/georadar/${clienteId}/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        paquete: 'personalizado',
-        llms,
-        max_queries: maxQueries,
-        frecuencia,
-        queries: queries.filter(q => q.query.trim()),
-        competidores: competidores
-          .filter(c => c.nombre.trim())
-          .map(c => ({
-            ...c,
-            aliases: c.aliases.split(',').map(a => a.trim()).filter(Boolean),
-          })),
-      }),
+      body: JSON.stringify(buildPayload()),
     });
     setSaving(false);
     if (res.ok) {
@@ -193,9 +153,43 @@ export default function GeoRadarConfigurarPage() {
     }
   }
 
+  async function lanzarScan() {
+    setLanzando(true);
+    try {
+      await fetch(`/api/georadar/${clienteId}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload()),
+      });
+
+      const periodo = new Date().toISOString().slice(0, 7);
+      const res = await fetch('/api/georadar/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clienteId, periodo }),
+      });
+      const data = await res.json();
+
+      if (data.scan_id) {
+        fetch('/api/georadar/scan/ejecutar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scanId: data.scan_id }),
+        }).catch(console.error);
+      }
+
+      router.push(`/georadar/${clienteId}`);
+    } catch (e) {
+      console.error('[GEORadar] Error lanzando scan:', e);
+      setLanzando(false);
+    }
+  }
+
   if (loading) {
     return <div className="p-6 text-sm text-gray-400">Cargando...</div>;
   }
+
+  const totalCompetidores = competidoresSeleccionados.size;
 
   return (
     <div className="p-6 space-y-5 max-w-3xl">
@@ -212,19 +206,16 @@ export default function GeoRadarConfigurarPage() {
         </div>
       </div>
 
-      {/* Banner de guardado exitoso */}
       {guardado && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-3">
           <div className="flex items-center gap-2 text-sm text-emerald-800 font-medium">
             <svg className="h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            Configuracion guardada correctamente
+            Configuración guardada correctamente
           </div>
           <div className="flex items-center gap-3">
-            <Button asChild className="bg-violet-600 hover:bg-violet-700 gap-2">
-              <Link href={`/georadar/${clienteId}`}>
-                Lanzar scan ahora
-                <ArrowLeft className="h-4 w-4 rotate-180" />
-              </Link>
+            <Button onClick={lanzarScan} disabled={lanzando} className="bg-violet-600 hover:bg-violet-700 gap-2">
+              {lanzando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              Lanzar scan ahora
             </Button>
             <span className="text-xs text-gray-400">
               Actualizado {new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
@@ -361,77 +352,83 @@ export default function GeoRadarConfigurarPage() {
         </CardContent>
       </Card>
 
-      {/* Paso 3 — Competidores */}
+      {/* Paso 3 — Competidores (selección desde Cliente / Competencia) */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wide">
               Paso 3 — Competidores
+              <span className="ml-2 font-normal text-gray-300">
+                {totalCompetidores}/{competidoresDisponibles.length} seleccionados
+              </span>
             </CardTitle>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={importarCompetidores} disabled={importando} className="text-xs gap-1">
-                {importando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-                Importar del cliente
-              </Button>
-              <Button variant="outline" size="sm" onClick={addCompetidor} className="text-xs">
-                <Plus className="h-3 w-3 mr-1" />
-                Añadir
+              {competidoresDisponibles.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={selectAll}
+                    className="text-xs text-gray-500 hover:text-violet-600"
+                  >
+                    Todos
+                  </button>
+                  <span className="text-gray-300">·</span>
+                  <button
+                    type="button"
+                    onClick={selectNone}
+                    className="text-xs text-gray-500 hover:text-violet-600"
+                  >
+                    Ninguno
+                  </button>
+                </>
+              )}
+              <Button variant="outline" size="sm" asChild className="text-xs gap-1">
+                <Link href={`/clientes/${clienteId}?tab=competencia`}>
+                  <ExternalLink className="h-3 w-3" />
+                  Gestionar
+                </Link>
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {importMsg && (
-            importMsg.text === 'no_refs' ? (
-              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
-                No hay competidores configurados en la ficha del cliente.{' '}
-                <Link href={`/clientes/${clienteId}?tab=referencias`} className="underline font-medium hover:text-amber-900">
-                  Configurar referencias
+          {competidoresDisponibles.length === 0 ? (
+            <div className="text-sm text-gray-400 text-center py-6 space-y-2">
+              <p>No hay competidores editoriales dados de alta para este cliente.</p>
+              <Button variant="outline" size="sm" asChild className="gap-1">
+                <Link href={`/clientes/${clienteId}?tab=competencia`}>
+                  <Plus className="h-3 w-3" />
+                  Añadir en Cliente / Competencia
                 </Link>
-              </div>
-            ) : importMsg.tipo === 'ok' ? (
-              <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-2">
-                {importMsg.text}
-              </div>
-            ) : (
-              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-2">
-                {importMsg.text}
-              </div>
-            )
-          )}
-          {competidores.length === 0 && !importMsg && (
-            <p className="text-sm text-gray-400 text-center py-4">
-              Sin competidores. Añade manualmente o importa desde la ficha del cliente.
-            </p>
-          )}
-          {competidores.map((c, i) => (
-            <div key={i} className="flex gap-2 items-center">
-              <input
-                type="text"
-                value={c.nombre}
-                onChange={e => updateCompetidor(i, 'nombre', e.target.value)}
-                placeholder="Nombre"
-                className="w-36 text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
-              />
-              <input
-                type="text"
-                value={c.dominio}
-                onChange={e => updateCompetidor(i, 'dominio', e.target.value)}
-                placeholder="dominio.com"
-                className="w-40 text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
-              />
-              <input
-                type="text"
-                value={c.aliases}
-                onChange={e => updateCompetidor(i, 'aliases', e.target.value)}
-                placeholder="alias1, alias2"
-                className="flex-1 text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
-              />
-              <button onClick={() => removeCompetidor(i)} className="text-gray-300 hover:text-red-400">
-                <Trash2 className="h-4 w-4" />
-              </button>
+              </Button>
             </div>
-          ))}
+          ) : (
+            <div className="space-y-1.5">
+              {competidoresDisponibles.map(comp => (
+                <label
+                  key={comp.id}
+                  className="flex items-center gap-3 p-2 border border-gray-200 rounded-md cursor-pointer hover:bg-gray-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={competidoresSeleccionados.has(comp.id)}
+                    onChange={() => toggleCompetidor(comp.id)}
+                    className="accent-violet-600"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{comp.nombre}</p>
+                    {(comp.dominio || comp.categoria) && (
+                      <p className="text-xs text-gray-400 truncate">
+                        {comp.dominio}
+                        {comp.dominio && comp.categoria ? ' · ' : ''}
+                        {comp.categoria}
+                      </p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -439,10 +436,9 @@ export default function GeoRadarConfigurarPage() {
       {(() => {
         const queriesValidas = queries.filter((q) => q.query.trim()).length;
         const llmsActivos = llms.length;
-        const compsValidos = competidores.filter((c) => c.nombre.trim()).length;
+        const compsValidos = totalCompetidores;
         const totalQueries = queriesValidas * llmsActivos;
-        // Coste estimado: ~$0.003 por query-LLM (prompt + respuesta + analisis)
-        const costeEst = totalQueries * 0.003;
+        const costeEst = totalQueries * 0.002;
         const llmLabels: Record<string, string> = { claude: 'Claude', gpt4: 'GPT-4', gemini: 'Gemini', perplexity: 'Perplexity' };
 
         return (
@@ -457,7 +453,7 @@ export default function GeoRadarConfigurarPage() {
                 <span className="text-gray-800 font-medium">{cliente?.nombre ?? '—'}</span>
 
                 <span className="text-gray-500">Keywords ({queriesValidas})</span>
-                <span className="text-gray-800 truncate" title={queries.filter((q) => q.query.trim()).map((q) => q.query).join(', ')}>
+                <span className="text-gray-800 truncate">
                   {queriesValidas > 0
                     ? queries.filter((q) => q.query.trim()).map((q) => q.query).slice(0, 3).join(', ') + (queriesValidas > 3 ? '...' : '')
                     : '—'}
@@ -465,9 +461,7 @@ export default function GeoRadarConfigurarPage() {
 
                 <span className="text-gray-500">Competidores ({compsValidos})</span>
                 <span className="text-gray-800 truncate">
-                  {compsValidos > 0
-                    ? competidores.filter((c) => c.nombre.trim()).map((c) => c.dominio || c.nombre).slice(0, 3).join(', ') + (compsValidos > 3 ? '...' : '')
-                    : '—'}
+                  {compsValidos > 0 ? `${compsValidos} seleccionados` : '—'}
                 </span>
 
                 <span className="text-gray-500">LLMs activos ({llmsActivos})</span>
@@ -475,7 +469,7 @@ export default function GeoRadarConfigurarPage() {
 
                 <span className="text-gray-500">Queries totales</span>
                 <span className="text-gray-800 font-semibold">
-                  {totalQueries} <span className="font-normal text-gray-400">({queriesValidas} keywords × {llmsActivos} LLMs)</span>
+                  {totalQueries} <span className="font-normal text-gray-400">({queriesValidas} × {llmsActivos} LLMs)</span>
                 </span>
 
                 <span className="text-gray-500">Coste estimado</span>
@@ -485,7 +479,7 @@ export default function GeoRadarConfigurarPage() {
               {compsValidos === 0 && (
                 <div className="flex items-center gap-1.5 mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Sin competidores configurados. El analisis no podra comparar tu presencia con la competencia.
+                  Sin competidores — el análisis no podrá comparar presencia.
                 </div>
               )}
 
@@ -500,10 +494,18 @@ export default function GeoRadarConfigurarPage() {
         );
       })()}
 
-      <div className="flex justify-end">
-        <Button onClick={guardar} disabled={saving} className="bg-violet-600 hover:bg-violet-700">
+      <div className="flex justify-end gap-2">
+        <Button onClick={guardar} disabled={saving} variant="outline">
           <Save className="h-4 w-4 mr-2" />
           {saving ? 'Guardando...' : 'Guardar configuración'}
+        </Button>
+        <Button
+          onClick={lanzarScan}
+          disabled={lanzando || queries.filter(q => q.query.trim()).length === 0}
+          className="bg-violet-600 hover:bg-violet-700"
+        >
+          {lanzando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+          Lanzar scan ahora
         </Button>
       </div>
     </div>

@@ -39,6 +39,9 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
   "fuentes_citadas": string[]
 }
 
+"fuentes_citadas": array de URLs o dominios reales citados en el texto (ejemplo: wikipedia.org, boe.es).
+Si el texto usa referencias numéricas como [1], [2] en lugar de URLs, devuelve array vacío [].
+
 No incluyas explicaciones ni markdown. Solo JSON.`;
 
   const response = await anthropic.messages.create({

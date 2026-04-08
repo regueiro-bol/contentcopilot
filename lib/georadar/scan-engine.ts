@@ -36,11 +36,38 @@ export async function executeScan(scanId: string): Promise<void> {
     .eq('config_id', scan.config_id)
     .eq('activa', true);
 
-  // Competidores: intentar tabla competitors (competitive intelligence)
-  const { data: competidores } = await supabase
-    .from('competitors')
-    .select('*')
-    .eq('client_id', scan.georadar_configs.cliente_id);
+  // Competidores: leer referencias_externas (tipo=competidor_editorial, activo=true)
+  // y filtrar por la selección guardada en georadar_competidores_seleccion.
+  // Si no hay selección (virgen) → usar todos los competidores editoriales activos.
+  const clienteIdScan = scan.georadar_configs.cliente_id;
+
+  const { data: seleccionRows } = await supabase
+    .from('georadar_competidores_seleccion')
+    .select('referencia_id')
+    .eq('cliente_id', clienteIdScan);
+
+  const { data: refs } = await supabase
+    .from('referencias_externas')
+    .select('id, nombre, referencia_presencias(url, plataforma, activo)')
+    .eq('client_id', clienteIdScan)
+    .eq('tipo', 'competidor_editorial')
+    .eq('activo', true);
+
+  const seleccionSet = new Set((seleccionRows || []).map((s: any) => s.referencia_id));
+  const seleccionVirgen = seleccionSet.size === 0;
+
+  const competidores = (refs || [])
+    .filter((r: any) => seleccionVirgen || seleccionSet.has(r.id))
+    .map((r: any) => {
+      const webPres = (r.referencia_presencias || []).find(
+        (p: any) => p.plataforma === 'web' && p.activo && p.url
+      );
+      let dominio: string | null = null;
+      if (webPres?.url) {
+        try { dominio = new URL(webPres.url).hostname.replace(/^www\./, ''); } catch { /* skip */ }
+      }
+      return { nombre: r.nombre, dominio, aliases: [] as string[] };
+    });
 
   const clienteNombre = scan.georadar_configs.clientes.nombre;
   const llmsActivos = (scan.georadar_configs.llms || []) as LLMProvider[];

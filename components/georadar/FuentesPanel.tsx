@@ -5,7 +5,13 @@ interface Props {
 }
 
 export function FuentesPanel({ topFuentes }: Props) {
-  const max = topFuentes[0]?.frecuencia || 1;
+  const fuentesValidas = (topFuentes || []).filter(f =>
+    f.url &&
+    f.url.includes('.') &&
+    !f.url.match(/^\[?\d+\]?$/) &&
+    f.url.length > 4
+  );
+  const max = fuentesValidas[0]?.frecuencia || 1;
 
   return (
     <Card className="h-full">
@@ -15,10 +21,12 @@ export function FuentesPanel({ topFuentes }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {topFuentes.length === 0 && (
-          <p className="text-sm text-gray-400 text-center py-4">Sin fuentes detectadas</p>
+        {fuentesValidas.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-4">
+            Los LLMs no citaron fuentes externas en este scan.
+          </p>
         )}
-        {topFuentes.map((fuente, i) => (
+        {fuentesValidas.map((fuente, i) => (
           <div key={i} className="flex items-center gap-2">
             <span className="text-xs text-gray-600 truncate flex-1">{fuente.url}</span>
             <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden shrink-0">
