@@ -98,7 +98,13 @@ function adsButtonLabel(plat: string): string {
 // Componente principal
 // ─────────────────────────────────────────────────────────────
 
-export default function ReferenciasTab({ clienteId }: { clienteId: string }) {
+export default function ReferenciasTab({
+  clienteId,
+  hidePublicitaria = false,
+}: {
+  clienteId: string
+  hidePublicitaria?: boolean
+}) {
   const [refs, setRefs]           = useState<Referencia[]>([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
@@ -159,7 +165,7 @@ export default function ReferenciasTab({ clienteId }: { clienteId: string }) {
     <div className="space-y-4">
       {error && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2"><AlertCircle className="h-4 w-4" /> {error}</div>}
 
-      {TIPOS_ORDER.map((tipo) => {
+      {TIPOS_ORDER.filter((t) => !(hidePublicitaria && t === 'competidor_publicitario')).map((tipo) => {
         const cfg = TIPO_CONFIG[tipo], items = refs.filter((r) => r.tipo === tipo), isOpen = !collapsed.has(tipo)
         return (
           <div key={tipo} className="rounded-xl border border-gray-200 bg-white overflow-hidden">

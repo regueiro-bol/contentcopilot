@@ -1309,9 +1309,10 @@ export default function ClienteDetalleClient({
             </CardContent>
           </Card>
         </TabsContent>
-        {/* ── Tab 3: Competencia (gestión de competidores + referentes manuales) ── */}
+        {/* ── Tab 3: Competencia (referentes manuales + gestión de competidores) ── */}
         <TabsContent value="competencia">
-          <div className="space-y-6">
+          <div className="space-y-4">
+            <ReferenciasTab clienteId={cliente.id} hidePublicitaria />
             <CompetitiveIntelligenceClient
               clientId={cliente.id}
               clientNombre={cliente.nombre}
@@ -1320,8 +1321,8 @@ export default function ClienteDetalleClient({
               latestReport={latestCiReport}
               embedded
               manageOnly
+              sectionTitle="Competencia publicitaria"
             />
-            <ReferenciasTab clienteId={cliente.id} />
           </div>
         </TabsContent>
 

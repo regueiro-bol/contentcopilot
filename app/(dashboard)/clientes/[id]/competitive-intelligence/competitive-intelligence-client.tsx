@@ -29,6 +29,8 @@ interface Props {
   manageOnly?:          boolean
   /** Solo lectura de competidores: oculta añadir/editar/eliminar, deja escaneo y reports. */
   readOnlyCompetitors?: boolean
+  /** Texto del título de la sección de competidores. */
+  sectionTitle?:        string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,6 +74,7 @@ function CompetidoresSection({
   scanningGoogle,
   hideScanButtons = false,
   hideCrudButtons = false,
+  sectionTitle = 'Competidores monitorizados',
 }: {
   clientId:       string
   competitors:    Competitor[]
@@ -83,6 +86,7 @@ function CompetidoresSection({
   scanningGoogle: boolean
   hideScanButtons?: boolean
   hideCrudButtons?: boolean
+  sectionTitle?:    string
 }) {
   const [showForm, setShowForm]   = useState(false)
   const [pageName, setPageName]   = useState('')
@@ -128,7 +132,7 @@ function CompetidoresSection({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Building2 className="h-5 w-5 text-indigo-600" />
-          <h2 className="text-base font-semibold text-gray-900">Competidores monitorizados</h2>
+          <h2 className="text-base font-semibold text-gray-900">{sectionTitle}</h2>
           <Badge className="bg-gray-100 text-gray-600 border-0 text-xs">{competitors.length}</Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -710,6 +714,7 @@ export default function CompetitiveIntelligenceClient({
   embedded = false,
   manageOnly = false,
   readOnlyCompetitors = false,
+  sectionTitle,
 }: Props) {
   const router = useRouter()
   const [competitors, setCompetitors]       = useState<Competitor[]>(initialCompetitors)
@@ -805,6 +810,7 @@ export default function CompetitiveIntelligenceClient({
       )}
 
       {/* Header */}
+      {!manageOnly && (
       <div className="flex items-center gap-3">
         <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center">
           <BarChart2 className="h-5 w-5 text-white" />
@@ -814,6 +820,7 @@ export default function CompetitiveIntelligenceClient({
           <p className="text-sm text-gray-500">Monitoriza los anuncios de tu competencia en Meta y Google</p>
         </div>
       </div>
+      )}
 
       {/* Sección competidores */}
       <CompetidoresSection
@@ -833,6 +840,7 @@ export default function CompetitiveIntelligenceClient({
         scanningGoogle={scanningGoogle}
         hideScanButtons={manageOnly}
         hideCrudButtons={readOnlyCompetitors}
+        sectionTitle={sectionTitle}
       />
 
       {!manageOnly && (
