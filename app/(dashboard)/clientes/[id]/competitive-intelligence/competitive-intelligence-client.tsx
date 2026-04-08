@@ -818,11 +818,26 @@ export default function CompetitiveIntelligenceClient({
         details:             Array<{ page_name: string; ads_found: number; error?: string }>
       }
       setToasts((prev) => prev.filter((t) => t.id !== tid))
-      const errors = data.details.filter((d) => d.error)
-      if (errors.length > 0) {
+
+      const errors    = data.details.filter((d) => d.error)
+      const hasErrors = errors.length > 0
+      const hasAds    = data.ads_found > 0
+
+      if (hasErrors && !hasAds) {
+        // Todos fallaron y no hay ads
         addToast(`Google scan: ${errors[0].error}`, 'error')
+      } else if (hasErrors && hasAds) {
+        // Scan parcial: algunos fallaron pero otros encontraron ads
+        addToast(`Google scan · ${data.ads_found} ads · ${errors.length} competidor(es) con error`, 'success')
+        router.refresh()
       } else {
-        addToast(`Google scan · ${data.ads_found} ads encontrados · ${data.ads_new} nuevos`, 'success')
+        // Todo bien
+        addToast(
+          data.ads_found > 0
+            ? `Google scan · ${data.ads_found} ads encontrados · ${data.ads_new} nuevos`
+            : `Google scan completado · 0 anuncios activos encontrados`,
+          'success',
+        )
         router.refresh()
       }
     } else {

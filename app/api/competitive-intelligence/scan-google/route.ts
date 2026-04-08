@@ -74,12 +74,13 @@ async function fetchGoogleAdsSingle(searchText: string): Promise<{
   const mode = isDomain(searchText) ? 'dominio' : 'nombre'
   console.log(`[ci-scan-google] Buscando "${searchText}" por ${mode}`)
 
+  // Parámetro correcto para Google Ads Transparency Center: "query" (no "text")
+  // Ref: https://serpapi.com/google-ads-transparency-center-api
   const params = new URLSearchParams({
     engine:  'google_ads_transparency_center',
     api_key: apiKey,
-    text:    searchText,
-    region:  '2724',  // España
-    num:     '20',
+    query:   searchText,
+    region:  '2724',  // España (código de región Google Ads)
   })
 
   try {
@@ -88,23 +89,30 @@ async function fetchGoogleAdsSingle(searchText: string): Promise<{
 
     if (json.error) {
       const noResults = json.error.toLowerCase().includes("hasn't returned any results")
-      if (noResults) return { ads: [], error: null }
+        || json.error.toLowerCase().includes('no results')
+      if (noResults) {
+        console.log(`[ci-scan-google] "${searchText}" → 0 resultados (sin anuncios activos)`)
+        return { ads: [], error: null }
+      }
+      console.error(`[ci-scan-google] SerpApi error para "${searchText}":`, json.error)
       return { ads: [], error: `SerpApi error: ${json.error}` }
     }
 
     const ads = json.ad_creatives ?? []
+    console.log(`[ci-scan-google] "${searchText}" → ${ads.length} ads encontrados`)
 
-    // Debug: log primeros 3 resultados raw en desarrollo
-    if (process.env.NODE_ENV === 'development' && ads.length > 0) {
-      console.log(`[ci-scan-google] "${searchText}" → ${ads.length} ads (primeros 3):`)
-      for (const ad of ads.slice(0, 3)) {
-        console.log(JSON.stringify(ad, null, 2))
+    // Loguear primeros 3 resultados en producción también (ayuda al diagnóstico)
+    if (ads.length > 0) {
+      for (const ad of ads.slice(0, 2)) {
+        console.log(`[ci-scan-google] Ad: id=${ad.ad_creative_id ?? 'sin-id'} format=${ad.format ?? '?'} image=${ad.image ? 'sí' : 'no'} link=${ad.link ? 'sí' : 'no'}`)
       }
     }
 
     return { ads, error: null }
   } catch (err) {
-    return { ads: [], error: err instanceof Error ? err.message : String(err) }
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[ci-scan-google] Fetch error para "${searchText}":`, msg)
+    return { ads: [], error: msg }
   }
 }
 
