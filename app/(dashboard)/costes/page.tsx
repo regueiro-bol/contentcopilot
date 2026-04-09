@@ -30,32 +30,62 @@ export type DesgloseTipo = {
   unidades    : number
 }
 
+export type DesgloseServicio = {
+  servicio   : string
+  label      : string
+  color      : string
+  coste_total: number
+  llamadas   : number
+}
+
 export type CostesDashboardData = {
-  mes             : number
-  anyo            : number
-  totalMes        : number
+  mes                 : number
+  anyo                : number
+  totalMes            : number
   costeMedioContenido : number
-  numContenidos   : number
-  proyeccionFinMes: number
-  tablaContenidos : FilaTablaContenido[]
-  costesPorCliente: CosteCliente[]
-  desglosePorTipo : DesgloseTipo[]
-  clientes        : Array<{ id: string; nombre: string }>
-  filtroCliente   : string | null
-  pagina          : number
-  totalPaginas    : number
+  numContenidos       : number
+  proyeccionFinMes    : number
+  tablaContenidos     : FilaTablaContenido[]
+  costesPorCliente    : CosteCliente[]
+  desglosePorTipo     : DesgloseTipo[]
+  desgloseServicio    : DesgloseServicio[]
+  clientes            : Array<{ id: string; nombre: string }>
+  filtroCliente       : string | null
+  pagina              : number
+  totalPaginas        : number
 }
 
 const ETIQUETAS_TIPO: Record<string, string> = {
-  borrador      : 'Generación de borradores',
-  copiloto      : 'Conversaciones copiloto',
-  revision      : 'Revisiones GEO-SEO',
-  brief_seo     : 'Brief SEO',
-  prompt_imagen : 'Prompts de imagen',
-  rag_embedding : 'Embeddings RAG',
-  imagen_flux   : 'Imágenes destacadas',
-  ad_creative   : 'Piezas sociales (FLUX)',
+  borrador           : 'Generación de borradores',
+  copiloto           : 'Conversaciones copiloto',
+  revision           : 'Revisiones GEO-SEO',
+  brief_seo          : 'Brief SEO',
+  prompt_imagen      : 'Prompts de imagen',
+  rag_embedding      : 'Embeddings RAG',
+  imagen_flux        : 'Imágenes destacadas',
+  ad_creative        : 'Piezas sociales (FLUX)',
+  video_reel         : 'Vídeos Reel (FLUX)',
+  video_story        : 'Vídeos Story (FLUX)',
+  humanizacion       : 'Humanización de texto',
+  georadar_claude    : 'GEORadar · Claude',
+  georadar_gpt4      : 'GEORadar · GPT-4o',
+  georadar_gemini    : 'GEORadar · Gemini',
+  georadar_perplexity: 'GEORadar · Perplexity',
+  serpapi_search     : 'Búsquedas SerpApi',
+  dataforseo_keywords: 'DataForSEO Ideas',
+  dataforseo_volume  : 'DataForSEO Volúmenes',
+  competitor_keywords: 'DataForSEO Competidores',
 }
+
+const SERVICIOS_GRUPOS: Array<{ id: string; label: string; color: string; tipos: string[] }> = [
+  { id: 'claude',     label: 'Claude (Anthropic)',  color: 'bg-orange-500',  tipos: ['borrador','copiloto','revision','brief_seo','prompt_imagen','humanizacion','georadar_claude'] },
+  { id: 'flux',       label: 'FLUX (FAL.ai)',        color: 'bg-pink-500',    tipos: ['imagen_flux','ad_creative','video_reel','video_story'] },
+  { id: 'apis',       label: 'APIs externas',        color: 'bg-amber-500',   tipos: ['serpapi_search','dataforseo_keywords','dataforseo_volume','competitor_keywords'] },
+  { id: 'rag',        label: 'RAG (OpenAI Embed)',   color: 'bg-teal-500',    tipos: ['rag_embedding'] },
+  { id: 'gpt4',       label: 'GPT-4o (OpenAI)',      color: 'bg-emerald-500', tipos: ['georadar_gpt4'] },
+  { id: 'gemini',     label: 'Gemini (Google)',       color: 'bg-blue-500',    tipos: ['georadar_gemini'] },
+  { id: 'perplexity', label: 'Perplexity',            color: 'bg-purple-500',  tipos: ['georadar_perplexity'] },
+]
 
 const POR_PAGINA = 20
 
@@ -79,14 +109,14 @@ export default async function CostesPage({
   // ── 1. Todos los registros de costes del mes ──────────────────────────────
   const { data: registros } = await supabase
     .from('registros_costes')
-    .select('id, created_at, tipo_operacion, agente, coste_usd, tokens_input, tokens_output, unidades, contenido_id, proyecto_id')
+    .select('id, created_at, tipo_operacion, agente, coste_usd, tokens_input, tokens_output, unidades, contenido_id, proyecto_id, cliente_id')
     .gte('created_at', inicioMes.toISOString())
     .lte('created_at', finMes.toISOString())
     .order('created_at', { ascending: false })
 
   const regs = registros ?? []
 
-  // ── 2. Datos de contenidos, clientes y proyectos vinculados ──────────────
+  // ── 2. Datos de contenidos y sus relaciones ──────────────────────────────
   const contenidoIds = Array.from(new Set(regs.map(r => r.contenido_id).filter(Boolean))) as string[]
   const proyectoIds  = Array.from(new Set(regs.map(r => r.proyecto_id).filter(Boolean)))  as string[]
 
@@ -109,8 +139,11 @@ export default async function CostesPage({
 
   const contenidosMap = new Map((contenidosRaw ?? []).map(c => [c.id, c]))
 
-  // Clientes y proyectos de los contenidos
-  const clienteIds   = Array.from(new Set((contenidosRaw ?? []).map(c => c.cliente_id).filter(Boolean)))  as string[]
+  // Recopilar todos los cliente_ids: directos en los registros + via contenidos
+  const clienteIdsDirectos = regs.map(r => r.cliente_id).filter(Boolean) as string[]
+  const clienteIdsCont     = (contenidosRaw ?? []).map(c => c.cliente_id).filter(Boolean) as string[]
+  const todosClienteIds    = Array.from(new Set([...clienteIdsDirectos, ...clienteIdsCont]))
+
   const proyIdsCont  = Array.from(new Set((contenidosRaw ?? []).map(c => c.proyecto_id).filter(Boolean))) as string[]
   const todosProyIds = Array.from(new Set([...proyectoIds, ...proyIdsCont]))
 
@@ -118,8 +151,8 @@ export default async function CostesPage({
     { data: clientesDetalle },
     { data: proyectosDetalle },
   ] = await Promise.all([
-    clienteIds.length > 0
-      ? supabase.from('clientes').select('id, nombre').in('id', clienteIds)
+    todosClienteIds.length > 0
+      ? supabase.from('clientes').select('id, nombre').in('id', todosClienteIds)
       : Promise.resolve({ data: [] }),
     todosProyIds.length > 0
       ? supabase.from('proyectos').select('id, nombre, cliente_id').in('id', todosProyIds)
@@ -129,14 +162,15 @@ export default async function CostesPage({
   const clientesMap  = new Map((clientesDetalle ?? []).map(c => [c.id, c]))
   const proyectosMap = new Map((proyectosDetalle ?? []).map(p => [p.id, p]))
 
+  // Helper para obtener el cliente_id efectivo de un registro
+  function getClienteId(r: (typeof regs)[0]): string | null {
+    return r.cliente_id
+      ?? (r.contenido_id ? (contenidosMap.get(r.contenido_id)?.cliente_id ?? null) : null)
+  }
+
   // ── 3. KPIs ──────────────────────────────────────────────────────────────
-  // Filtrar por cliente si aplica
   const regsFiltrados = filtroCliente
-    ? regs.filter(r => {
-        if (!r.contenido_id) return false
-        const cont = contenidosMap.get(r.contenido_id)
-        return cont?.cliente_id === filtroCliente
-      })
+    ? regs.filter(r => getClienteId(r) === filtroCliente)
     : regs
 
   const totalMes = regsFiltrados.reduce((s, r) => s + Number(r.coste_usd), 0)
@@ -168,7 +202,7 @@ export default async function CostesPage({
   regsFiltrados.forEach(r => {
     if (!r.contenido_id) return
     const curr = aggContenido.get(r.contenido_id) ?? { coste_texto: 0, coste_imagenes: 0, coste_total: 0 }
-    const esImagen = ['imagen_flux', 'ad_creative'].includes(r.tipo_operacion)
+    const esImagen = ['imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(r.tipo_operacion)
     if (esImagen) curr.coste_imagenes += Number(r.coste_usd)
     else          curr.coste_texto    += Number(r.coste_usd)
     curr.coste_total += Number(r.coste_usd)
@@ -197,17 +231,16 @@ export default async function CostesPage({
   const totalPaginas = Math.max(1, Math.ceil(tablaCompleta.length / POR_PAGINA))
   const tablaContenidos = tablaCompleta.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
 
-  // ── 5. Coste por cliente ──────────────────────────────────────────────────
+  // ── 5. Coste por cliente (incluye registros sin contenido) ───────────────
   const aggCliente = new Map<string, { nombre: string; coste_total: number }>()
   regsFiltrados.forEach(r => {
-    if (!r.contenido_id) return
-    const cont = contenidosMap.get(r.contenido_id)
-    if (!cont?.cliente_id) return
-    const cli = clientesMap.get(cont.cliente_id)
+    const clienteId = getClienteId(r)
+    if (!clienteId) return
+    const cli    = clientesMap.get(clienteId)
     const nombre = cli?.nombre ?? '(sin cliente)'
-    const curr = aggCliente.get(cont.cliente_id) ?? { nombre, coste_total: 0 }
+    const curr   = aggCliente.get(clienteId) ?? { nombre, coste_total: 0 }
     curr.coste_total += Number(r.coste_usd)
-    aggCliente.set(cont.cliente_id, curr)
+    aggCliente.set(clienteId, curr)
   })
 
   const costesPorCliente: CosteCliente[] = Array.from(aggCliente.entries())
@@ -236,6 +269,21 @@ export default async function CostesPage({
     }))
     .sort((a, b) => b.coste_total - a.coste_total)
 
+  // ── 7. Desglose por servicio / proveedor ─────────────────────────────────
+  const desgloseServicio: DesgloseServicio[] = SERVICIOS_GRUPOS
+    .map(grupo => {
+      const registrosGrupo = regsFiltrados.filter(r => grupo.tipos.includes(r.tipo_operacion))
+      return {
+        servicio   : grupo.id,
+        label      : grupo.label,
+        color      : grupo.color,
+        coste_total: registrosGrupo.reduce((s, r) => s + Number(r.coste_usd), 0),
+        llamadas   : registrosGrupo.length,
+      }
+    })
+    .filter(g => g.coste_total > 0)
+    .sort((a, b) => b.coste_total - a.coste_total)
+
   // ── Props para el cliente ─────────────────────────────────────────────────
   const data: CostesDashboardData = {
     mes,
@@ -247,6 +295,7 @@ export default async function CostesPage({
     tablaContenidos,
     costesPorCliente,
     desglosePorTipo,
+    desgloseServicio,
     clientes     : (clientesAll ?? []).map(c => ({ id: c.id, nombre: c.nombre })),
     filtroCliente,
     pagina,

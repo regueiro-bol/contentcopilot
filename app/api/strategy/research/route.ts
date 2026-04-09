@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { guardarRegistroCoste, PRECIOS } from '@/lib/costes'
 import {
   getKeywordIdeas,
   getSearchVolume,
@@ -125,6 +126,16 @@ export async function POST(request: NextRequest) {
     try {
       ideas = await getKeywordIdeas(seedsLimpios)
       console.log(`[Research] keyword_ideas OK — ${ideas.length} resultados`)
+      // Registrar coste DataForSEO keyword_ideas (fire-and-forget)
+      guardarRegistroCoste({
+        cliente_id    : cliente_id,
+        proyecto_id   : sessionId,
+        tipo_operacion: 'dataforseo_keywords',
+        agente        : 'strategy-research',
+        unidades      : 1,
+        coste_usd     : PRECIOS.dataforseo_ideas,
+        metadatos     : { session_id: sessionId, seeds_count: seedsLimpios.length, results_count: ideas.length },
+      }).catch(console.error)
     } catch (e) {
       console.error('[Research] Error en keyword_ideas:', e instanceof DataForSEOError ? e.message : e)
       // Continuamos aunque falle — intentamos con search_volume
@@ -136,6 +147,16 @@ export async function POST(request: NextRequest) {
     try {
       volumes = await getSearchVolume(seedsLimpios)
       console.log(`[Research] search_volume OK — ${volumes.length} resultados`)
+      // Registrar coste DataForSEO search_volume (fire-and-forget)
+      guardarRegistroCoste({
+        cliente_id    : cliente_id,
+        proyecto_id   : sessionId,
+        tipo_operacion: 'dataforseo_volume',
+        agente        : 'strategy-research',
+        unidades      : 1,
+        coste_usd     : PRECIOS.dataforseo_volume,
+        metadatos     : { session_id: sessionId, seeds_count: seedsLimpios.length, results_count: volumes.length },
+      }).catch(console.error)
     } catch (e) {
       console.error('[Research] Error en search_volume:', e instanceof DataForSEOError ? e.message : e)
       // Continuamos aunque falle
@@ -216,6 +237,16 @@ export async function POST(request: NextRequest) {
         try {
           const compKws = await getCompetitorKeywords(domain)
           console.log(`[Research] Competidor ${domain}: ${compKws.length} keywords`)
+          // Registrar coste DataForSEO competitor keywords (fire-and-forget)
+          guardarRegistroCoste({
+            cliente_id    : cliente_id,
+            proyecto_id   : sessionId,
+            tipo_operacion: 'competitor_keywords',
+            agente        : 'strategy-research',
+            unidades      : 1,
+            coste_usd     : PRECIOS.dataforseo_competitor,
+            metadatos     : { session_id: sessionId, domain, results_count: compKws.length },
+          }).catch(console.error)
           for (const ck of compKws) {
             const key = ck.keyword.toLowerCase().trim()
             if (!competitorMap.has(key)) {

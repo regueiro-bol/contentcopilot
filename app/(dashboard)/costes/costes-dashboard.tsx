@@ -3,9 +3,9 @@
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { Calculator, TrendingUp, FileText, BarChart2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Calculator, TrendingUp, FileText, BarChart2, ChevronLeft, ChevronRight, Layers } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { CostesDashboardData } from './page'
+import type { CostesDashboardData, DesgloseServicio } from './page'
 import { colorEstadoContenido, etiquetaEstadoContenido, formatearFecha } from '@/lib/utils'
 import type { EstadoContenido } from '@/types'
 
@@ -63,19 +63,20 @@ function KpiCard({
 // ─── Barra horizontal CSS ─────────────────────────────────────────────────────
 
 function BarraHorizontal({
-  label, valor, maximo, indice,
+  label, valor, maximo, indice, color: colorProp,
 }: {
-  label  : string
-  valor  : number
-  maximo : number
-  indice : number
+  label    : string
+  valor    : number
+  maximo   : number
+  indice   : number
+  color?   : string
 }) {
   const pct = maximo > 0 ? Math.max(2, (valor / maximo) * 100) : 2
   const colores = [
     'bg-indigo-500', 'bg-violet-500', 'bg-blue-500', 'bg-sky-500',
     'bg-cyan-500',   'bg-teal-500',   'bg-emerald-500', 'bg-green-500',
   ]
-  const color = colores[indice % colores.length]
+  const color = colorProp ?? colores[indice % colores.length]
 
   return (
     <div className="flex items-center gap-3">
@@ -90,6 +91,40 @@ function BarraHorizontal({
         {fmtUSD(valor)}
       </div>
     </div>
+  )
+}
+
+// ─── Desglose por servicio ────────────────────────────────────────────────────
+
+function DesglosePorServicio({ items }: { items: DesgloseServicio[] }) {
+  const maximo = Math.max(...items.map(i => i.coste_total), 0.0001)
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Layers className="h-4 w-4 text-indigo-500" />
+          Desglose por servicio
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {items.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-6">Sin datos</p>
+        ) : (
+          <div className="space-y-3">
+            {items.map((item, i) => (
+              <BarraHorizontal
+                key={item.servicio}
+                label={item.label}
+                valor={item.coste_total}
+                maximo={maximo}
+                indice={i}
+                color={item.color}
+              />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -363,83 +398,95 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
             </CardContent>
           </Card>
 
-          {/* Desglose por tipo de operación */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold">Desglose por operación</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {data.desglosePorTipo.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-6">Sin datos</p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50">
-                      <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-2.5">
-                        Operación
-                      </th>
-                      <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-2.5">
-                        Llamadas
-                      </th>
-                      <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-2.5">
-                        Coste
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {data.desglosePorTipo.map((item) => (
-                      <tr key={item.tipo} className="hover:bg-gray-50/60">
-                        <td className="px-4 py-2.5">
-                          <p className="text-xs font-medium text-gray-800">{item.label}</p>
-                          {item.tokens > 0 && (
-                            <p className="text-[10px] text-gray-400 mt-0.5">
-                              {item.tokens.toLocaleString('es-ES')} tokens
-                            </p>
-                          )}
-                          {item.tipo === 'imagen_flux' || item.tipo === 'ad_creative' ? (
-                            <p className="text-[10px] text-gray-400 mt-0.5">
-                              {item.unidades} imágen{item.unidades !== 1 ? 'es' : ''}
-                            </p>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <span className="text-xs text-gray-600">
-                            {item.llamadas}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <span className="text-xs font-mono font-semibold text-gray-900">
-                            {fmtUSD(item.coste_total)}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-gray-200 bg-gray-50">
-                      <td className="px-4 py-2.5 text-xs font-bold text-gray-700">Total</td>
-                      <td className="px-4 py-2.5 text-right text-xs text-gray-600">
-                        {data.desglosePorTipo.reduce((s, r) => s + r.llamadas, 0)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-xs font-mono font-bold text-gray-900">
-                        {fmtUSD(data.totalMes)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              )}
-            </CardContent>
-          </Card>
+          {/* Desglose por servicio */}
+          <DesglosePorServicio items={data.desgloseServicio} />
         </div>
+      )}
+
+      {/* ── Desglose por tipo de operación (fila completa) ─────────────────── */}
+      {hayCostes && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold">Desglose por operación</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {data.desglosePorTipo.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Sin datos</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-2.5">
+                      Operación
+                    </th>
+                    <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-2.5">
+                      Llamadas
+                    </th>
+                    <th className="text-right text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-2.5">
+                      Coste
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {data.desglosePorTipo.map((item) => (
+                    <tr key={item.tipo} className="hover:bg-gray-50/60">
+                      <td className="px-4 py-2.5">
+                        <p className="text-xs font-medium text-gray-800">{item.label}</p>
+                        {item.tokens > 0 && (
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            {item.tokens.toLocaleString('es-ES')} tokens
+                          </p>
+                        )}
+                        {['imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(item.tipo) && (
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            {item.unidades} imágen{item.unidades !== 1 ? 'es' : ''}
+                          </p>
+                        )}
+                        {['serpapi_search', 'dataforseo_keywords', 'dataforseo_volume', 'competitor_keywords'].includes(item.tipo) && (
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            {item.unidades} llamada{item.unidades !== 1 ? 's' : ''}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="text-xs text-gray-600">
+                          {item.llamadas}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="text-xs font-mono font-semibold text-gray-900">
+                          {fmtUSD(item.coste_total)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-gray-200 bg-gray-50">
+                    <td className="px-4 py-2.5 text-xs font-bold text-gray-700">Total</td>
+                    <td className="px-4 py-2.5 text-right text-xs text-gray-600">
+                      {data.desglosePorTipo.reduce((s, r) => s + r.llamadas, 0)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs font-mono font-bold text-gray-900">
+                      {fmtUSD(data.totalMes)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Nota de precios */}
       <div className="flex items-start gap-2 text-xs text-gray-400 bg-gray-50 rounded-xl px-4 py-3 border border-gray-200">
         <span className="shrink-0 mt-0.5">ℹ️</span>
         <p>
-          Precios de referencia: Claude Sonnet $3/M tokens entrada · $15/M salida ·
-          OpenAI Embeddings $0.02/M tokens · FLUX Pro Ultra ~$0.06/imagen.
-          Los costes son estimaciones. Consulta las facturas reales de cada proveedor para totales exactos.
+          Precios de referencia (estimaciones): Claude Sonnet $3/$15 M tokens ·
+          GPT-4o $2.5/$10 M tokens · Gemini Flash $0.075/$0.30 M tokens ·
+          OpenAI Embeddings $0.02/M tokens · FLUX Pro ~$0.055/imagen ·
+          SerpApi ~$0.01/búsqueda · DataForSEO ~$0.015/tarea.
+          Consulta las facturas reales de cada proveedor para totales exactos.
         </p>
       </div>
 

@@ -11,6 +11,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { guardarRegistroCoste, PRECIO_SERPAPI_BUSQUEDA } from '@/lib/costes'
 
 export const maxDuration = 60
 
@@ -122,14 +123,27 @@ async function fetchGoogleAdsSingle(searchText: string): Promise<{
  * 2. Si hay advertiser_name diferente → busca también por ese nombre
  * 3. Si la primera búsqueda dio 0 y page_name es un dominio → intenta sin TLD
  * 4. Combina y deduplica por ad_creative_id
+ * Devuelve también callCount — número de llamadas reales a SerpApi.
  */
 async function fetchGoogleAds(
   pageName: string,
   advertiserName: string | null,
-): Promise<{ ads: SerpApiAd[]; error: string | null }> {
+): Promise<{ ads: SerpApiAd[]; error: string | null; callCount: number }> {
+  // Fast-fail si no hay clave — no se harán llamadas reales
+  if (!process.env.SERPAPI_KEY) {
+    return {
+      ads      : [],
+      error    : 'SERPAPI_KEY no configurada. Consigue una clave en https://serpapi.com (100 búsquedas/mes gratis)',
+      callCount: 0,
+    }
+  }
+
+  let callCount = 0
+
   // 1. Búsqueda principal por page_name
   const { ads: primaryAds, error: primaryError } = await fetchGoogleAdsSingle(pageName)
-  if (primaryError) return { ads: [], error: primaryError }
+  callCount++
+  if (primaryError) return { ads: [], error: primaryError, callCount }
 
   const allAds = [...primaryAds]
   const seenIds = new Set(primaryAds.map((a) => a.ad_creative_id).filter(Boolean))
@@ -138,6 +152,7 @@ async function fetchGoogleAds(
   if (advertiserName && advertiserName.toLowerCase() !== pageName.toLowerCase()) {
     console.log(`[ci-scan-google] Búsqueda adicional por advertiser_name: "${advertiserName}"`)
     const { ads: advAds } = await fetchGoogleAdsSingle(advertiserName)
+    callCount++
     for (const ad of advAds) {
       if (ad.ad_creative_id && seenIds.has(ad.ad_creative_id)) continue
       allAds.push(ad)
@@ -151,6 +166,7 @@ async function fetchGoogleAds(
     if (withoutTld !== pageName) {
       console.log(`[ci-scan-google] Fallback: buscando sin TLD "${withoutTld}"`)
       const { ads: fallbackAds } = await fetchGoogleAdsSingle(withoutTld)
+      callCount++
       for (const ad of fallbackAds) {
         if (ad.ad_creative_id && seenIds.has(ad.ad_creative_id)) continue
         allAds.push(ad)
@@ -160,7 +176,7 @@ async function fetchGoogleAds(
   }
 
   console.log(`[ci-scan-google] Total combinado para "${pageName}": ${allAds.length} ads únicos`)
-  return { ads: allAds, error: null }
+  return { ads: allAds, error: null, callCount }
 }
 
 function extractCopyText(ad: SerpApiAd): string | null {
@@ -226,7 +242,19 @@ export async function POST(request: NextRequest) {
 
   for (const comp of competitors) {
     const advName = (comp.advertiser_name as string | null) ?? null
-    const { ads, error: fetchError } = await fetchGoogleAds(comp.page_name, advName)
+    const { ads, error: fetchError, callCount } = await fetchGoogleAds(comp.page_name, advName)
+
+    // Registrar coste SerpApi (fire-and-forget)
+    if (callCount > 0) {
+      guardarRegistroCoste({
+        cliente_id    : client_id,
+        tipo_operacion: 'serpapi_search',
+        agente        : 'ci-scan-google',
+        unidades      : callCount,
+        coste_usd     : callCount * PRECIO_SERPAPI_BUSQUEDA,
+        metadatos     : { competitor_id: comp.id, competitor_name: comp.page_name },
+      }).catch(console.error)
+    }
 
     if (fetchError) {
       console.error(`[ci-scan-google] Error "${comp.page_name}":`, fetchError)
