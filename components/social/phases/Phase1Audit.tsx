@@ -116,13 +116,17 @@ export default function Phase1Audit({ clientId, onPhaseComplete }: Props) {
             Los campos se guardan automáticamente al salir de cada campo.
           </p>
           {PLATFORMS.map((platform) => {
-            const existingData = platforms.find((p) => p.platform === platform)
+            const existingData  = platforms.find((p) => p.platform === platform)
+            // Auto-abrir si es la única plataforma con datos guardados
+            const platformsWithData = platforms.filter((p) => p.strategic_conclusion || p.followers)
+            const autoOpen = platformsWithData.length === 1 && platformsWithData[0]?.platform === platform
             return (
               <AuditByPlatform
                 key={platform}
                 clientId={clientId}
                 platform={platform}
                 initialData={existingData}
+                defaultOpen={autoOpen}
                 onSaved={handlePlatformSaved}
               />
             )

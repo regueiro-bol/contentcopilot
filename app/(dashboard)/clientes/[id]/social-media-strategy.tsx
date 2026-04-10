@@ -4,13 +4,16 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Share2, Check, Lock, ChevronRight, Loader2,
   BarChart2, Target, Layers, Mic2, TrendingUp, Rocket,
+  Download,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import Phase1Audit         from '@/components/social/phases/Phase1Audit'
-import Phase2Strategy     from '@/components/social/phases/Phase2Strategy'
-import Phase3Architecture from '@/components/social/phases/Phase3Architecture'
-import Phase4BrandVoice   from '@/components/social/phases/Phase4BrandVoice'
+import Phase2Strategy      from '@/components/social/phases/Phase2Strategy'
+import Phase3Architecture  from '@/components/social/phases/Phase3Architecture'
+import Phase4BrandVoice    from '@/components/social/phases/Phase4BrandVoice'
+import Phase5KPIs          from '@/components/social/phases/Phase5KPIs'
+import Phase6ActionPlan    from '@/components/social/phases/Phase6ActionPlan'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -168,7 +171,7 @@ export default function SocialMediaStrategy({ clientId }: Props) {
               </p>
             </div>
           </div>
-          <div>
+          <div className="flex items-center gap-3">
             {overallStatus === 'not_started' && (
               <Badge variant="secondary">Sin iniciar</Badge>
             )}
@@ -182,6 +185,16 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                 ✓ Completada
               </Badge>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open(`/api/social/export-word?clientId=${clientId}`)}
+              title={overallStatus !== 'completed' ? 'Puedes descargar aunque la estrategia esté incompleta' : undefined}
+              className="gap-1.5 text-xs text-gray-600 border-gray-300 hover:border-pink-400 hover:text-pink-600"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Descargar Word
+            </Button>
           </div>
         </div>
       </div>
@@ -305,13 +318,15 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                 clientId        = {clientId}
                 onPhaseComplete = {fetchStatus}
               />
+            ) : fase.numero === 5 ? (
+              <Phase5KPIs
+                clientId        = {clientId}
+                onPhaseComplete = {fetchStatus}
+              />
             ) : (
-              <PhasePending
-                titulo      = {fase.titulo}
-                descripcion = {fase.descripcion}
-                sprintLabel = {fase.sprintLabel}
-                approving   = {approving === fase.numero}
-                onApprove   = {() => handleApprove(fase.numero)}
+              <Phase6ActionPlan
+                clientId        = {clientId}
+                onPhaseComplete = {fetchStatus}
               />
             )}
           </div>
