@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import Phase1Audit from '@/components/social/phases/Phase1Audit'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -287,6 +288,11 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                 approvedAt   = {phaseStatus.approvedAt}
                 approving    = {approving === fase.numero}
                 onEdit       = {() => handleApprove(fase.numero)} // undo
+              />
+            ) : fase.numero === 1 ? (
+              <Phase1Audit
+                clientId        = {clientId}
+                onPhaseComplete = {fetchStatus}
               />
             ) : (
               <PhasePending

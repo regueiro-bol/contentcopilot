@@ -5,13 +5,8 @@ import { geminiAdapter } from './llm-adapters/gemini-adapter';
 import { perplexityAdapter } from './llm-adapters/perplexity-adapter';
 import { analyzeResponse } from './analyzer';
 import { calculateScore, calculateGlobalScore } from './scorer';
-import { guardarRegistroCoste } from '@/lib/costes';
-import type { TipoOperacion } from '@/lib/costes';
+import { guardarRegistroCoste, type TipoOperacion } from '@/lib/costes';
 import type { LLMProvider } from './types';
-import {
-  guardarRegistroCoste,
-  type TipoOperacion,
-} from '@/lib/costes';
 
 // Mapa LLM → tipo_operacion + modelo
 const LLM_COSTE_META: Record<LLMProvider, { tipo: TipoOperacion; modelo: string }> = {
