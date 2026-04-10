@@ -75,10 +75,11 @@ const ETIQUETAS_TIPO: Record<string, string> = {
   dataforseo_keywords: 'DataForSEO Ideas',
   dataforseo_volume  : 'DataForSEO Volúmenes',
   competitor_keywords: 'DataForSEO Competidores',
+  analisis_web       : 'Análisis web (Claude)',
 }
 
 const SERVICIOS_GRUPOS: Array<{ id: string; label: string; color: string; tipos: string[] }> = [
-  { id: 'claude',     label: 'Claude (Anthropic)',  color: 'bg-orange-500',  tipos: ['borrador','copiloto','revision','brief_seo','prompt_imagen','humanizacion','georadar_claude'] },
+  { id: 'claude',     label: 'Claude (Anthropic)',  color: 'bg-orange-500',  tipos: ['borrador','copiloto','revision','brief_seo','prompt_imagen','humanizacion','georadar_claude','analisis_web'] },
   { id: 'flux',       label: 'FLUX (FAL.ai)',        color: 'bg-pink-500',    tipos: ['imagen_flux','ad_creative','video_reel','video_story'] },
   { id: 'apis',       label: 'APIs externas',        color: 'bg-amber-500',   tipos: ['serpapi_search','dataforseo_keywords','dataforseo_volume','competitor_keywords'] },
   { id: 'rag',        label: 'RAG (OpenAI Embed)',   color: 'bg-teal-500',    tipos: ['rag_embedding'] },

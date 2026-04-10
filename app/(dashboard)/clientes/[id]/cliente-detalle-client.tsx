@@ -3,10 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Edit, Trash2, Plus, Sparkles, ChevronRight, ChevronDown,
+  Edit, Trash2, Plus, Sparkles, ChevronRight, ChevronDown, ChevronUp,
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
   Loader2, Link2, Globe, AlertCircle, AlertTriangle, BarChart2,
-  RefreshCw, Plug, RotateCcw, Megaphone,
+  RefreshCw, Plug, RotateCcw, Megaphone, Lightbulb,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -1040,6 +1040,237 @@ function ZonaPeligrosa({ clienteId, clienteNombre }: { clienteId: string; client
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Análisis web del cliente (tab Identidad)
+// ---------------------------------------------------------------------------
+
+interface AnalisisWebResumen {
+  id                   : string
+  tipo                 : string
+  url_analizada        : string
+  fecha_analisis       : string
+  num_articulos        : number
+  tematicas_detectadas : Array<{ tema: string; porcentaje: number }>
+  resumen              : {
+    resumen_ejecutivo      ?: string
+    keywords_principales   ?: string[]
+    oportunidades_vs_cliente?: string[]
+    fortalezas             ?: string[]
+    debilidades            ?: string[]
+    frecuencia_publicacion ?: string
+    periodo_detectado      ?: string
+  } | null
+}
+
+const MENSAJES_CARGA_WEB = [
+  'Buscando contenido publicado...',
+  'Extrayendo artículos...',
+  'Analizando con IA...',
+  'Casi listo...',
+]
+
+function AnalisisWebClienteCard({ clienteId, urlWeb }: { clienteId: string; urlWeb?: string }) {
+  const [analisis, setAnalisis]       = useState<AnalisisWebResumen | null | undefined>(undefined)
+  const [analizando, setAnalizando]   = useState(false)
+  const [mensajeCarga, setMensajeCarga] = useState('')
+  const [expanded, setExpanded]       = useState(false)
+  const [errorMsg, setErrorMsg]       = useState<string | null>(null)
+
+  useEffect(() => {
+    async function cargar() {
+      try {
+        const res = await fetch(`/api/analisis-web?cliente_id=${clienteId}`)
+        if (!res.ok) return setAnalisis(null)
+        const { analisis: list } = await res.json() as { analisis: AnalisisWebResumen[] }
+        const propio = list.filter((a) => a.tipo === 'cliente')
+        setAnalisis(propio[0] ?? null)
+      } catch { setAnalisis(null) }
+    }
+    cargar()
+  }, [clienteId])
+
+  useEffect(() => {
+    if (!analizando) { setMensajeCarga(''); return }
+    let idx = 0
+    setMensajeCarga(MENSAJES_CARGA_WEB[0])
+    const timer = setInterval(() => {
+      idx = (idx + 1) % MENSAJES_CARGA_WEB.length
+      setMensajeCarga(MENSAJES_CARGA_WEB[idx])
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [analizando])
+
+  async function analizar() {
+    if (!urlWeb) return
+    setAnalizando(true)
+    setErrorMsg(null)
+    try {
+      const res = await fetch('/api/analisis-web', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ url: urlWeb, cliente_id: clienteId, tipo: 'cliente' }),
+      })
+      const data = await res.json() as { error?: string } & Record<string, unknown>
+      if (!res.ok) throw new Error(data.error ?? 'Error en el análisis')
+      const getRes = await fetch(`/api/analisis-web?cliente_id=${clienteId}`)
+      if (getRes.ok) {
+        const { analisis: list } = await getRes.json() as { analisis: AnalisisWebResumen[] }
+        setAnalisis(list.filter((a) => a.tipo === 'cliente')[0] ?? null)
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Error desconocido')
+    } finally { setAnalizando(false) }
+  }
+
+  // Cargando silenciosamente
+  if (analisis === undefined) return null
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Globe className="h-4 w-4 text-blue-600" />
+          Contenido publicado
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {errorMsg && (
+          <div className="mb-3 flex items-start gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            {errorMsg}
+          </div>
+        )}
+
+        {analisis === null ? (
+          <div className="flex flex-col items-center gap-3 py-6 text-center">
+            <Globe className="h-9 w-9 text-gray-300" />
+            <div>
+              <p className="text-sm font-medium text-gray-600">Sin análisis del contenido publicado</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {urlWeb
+                  ? 'Analiza el blog del cliente para hacer un benchmark de su contenido editorial actual.'
+                  : 'Configura la URL web del cliente para poder analizar su contenido publicado.'}
+              </p>
+            </div>
+            {urlWeb && (
+              <Button size="sm" className="gap-1.5" onClick={analizar} disabled={analizando}>
+                {analizando
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Globe className="h-3.5 w-3.5" />}
+                {analizando ? mensajeCarga : 'Analizar web del cliente'}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Cabecera resultado */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                <span className="text-sm font-medium text-gray-700">
+                  {analisis.num_articulos} artículos analizados
+                </span>
+                <span className="text-xs text-gray-400">
+                  · {new Date(analisis.fecha_analisis).toLocaleDateString('es-ES')}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                {urlWeb && (
+                  <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={analizar} disabled={analizando}>
+                    {analizando ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    Reanalizar
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={() => setExpanded(!expanded)}>
+                  {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  {expanded ? 'Ocultar' : 'Ver análisis'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Resumen ejecutivo */}
+            {analisis.resumen?.resumen_ejecutivo && (
+              <p className="text-xs text-gray-600 bg-blue-50 rounded-lg p-3 border border-blue-100 leading-relaxed">
+                {analisis.resumen.resumen_ejecutivo}
+              </p>
+            )}
+
+            {/* Expandible */}
+            {expanded && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+
+                {/* Temáticas */}
+                {analisis.tematicas_detectadas?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Temáticas detectadas</p>
+                    <div className="space-y-1.5">
+                      {analisis.tematicas_detectadas.slice(0, 7).map((t, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="text-xs text-gray-600 w-36 shrink-0 truncate">{t.tema}</span>
+                          <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
+                            <div className="h-full bg-blue-400 rounded-full transition-all" style={{ width: `${t.porcentaje}%` }} />
+                          </div>
+                          <span className="text-xs text-gray-400 w-8 text-right shrink-0">{t.porcentaje}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Keywords + Datos editoriales */}
+                {analisis.resumen?.keywords_principales && analisis.resumen.keywords_principales.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Keywords principales</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {analisis.resumen.keywords_principales.slice(0, 12).map((kw, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs">{kw}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(analisis.resumen?.frecuencia_publicacion || analisis.resumen?.periodo_detectado) && (
+                  <div className="flex flex-wrap gap-4 text-xs">
+                    {analisis.resumen.frecuencia_publicacion && (
+                      <div>
+                        <span className="text-gray-500">Frecuencia: </span>
+                        <span className="font-medium text-gray-700">{analisis.resumen.frecuencia_publicacion}</span>
+                      </div>
+                    )}
+                    {analisis.resumen.periodo_detectado && (
+                      <div>
+                        <span className="text-gray-500">Período: </span>
+                        <span className="font-medium text-gray-700">{analisis.resumen.periodo_detectado}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Oportunidades */}
+                {analisis.resumen?.oportunidades_vs_cliente && analisis.resumen.oportunidades_vs_cliente.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                      <Lightbulb className="h-3.5 w-3.5" />
+                      Oportunidades para mejorar
+                    </p>
+                    <ul className="space-y-1.5">
+                      {analisis.resumen.oportunidades_vs_cliente.slice(0, 4).map((op, i) => (
+                        <li key={i} className="text-xs text-gray-700 flex items-start gap-1.5">
+                          <span className="text-amber-500 shrink-0 mt-0.5">→</span> {op}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ClienteDetalleClient({
   cliente,
   proyectos,
@@ -1187,7 +1418,13 @@ export default function ClienteDetalleClient({
               </CardContent>
             </Card>
 
-            {/* Sección B: Identidad de marca */}
+            {/* Sección B: Análisis web del cliente */}
+            <AnalisisWebClienteCard
+              clienteId={cliente.id}
+              urlWeb={cliente.url_web ?? undefined}
+            />
+
+            {/* Sección C: Identidad de marca */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-semibold">Identidad de marca</CardTitle>

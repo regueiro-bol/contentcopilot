@@ -82,6 +82,7 @@ export type TipoOperacion =
   | 'dataforseo_keywords'   // DataForSEO keyword ideas
   | 'dataforseo_volume'     // DataForSEO search volume
   | 'competitor_keywords'   // DataForSEO competitor keywords
+  | 'analisis_web'          // Análisis de contenido web (Claude)
 
 // ─── Cálculo ─────────────────────────────────────────────────────────────────
 
