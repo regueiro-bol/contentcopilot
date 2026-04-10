@@ -6,7 +6,6 @@
  * Devuelve: { editorialPillars, formatsByPlatform, publishingCadence, calendarTemplate }
  */
 
-import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -24,8 +23,6 @@ const PLATFORM_LABELS: Record<string, string> = {
 }
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: { clientId: string }
   try { body = await request.json() } catch {

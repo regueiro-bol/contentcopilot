@@ -39,6 +39,7 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
   const [savedAt,    setSavedAt]    = useState<string | null>(null)
   const [showRegen,  setShowRegen]  = useState(false)
   const [checkItems, setCheckItems] = useState<boolean[]>(new Array(APPROVAL_CHECKLIST.length).fill(false))
+  const [genError,   setGenError]   = useState<string | null>(null)
 
   const allChecked    = checkItems.every(Boolean)
   const hasContent    = !!(data.platform_decisions?.trim() && data.channel_architecture?.trim())
@@ -99,13 +100,14 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
     if (!force && hasContent) { setShowRegen(true); return }
     setShowRegen(false)
     setGenerating(true)
+    setGenError(null)
     try {
       const res = await fetch('/api/social/generate-strategy', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({ clientId }),
       })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error ?? `Error ${res.status}`) }
       const result = await res.json() as {
         platformDecisions      : string
         channelArchitecture    : string
@@ -120,7 +122,9 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
       setData(newData)
       setSavedAt(null)
     } catch (err) {
-      console.error('[Phase2Strategy] Generate error:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[Phase2Strategy] Generate error:', msg)
+      setGenError(msg)
     } finally {
       setGenerating(false)
     }
@@ -181,6 +185,14 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
           Define qué hacer en cada red social, cómo se relacionan entre sí y qué diferencia el contenido en cada una.
         </p>
       </div>
+
+      {/* ── Error de generación ── */}
+      {genError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 flex items-center justify-between gap-2 text-xs text-red-700">
+          <span>Error al generar: {genError}</span>
+          <button onClick={() => setGenError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-medium">✕</button>
+        </div>
+      )}
 
       {/* ── Banner de contenido existente ── */}
       {hasContent && data.updated_at && !isApproved && (

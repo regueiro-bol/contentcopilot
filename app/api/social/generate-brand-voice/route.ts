@@ -7,7 +7,6 @@
  * Devuelve: { voiceManual, registerByPlatform, editorialRedLines, consistencyGuidelines }
  */
 
-import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -35,8 +34,6 @@ function jsonbToText(val: unknown): string {
 }
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: { clientId: string }
   try { body = await request.json() } catch {

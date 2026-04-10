@@ -9,7 +9,6 @@
  * Body: { clientId }
  */
 
-import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -18,8 +17,6 @@ import { guardarRegistroCoste, calcularCosteClaudeUSD } from '@/lib/costes'
 export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: { clientId: string }
   try { body = await request.json() } catch {
