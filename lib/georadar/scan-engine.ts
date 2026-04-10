@@ -5,6 +5,8 @@ import { geminiAdapter } from './llm-adapters/gemini-adapter';
 import { perplexityAdapter } from './llm-adapters/perplexity-adapter';
 import { analyzeResponse } from './analyzer';
 import { calculateScore, calculateGlobalScore } from './scorer';
+import { guardarRegistroCoste } from '@/lib/costes';
+import type { TipoOperacion } from '@/lib/costes';
 import type { LLMProvider } from './types';
 import {
   guardarRegistroCoste,
@@ -24,6 +26,13 @@ const LLM_ADAPTERS: Record<LLMProvider, (query: string) => Promise<any>> = {
   gpt4: gpt4Adapter,
   gemini: geminiAdapter,
   perplexity: perplexityAdapter,
+};
+
+const LLM_COSTE_TIPO: Record<LLMProvider, TipoOperacion> = {
+  claude    : 'georadar_claude',
+  gpt4      : 'georadar_gpt4',
+  gemini    : 'georadar_gemini',
+  perplexity: 'georadar_perplexity',
 };
 
 export async function executeScan(scanId: string): Promise<void> {
@@ -101,6 +110,20 @@ export async function executeScan(scanId: string): Promise<void> {
         if (!llmResponse) {
           console.log(`[GEORadar] ${llm} devolvio null para "${query.query.substring(0, 40)}" — omitiendo`);
           continue;
+        }
+
+        // Registrar coste del LLM (fire-and-forget)
+        if (llmResponse.coste_usd > 0) {
+          guardarRegistroCoste({
+            cliente_id   : clienteIdScan,
+            tipo_operacion: LLM_COSTE_TIPO[llm],
+            agente       : 'georadar',
+            modelo       : llm,
+            tokens_input : llmResponse.tokens_entrada ?? 0,
+            tokens_output: llmResponse.tokens_salida  ?? 0,
+            coste_usd    : llmResponse.coste_usd,
+            metadatos    : { scan_id: scanId, query_id: query.id },
+          }).catch(console.error)
         }
 
         const competidoresFormatted = (competidores || []).map((c: any) => ({

@@ -11,11 +11,7 @@ import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
-import {
-  guardarRegistroCoste,
-  PRECIOS,
-  calcularCosteClaudeUSD,
-} from '@/lib/costes'
+import { guardarRegistroCoste, calcularCosteClaudeUSD, PRECIO_SERPAPI_BUSQUEDA } from '@/lib/costes'
 
 export const maxDuration = 120
 
@@ -169,7 +165,7 @@ async function sintetizarConClaude(ctx: {
   contenidoPropio: { temas: string[]; titulos: string[] }
   competencia: Array<{ competidor: string; temas: string[] }>
   tendencias: { trending: string[]; preguntas: string[]; snippets: string[] }
-}): Promise<{ resultado: Record<string, unknown>; tokens_input: number; tokens_output: number }> {
+}): Promise<{ resultado: Record<string, unknown>; inputTokens: number; outputTokens: number }> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const prompt = `Eres un estratega de contenidos experto. Analiza estos datos y genera un informe de oportunidades.
@@ -254,9 +250,9 @@ REGLAS:
   if (!jsonMatch) throw new Error('Claude no devolvio JSON valido')
 
   return {
-    resultado     : JSON.parse(jsonMatch[0]) as Record<string, unknown>,
-    tokens_input  : response.usage.input_tokens,
-    tokens_output : response.usage.output_tokens,
+    resultado   : JSON.parse(jsonMatch[0]) as Record<string, unknown>,
+    inputTokens : response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
   }
 }
 
@@ -306,20 +302,9 @@ export async function POST(request: NextRequest) {
 
   console.log(`[Inspiracion] Sesion ${session.id} creada para ${cliente.nombre}`)
 
-  // Helper para registrar costes SerpApi fire-and-forget
-  const registrarCosteSerpApi = (query: string) => {
-    guardarRegistroCoste({
-      cliente_id    : client_id,
-      tipo_operacion: 'serpapi',
-      agente        : 'inspiracion',
-      modelo        : 'serpapi',
-      tokens_input  : 0,
-      tokens_output : 0,
-      unidades      : 1,
-      coste_usd     : PRECIOS.serpapi_busqueda,
-      metadatos     : { query, modulo: 'inspiracion' },
-    }).catch((e) => console.error('[Costes] Error registrando SerpApi (inspiracion):', e))
-  }
+  // Costes SerpApi se registran en batch al final del pipeline (ver abajo)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const registrarCosteSerpApi = (_query: string) => { /* no-op: batch al final */ }
 
   try {
     // PASO 1 — Contenido propio
@@ -339,7 +324,7 @@ export async function POST(request: NextRequest) {
 
     // PASO 4 — Sintesis con Claude
     console.log('[Inspiracion] Paso 4: Sintetizando con Claude...')
-    const { resultado, tokens_input, tokens_output } = await sintetizarConClaude({
+    const { resultado, inputTokens, outputTokens } = await sintetizarConClaude({
       clienteNombre: cliente.nombre,
       clienteSector: cliente.sector,
       clienteDescripcion: cliente.descripcion,
@@ -349,17 +334,30 @@ export async function POST(request: NextRequest) {
     })
     console.log('[Inspiracion] Paso 4 completado')
 
-    // Registrar coste Claude (fire-and-forget)
+    // Registrar costes (fire-and-forget)
+    // SerpApi: 1 llamada por competidor + 1 para tendencias
+    const serpCalls = competencia.length + 1
     guardarRegistroCoste({
       cliente_id    : client_id,
-      tipo_operacion: 'inspiracion',
+      tipo_operacion: 'serpapi_search',
+      agente        : 'inspiracion',
+      unidades      : serpCalls,
+      coste_usd     : serpCalls * PRECIO_SERPAPI_BUSQUEDA,
+      metadatos     : { session_id: session.id, competitors_analyzed: competencia.length },
+    }).catch(console.error)
+
+    // Claude: síntesis estratégica
+    const costeClaudeUSD = calcularCosteClaudeUSD(inputTokens, outputTokens)
+    guardarRegistroCoste({
+      cliente_id    : client_id,
+      tipo_operacion: 'copiloto',
       agente        : 'inspiracion',
       modelo        : 'claude-sonnet-4-5',
-      tokens_input,
-      tokens_output,
-      coste_usd     : calcularCosteClaudeUSD(tokens_input, tokens_output),
+      tokens_input  : inputTokens,
+      tokens_output : outputTokens,
+      coste_usd     : costeClaudeUSD,
       metadatos     : { session_id: session.id },
-    }).catch((e) => console.error('[Costes] Error registrando Claude (inspiracion):', e))
+    }).catch(console.error)
 
     // Guardar resultado
     await supabase

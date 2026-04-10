@@ -63,14 +63,20 @@ function KpiCard({
 // ─── Barra horizontal CSS ─────────────────────────────────────────────────────
 
 function BarraHorizontal({
-  label, valor, maximo, color = 'bg-indigo-500',
+  label, valor, maximo, indice, color: colorProp,
 }: {
-  label  : string
-  valor  : number
-  maximo : number
-  color? : string
+  label    : string
+  valor    : number
+  maximo   : number
+  indice   : number
+  color?   : string
 }) {
   const pct = maximo > 0 ? Math.max(2, (valor / maximo) * 100) : 2
+  const colores = [
+    'bg-indigo-500', 'bg-violet-500', 'bg-blue-500', 'bg-sky-500',
+    'bg-cyan-500',   'bg-teal-500',   'bg-emerald-500', 'bg-green-500',
+  ]
+  const color = colorProp ?? colores[indice % colores.length]
 
   return (
     <div className="flex items-center gap-3">
@@ -90,37 +96,35 @@ function BarraHorizontal({
 
 // ─── Desglose por servicio ────────────────────────────────────────────────────
 
-function DesglosePorServicio({ items, total }: { items: DesgloseServicio[]; total: number }) {
-  if (items.length === 0) {
-    return <p className="text-sm text-gray-400 text-center py-6">Sin datos</p>
-  }
+function DesglosePorServicio({ items }: { items: DesgloseServicio[] }) {
   const maximo = Math.max(...items.map(i => i.coste_total), 0.0001)
-
   return (
-    <div className="space-y-3">
-      {items.map(item => (
-        <div key={item.servicio} className="space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-gray-700">{item.label}</span>
-            <span className="text-gray-400">{item.llamadas} llamadas</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
-              <div
-                className={`h-full ${item.color} rounded-full transition-all duration-500`}
-                style={{ width: `${Math.max(2, (item.coste_total / maximo) * 100)}%` }}
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Layers className="h-4 w-4 text-indigo-500" />
+          Desglose por servicio
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {items.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-6">Sin datos</p>
+        ) : (
+          <div className="space-y-3">
+            {items.map((item, i) => (
+              <BarraHorizontal
+                key={item.servicio}
+                label={item.label}
+                valor={item.coste_total}
+                maximo={maximo}
+                indice={i}
+                color={item.color}
               />
-            </div>
-            <span className="text-xs font-mono font-semibold text-gray-800 w-20 text-right shrink-0">
-              {fmtUSD(item.coste_total)}
-            </span>
-            <span className="text-[10px] text-gray-400 w-8 text-right shrink-0">
-              {total > 0 ? `${Math.round((item.coste_total / total) * 100)}%` : '0%'}
-            </span>
+            ))}
           </div>
-        </div>
-      ))}
-    </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -385,7 +389,6 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
             <CardContent>
               <DesglosePorServicio
                 items={data.desgloseServicio}
-                total={data.totalMes}
               />
             </CardContent>
           </Card>
@@ -406,6 +409,7 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
                       label={item.nombre}
                       valor={item.coste_total}
                       maximo={maxCosteCliente}
+                      indice={i}
                       color={COLORES_CLIENTE[i % COLORES_CLIENTE.length]}
                     />
                   ))}
@@ -414,14 +418,16 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
             </CardContent>
           </Card>
 
+          {/* Desglose por servicio */}
+          <DesglosePorServicio items={data.desgloseServicio} />
         </div>
       )}
 
-      {/* ── Desglose por tipo de operación (detalle) ───────────────────────── */}
+      {/* ── Desglose por tipo de operación (fila completa) ─────────────────── */}
       {hayCostes && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Desglose detallado por operación</CardTitle>
+            <CardTitle className="text-sm font-semibold">Desglose por operación</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {data.desglosePorTipo.length === 0 ? (
@@ -451,14 +457,14 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
                             {item.tokens.toLocaleString('es-ES')} tokens
                           </p>
                         )}
-                        {['imagen_flux','ad_creative','video_reel','video_story'].includes(item.tipo) && (
+                        {['imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(item.tipo) && (
                           <p className="text-[10px] text-gray-400 mt-0.5">
                             {item.unidades} imágen{item.unidades !== 1 ? 'es' : ''}
                           </p>
                         )}
-                        {['serpapi','datasorseo'].includes(item.tipo) && item.unidades > 0 && (
+                        {['serpapi_search', 'dataforseo_keywords', 'dataforseo_volume', 'competitor_keywords'].includes(item.tipo) && (
                           <p className="text-[10px] text-gray-400 mt-0.5">
-                            {item.unidades} unidades
+                            {item.unidades} llamada{item.unidades !== 1 ? 's' : ''}
                           </p>
                         )}
                       </td>
@@ -496,11 +502,11 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
       <div className="flex items-start gap-2 text-xs text-gray-400 bg-gray-50 rounded-xl px-4 py-3 border border-gray-200">
         <span className="shrink-0 mt-0.5">ℹ️</span>
         <p>
-          Precios de referencia: Claude Sonnet $3/$15 por millón tokens · GPT-4o $2.50/$10 por millón tokens ·
-          Gemini 1.5 Flash $1.25/$5 por millón tokens · Perplexity sonar-pro $0.005/query ·
-          OpenAI Embeddings $0.02/M tokens · FLUX ~$0.055/imagen ·
-          SerpApi ~$0.005/búsqueda · DataForSEO ~$0.0001/keyword.
-          Los costes son estimaciones. Consulta las facturas reales de cada proveedor para totales exactos.
+          Precios de referencia (estimaciones): Claude Sonnet $3/$15 M tokens ·
+          GPT-4o $2.5/$10 M tokens · Gemini Flash $0.075/$0.30 M tokens ·
+          OpenAI Embeddings $0.02/M tokens · FLUX Pro ~$0.055/imagen ·
+          SerpApi ~$0.01/búsqueda · DataForSEO ~$0.015/tarea.
+          Consulta las facturas reales de cada proveedor para totales exactos.
         </p>
       </div>
 

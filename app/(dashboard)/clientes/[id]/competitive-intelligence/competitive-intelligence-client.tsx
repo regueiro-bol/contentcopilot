@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Plus, Trash2, RefreshCw, BarChart2, ExternalLink,
   Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
-  Calendar, Building2, TrendingUp, Lightbulb, Target,
+  Calendar, Building2, TrendingUp, Lightbulb, Target, Globe,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +31,8 @@ interface Props {
   readOnlyCompetitors?: boolean
   /** Texto del título de la sección de competidores. */
   sectionTitle?:        string
+  /** Muestra el bloque de análisis de contenido web por competidor. */
+  showAnalisisWeb?:     boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -737,6 +739,468 @@ function ReportView({ content, report }: { content: ReportContent; report: CiRep
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sección: Análisis de contenido web
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface AnalisisWebRow {
+  id                      : string
+  competidor_id           : string | null
+  referencia_editorial_id : string | null
+  tipo                    : 'cliente' | 'competidor'
+  url_analizada           : string
+  fecha_analisis          : string
+  num_articulos           : number
+  tematicas_detectadas    : Array<{ tema: string; porcentaje: number }>
+  keywords_posicionamiento: string[]
+  resumen                 : {
+    resumen_ejecutivo      ?: string
+    fortalezas             ?: string[]
+    debilidades            ?: string[]
+    keywords_principales   ?: string[]
+    oportunidades_vs_cliente?: string[]
+    frecuencia_publicacion ?: string
+    enfoque_editorial      ?: string
+    periodo_detectado      ?: string
+  } | null
+  estado : 'completado' | 'error' | 'procesando'
+}
+
+interface ReferenciaEditorial {
+  id        : string
+  nombre    : string
+  url       : string | null
+  presencias: Array<{ plataforma: string; url: string | null }>
+}
+
+function InformeWebCard({
+  analisis,
+  onReanalizar,
+}: {
+  analisis     : AnalisisWebRow
+  onReanalizar : () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const { resumen } = analisis
+  const maxPct = Math.max(...(analisis.tematicas_detectadas?.map((t) => t.porcentaje) ?? [0.001]))
+
+  return (
+    <div className="mt-3 p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-3">
+
+      {/* Cabecera del informe */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
+          <span className="text-xs font-semibold text-blue-800">
+            {analisis.num_articulos} artículos · {new Date(analisis.fecha_analisis).toLocaleDateString('es-ES')}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onReanalizar}
+            className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Reanalizar
+          </button>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
+          >
+            {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {expanded ? 'Ocultar' : 'Ver informe'}
+          </button>
+        </div>
+      </div>
+
+      {/* Resumen ejecutivo */}
+      {resumen?.resumen_ejecutivo && (
+        <p className="text-xs text-blue-700 leading-relaxed">
+          {resumen.resumen_ejecutivo}
+        </p>
+      )}
+
+      {/* Informe expandible */}
+      {expanded && (
+        <div className="space-y-4 pt-2 border-t border-blue-200">
+
+          {/* Temáticas */}
+          {analisis.tematicas_detectadas?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Temáticas</p>
+              <div className="space-y-1.5">
+                {analisis.tematicas_detectadas.slice(0, 7).map((t, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600 w-32 shrink-0 truncate">{t.tema}</span>
+                    <div className="flex-1 bg-blue-100 rounded-full h-3 overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all"
+                        style={{ width: `${maxPct > 0 ? Math.round((t.porcentaje / maxPct) * 100) : 0}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 w-8 text-right shrink-0">{t.porcentaje}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Datos editoriales */}
+          {(resumen?.frecuencia_publicacion || resumen?.periodo_detectado) && (
+            <div className="flex flex-wrap gap-4 text-xs">
+              {resumen.frecuencia_publicacion && (
+                <div>
+                  <span className="text-gray-500">Frecuencia: </span>
+                  <span className="font-medium text-gray-700">{resumen.frecuencia_publicacion}</span>
+                </div>
+              )}
+              {resumen.periodo_detectado && (
+                <div>
+                  <span className="text-gray-500">Período: </span>
+                  <span className="font-medium text-gray-700">{resumen.periodo_detectado}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fortalezas + Debilidades */}
+          {(resumen?.fortalezas?.length || resumen?.debilidades?.length) && (
+            <div className="grid grid-cols-2 gap-3">
+              {resumen?.fortalezas && resumen.fortalezas.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-green-700 mb-1.5">Fortalezas</p>
+                  <ul className="space-y-1">
+                    {resumen.fortalezas.slice(0, 4).map((f, i) => (
+                      <li key={i} className="text-xs text-gray-600 flex items-start gap-1">
+                        <span className="text-green-500 shrink-0 mt-0.5">✓</span> {f}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {resumen?.debilidades && resumen.debilidades.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-red-600 mb-1.5">Debilidades</p>
+                  <ul className="space-y-1">
+                    {resumen.debilidades.slice(0, 4).map((d, i) => (
+                      <li key={i} className="text-xs text-gray-600 flex items-start gap-1">
+                        <span className="text-red-400 shrink-0 mt-0.5">✕</span> {d}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Keywords principales */}
+          {resumen?.keywords_principales && resumen.keywords_principales.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Keywords principales</p>
+              <div className="flex flex-wrap gap-1.5">
+                {resumen.keywords_principales.slice(0, 12).map((kw, i) => (
+                  <span key={i} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs">
+                    {kw}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Oportunidades */}
+          {resumen?.oportunidades_vs_cliente && resumen.oportunidades_vs_cliente.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                <Lightbulb className="h-3.5 w-3.5" />
+                Oportunidades detectadas
+              </p>
+              <ul className="space-y-1.5">
+                {resumen.oportunidades_vs_cliente.slice(0, 5).map((op, i) => (
+                  <li key={i} className="text-xs text-gray-700 flex items-start gap-1.5">
+                    <span className="text-amber-500 shrink-0 mt-0.5">→</span> {op}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ModalUrlAnalisis({
+  nombre,
+  urlInicial,
+  onAnalizar,
+  onCancelar,
+}: {
+  nombre      : string
+  urlInicial  : string
+  onAnalizar  : (url: string) => void
+  onCancelar  : () => void
+}) {
+  const [url, setUrl] = useState(urlInicial)
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!url.trim()) return
+    onAnalizar(url.trim())
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+        <h3 className="text-base font-semibold text-gray-900 mb-1">Analizar contenido web</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Introduce la URL del blog o web de <strong>{nombre}</strong>
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.ejemplo.com/blog"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            autoFocus
+            required
+          />
+          <p className="text-xs text-gray-400">
+            El agente buscará el sitemap/RSS, extraerá hasta 50 artículos y generará un informe con IA.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={onCancelar} className="text-xs">
+              Cancelar
+            </Button>
+            <Button type="submit" size="sm" disabled={!url.trim()} className="gap-1.5 text-xs">
+              <Globe className="h-3.5 w-3.5" />
+              Analizar
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+const MENSAJES_ANALISIS = [
+  'Buscando contenido publicado...',
+  'Extrayendo artículos...',
+  'Analizando con IA...',
+  'Casi listo...',
+]
+
+function AnalisisWebCompetidores({ clientId }: { clientId: string }) {
+  const [refs, setRefs]               = useState<ReferenciaEditorial[]>([])
+  const [analisisMap, setAnalisisMap] = useState<Record<string, AnalisisWebRow | null>>({})
+  const [analizando, setAnalizando]   = useState<string | null>(null)
+  const [mensajeCarga, setMensajeCarga] = useState('')
+  const [urlModal, setUrlModal]       = useState<{ refId: string; nombre: string; url: string } | null>(null)
+  const [error, setError]             = useState<string | null>(null)
+  const [cargando, setCargando]       = useState(true)
+
+  // Cargar competidores editoriales y sus análisis existentes
+  useEffect(() => {
+    async function cargar() {
+      setCargando(true)
+      try {
+        const [refsRes, analisisRes] = await Promise.all([
+          fetch(`/api/clientes/${clientId}/referencias`),
+          fetch(`/api/analisis-web?cliente_id=${clientId}`),
+        ])
+        if (!refsRes.ok) return
+
+        const { referencias } = await refsRes.json() as { referencias: Array<{
+          id: string; nombre: string; tipo: string; url: string | null
+          presencias: Array<{ plataforma: string; url: string | null }>
+        }> }
+
+        // Sólo competidores editoriales activos
+        const editoriales: ReferenciaEditorial[] = referencias
+          .filter((r) => r.tipo === 'competidor_editorial')
+          .map((r) => ({ id: r.id, nombre: r.nombre, url: r.url, presencias: r.presencias ?? [] }))
+
+        setRefs(editoriales)
+
+        // Mapear análisis por referencia_editorial_id
+        if (analisisRes.ok) {
+          const { analisis } = await analisisRes.json() as { analisis: AnalisisWebRow[] }
+          const map: Record<string, AnalisisWebRow | null> = {}
+          editoriales.forEach((r) => { map[r.id] = null })
+          analisis
+            .filter((a) => a.referencia_editorial_id && a.tipo === 'competidor')
+            .forEach((a) => { if (a.referencia_editorial_id) map[a.referencia_editorial_id] = a })
+          setAnalisisMap(map)
+        }
+      } catch { /* silencioso */ }
+      finally { setCargando(false) }
+    }
+    cargar()
+  }, [clientId])
+
+  // Rotar mensajes durante el análisis
+  useEffect(() => {
+    if (!analizando) { setMensajeCarga(''); return }
+    let idx = 0
+    setMensajeCarga(MENSAJES_ANALISIS[0])
+    const timer = setInterval(() => {
+      idx = (idx + 1) % MENSAJES_ANALISIS.length
+      setMensajeCarga(MENSAJES_ANALISIS[idx])
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [analizando])
+
+  async function iniciarAnalisis(refId: string, url: string) {
+    const ref = refs.find((r) => r.id === refId)
+    if (!ref) return
+    setUrlModal(null)
+    setAnalizando(refId)
+    setError(null)
+    try {
+      const res = await fetch('/api/analisis-web', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          url,
+          cliente_id              : clientId,
+          referencia_editorial_id : refId,
+          tipo                    : 'competidor',
+          nombre_competidor       : ref.nombre,
+        }),
+      })
+      const data = await res.json() as { error?: string } & Record<string, unknown>
+      if (!res.ok) throw new Error(data.error ?? 'Error en el análisis')
+
+      // Recargar análisis
+      const getRes = await fetch(`/api/analisis-web?cliente_id=${clientId}`)
+      if (getRes.ok) {
+        const { analisis } = await getRes.json() as { analisis: AnalisisWebRow[] }
+        const map = { ...analisisMap }
+        analisis
+          .filter((a) => a.referencia_editorial_id && a.tipo === 'competidor')
+          .forEach((a) => { if (a.referencia_editorial_id) map[a.referencia_editorial_id] = a })
+        setAnalisisMap(map)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error desconocido')
+    } finally {
+      setAnalizando(null)
+    }
+  }
+
+  if (cargando) return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center gap-2 text-sm text-gray-400">
+      <Loader2 className="h-4 w-4 animate-spin" /> Cargando competidores editoriales...
+    </div>
+  )
+
+  if (refs.length === 0) return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Globe className="h-5 w-5 text-blue-600" />
+        <h2 className="text-base font-semibold text-gray-900">Análisis de contenido web</h2>
+      </div>
+      <p className="text-sm text-gray-400">
+        Añade competidores editoriales en la sección &quot;Competencia editorial&quot; de arriba para poder analizar su contenido.
+      </p>
+    </div>
+  )
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Globe className="h-5 w-5 text-blue-600" />
+        <h2 className="text-base font-semibold text-gray-900">Análisis de contenido web</h2>
+        <span className="text-xs text-gray-400">Benchmark editorial de la competencia</span>
+      </div>
+
+      {error && (
+        <div className="mb-4 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      <div className="divide-y divide-gray-100">
+        {refs.map((ref) => {
+          const analisis       = analisisMap[ref.id]
+          const esteAnalizando = analizando === ref.id
+
+          // Prefill URL: presencia web > url directa > último análisis > vacío
+          const urlWeb    = ref.presencias.find((p) => p.plataforma === 'web')?.url ?? null
+          const urlSugerida = analisis?.url_analizada ?? urlWeb ?? ref.url ?? ''
+
+          return (
+            <div key={ref.id} className="py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="h-7 w-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                    <span className="text-xs font-bold text-blue-700">
+                      {ref.nombre.slice(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium text-gray-800 truncate block">{ref.nombre}</span>
+                    {analisis && analisis.estado !== 'error' && (
+                      <span className="inline-flex items-center gap-1 text-xs text-green-700 font-medium">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Analizado · {new Date(analisis.fecha_analisis).toLocaleDateString('es-ES')}
+                      </span>
+                    )}
+                    {analisis?.estado === 'error' && (
+                      <span className="inline-flex items-center gap-1 text-xs text-red-600 font-medium">
+                        <AlertCircle className="h-3 w-3" />
+                        Error en análisis anterior
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 ml-3">
+                  {esteAnalizando ? (
+                    <div className="flex items-center gap-1.5 text-xs text-blue-600">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span className="hidden sm:inline">{mensajeCarga}</span>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                      onClick={() => setUrlModal({ refId: ref.id, nombre: ref.nombre, url: urlSugerida })}
+                    >
+                      <Globe className="h-3.5 w-3.5" />
+                      {analisis && analisis.estado !== 'error' ? 'Reanalizar' : 'Analizar contenido'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Informe */}
+              {analisis && analisis.estado !== 'error' && !esteAnalizando && (
+                <InformeWebCard
+                  analisis={analisis}
+                  onReanalizar={() => setUrlModal({ refId: ref.id, nombre: ref.nombre, url: urlSugerida })}
+                />
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Modal URL */}
+      {urlModal && (
+        <ModalUrlAnalisis
+          nombre={urlModal.nombre}
+          urlInicial={urlModal.url}
+          onAnalizar={(url) => iniciarAnalisis(urlModal.refId, url)}
+          onCancelar={() => setUrlModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -750,6 +1214,7 @@ export default function CompetitiveIntelligenceClient({
   manageOnly = false,
   readOnlyCompetitors = false,
   sectionTitle,
+  showAnalisisWeb = false,
 }: Props) {
   const router = useRouter()
   const [competitors, setCompetitors]       = useState<Competitor[]>(initialCompetitors)
@@ -818,11 +1283,26 @@ export default function CompetitiveIntelligenceClient({
         details:             Array<{ page_name: string; ads_found: number; error?: string }>
       }
       setToasts((prev) => prev.filter((t) => t.id !== tid))
-      const errors = data.details.filter((d) => d.error)
-      if (errors.length > 0) {
+
+      const errors    = data.details.filter((d) => d.error)
+      const hasErrors = errors.length > 0
+      const hasAds    = data.ads_found > 0
+
+      if (hasErrors && !hasAds) {
+        // Todos fallaron y no hay ads
         addToast(`Google scan: ${errors[0].error}`, 'error')
+      } else if (hasErrors && hasAds) {
+        // Scan parcial: algunos fallaron pero otros encontraron ads
+        addToast(`Google scan · ${data.ads_found} ads · ${errors.length} competidor(es) con error`, 'success')
+        router.refresh()
       } else {
-        addToast(`Google scan · ${data.ads_found} ads encontrados · ${data.ads_new} nuevos`, 'success')
+        // Todo bien
+        addToast(
+          data.ads_found > 0
+            ? `Google scan · ${data.ads_found} ads encontrados · ${data.ads_new} nuevos`
+            : `Google scan completado · 0 anuncios activos encontrados`,
+          'success',
+        )
         router.refresh()
       }
     } else {
@@ -877,6 +1357,11 @@ export default function CompetitiveIntelligenceClient({
         hideCrudButtons={readOnlyCompetitors}
         sectionTitle={sectionTitle}
       />
+
+      {/* Sección análisis web por competidor */}
+      {(showAnalisisWeb || !manageOnly) && (
+        <AnalisisWebCompetidores clientId={clientId} />
+      )}
 
       {!manageOnly && (
         <>

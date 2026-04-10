@@ -19,6 +19,7 @@ import {
   Settings,
   Archive,
   CalendarDays,
+  Share2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -56,6 +57,11 @@ const navItems = [
     titulo: 'Calendario',
     href: '/strategy/calendario',
     icono: CalendarDays,
+  },
+  {
+    titulo: 'Social Media',
+    href: '/social',
+    icono: Share2,
   },
   {
     titulo: 'Pedidos',

@@ -31,115 +31,61 @@ export type DesgloseTipo = {
 }
 
 export type DesgloseServicio = {
-  servicio    : string
-  label       : string
-  color       : string
-  llamadas    : number
-  coste_total : number
+  servicio   : string
+  label      : string
+  color      : string
+  coste_total: number
+  llamadas   : number
 }
 
 export type CostesDashboardData = {
-  mes                  : number
-  anyo                 : number
-  totalMes             : number
-  costeMedioContenido  : number
-  numContenidos        : number
-  proyeccionFinMes     : number
-  tablaContenidos      : FilaTablaContenido[]
-  costesPorCliente     : CosteCliente[]
-  desglosePorTipo      : DesgloseTipo[]
-  desgloseServicio     : DesgloseServicio[]
-  clientes             : Array<{ id: string; nombre: string }>
-  filtroCliente        : string | null
-  pagina               : number
-  totalPaginas         : number
+  mes                 : number
+  anyo                : number
+  totalMes            : number
+  costeMedioContenido : number
+  numContenidos       : number
+  proyeccionFinMes    : number
+  tablaContenidos     : FilaTablaContenido[]
+  costesPorCliente    : CosteCliente[]
+  desglosePorTipo     : DesgloseTipo[]
+  desgloseServicio    : DesgloseServicio[]
+  clientes            : Array<{ id: string; nombre: string }>
+  filtroCliente       : string | null
+  pagina              : number
+  totalPaginas        : number
 }
 
 const ETIQUETAS_TIPO: Record<string, string> = {
-  // Claude API — contenidos
-  borrador          : 'Generación de borradores',
-  copiloto          : 'Conversaciones copiloto',
-  revision          : 'Revisiones GEO-SEO',
-  humanizacion      : 'Humanizador de texto',
-  brief_seo         : 'Brief SEO',
-  prompt_imagen     : 'Prompts de imagen',
-  // Claude API — otros módulos
-  inspiracion       : 'Agente Inspiración',
-  estrategia_claude : 'Estrategia (Claude)',
-  georadar_claude   : 'GEORadar — Claude',
-  // OpenAI
-  rag_embedding     : 'Embeddings RAG',
-  georadar_gpt4     : 'GEORadar — GPT-4o',
-  // Gemini / Perplexity
-  georadar_gemini   : 'GEORadar — Gemini',
-  georadar_perplexity: 'GEORadar — Perplexity',
-  // Imágenes
-  imagen_flux       : 'Imágenes destacadas (FLUX)',
-  ad_creative       : 'Piezas sociales (FLUX)',
-  video_reel        : 'Reels (FLUX)',
-  video_story       : 'Stories (FLUX)',
-  // APIs externas
-  serpapi           : 'SerpApi',
-  datasorseo        : 'DataForSEO',
-  georadar_scan     : 'GEORadar (scan completo)',
+  borrador           : 'Generación de borradores',
+  copiloto           : 'Conversaciones copiloto',
+  revision           : 'Revisiones GEO-SEO',
+  brief_seo          : 'Brief SEO',
+  prompt_imagen      : 'Prompts de imagen',
+  rag_embedding      : 'Embeddings RAG',
+  imagen_flux        : 'Imágenes destacadas',
+  ad_creative        : 'Piezas sociales (FLUX)',
+  video_reel         : 'Vídeos Reel (FLUX)',
+  video_story        : 'Vídeos Story (FLUX)',
+  humanizacion       : 'Humanización de texto',
+  georadar_claude    : 'GEORadar · Claude',
+  georadar_gpt4      : 'GEORadar · GPT-4o',
+  georadar_gemini    : 'GEORadar · Gemini',
+  georadar_perplexity: 'GEORadar · Perplexity',
+  serpapi_search     : 'Búsquedas SerpApi',
+  dataforseo_keywords: 'DataForSEO Ideas',
+  dataforseo_volume  : 'DataForSEO Volúmenes',
+  competitor_keywords: 'DataForSEO Competidores',
+  analisis_web       : 'Análisis web (Claude)',
 }
 
-// Agrupación de tipos en servicios para el desglose visual
-const SERVICIOS: Array<{
-  servicio : string
-  label    : string
-  color    : string
-  tipos    : string[]
-}> = [
-  {
-    servicio: 'claude',
-    label   : 'Claude API',
-    color   : 'bg-violet-500',
-    tipos   : ['borrador','copiloto','revision','humanizacion','brief_seo',
-               'prompt_imagen','inspiracion','estrategia_claude','georadar_claude'],
-  },
-  {
-    servicio: 'gpt4',
-    label   : 'OpenAI GPT-4o',
-    color   : 'bg-emerald-500',
-    tipos   : ['georadar_gpt4'],
-  },
-  {
-    servicio: 'gemini',
-    label   : 'Google Gemini',
-    color   : 'bg-blue-500',
-    tipos   : ['georadar_gemini'],
-  },
-  {
-    servicio: 'perplexity',
-    label   : 'Perplexity',
-    color   : 'bg-cyan-500',
-    tipos   : ['georadar_perplexity'],
-  },
-  {
-    servicio: 'flux',
-    label   : 'Imágenes FLUX',
-    color   : 'bg-amber-500',
-    tipos   : ['imagen_flux','ad_creative','video_reel','video_story'],
-  },
-  {
-    servicio: 'embeddings',
-    label   : 'Embeddings RAG',
-    color   : 'bg-indigo-400',
-    tipos   : ['rag_embedding'],
-  },
-  {
-    servicio: 'serpapi',
-    label   : 'SerpApi',
-    color   : 'bg-orange-500',
-    tipos   : ['serpapi'],
-  },
-  {
-    servicio: 'dataforseo',
-    label   : 'DataForSEO',
-    color   : 'bg-rose-500',
-    tipos   : ['datasorseo'],
-  },
+const SERVICIOS_GRUPOS: Array<{ id: string; label: string; color: string; tipos: string[] }> = [
+  { id: 'claude',     label: 'Claude (Anthropic)',  color: 'bg-orange-500',  tipos: ['borrador','copiloto','revision','brief_seo','prompt_imagen','humanizacion','georadar_claude','analisis_web'] },
+  { id: 'flux',       label: 'FLUX (FAL.ai)',        color: 'bg-pink-500',    tipos: ['imagen_flux','ad_creative','video_reel','video_story'] },
+  { id: 'apis',       label: 'APIs externas',        color: 'bg-amber-500',   tipos: ['serpapi_search','dataforseo_keywords','dataforseo_volume','competitor_keywords'] },
+  { id: 'rag',        label: 'RAG (OpenAI Embed)',   color: 'bg-teal-500',    tipos: ['rag_embedding'] },
+  { id: 'gpt4',       label: 'GPT-4o (OpenAI)',      color: 'bg-emerald-500', tipos: ['georadar_gpt4'] },
+  { id: 'gemini',     label: 'Gemini (Google)',       color: 'bg-blue-500',    tipos: ['georadar_gemini'] },
+  { id: 'perplexity', label: 'Perplexity',            color: 'bg-purple-500',  tipos: ['georadar_perplexity'] },
 ]
 
 const POR_PAGINA = 20
@@ -171,7 +117,7 @@ export default async function CostesPage({
 
   const regs = registros ?? []
 
-  // ── 2. Datos de contenidos, clientes y proyectos vinculados ──────────────
+  // ── 2. Datos de contenidos y sus relaciones ──────────────────────────────
   const contenidoIds = Array.from(new Set(regs.map(r => r.contenido_id).filter(Boolean))) as string[]
 
   const [
@@ -193,8 +139,11 @@ export default async function CostesPage({
 
   const contenidosMap = new Map((contenidosRaw ?? []).map(c => [c.id, c]))
 
-  // Clientes y proyectos de los contenidos
-  const clienteIds   = Array.from(new Set((contenidosRaw ?? []).map(c => c.cliente_id).filter(Boolean)))  as string[]
+  // Recopilar todos los cliente_ids: directos en los registros + via contenidos
+  const clienteIdsDirectos = regs.map(r => r.cliente_id).filter(Boolean) as string[]
+  const clienteIdsCont     = (contenidosRaw ?? []).map(c => c.cliente_id).filter(Boolean) as string[]
+  const todosClienteIds    = Array.from(new Set([...clienteIdsDirectos, ...clienteIdsCont]))
+
   const proyIdsCont  = Array.from(new Set((contenidosRaw ?? []).map(c => c.proyecto_id).filter(Boolean))) as string[]
   const proyectoIds  = Array.from(new Set(regs.map(r => r.proyecto_id).filter(Boolean))) as string[]
   const todosProyIds = Array.from(new Set([...proyectoIds, ...proyIdsCont]))
@@ -203,8 +152,8 @@ export default async function CostesPage({
     { data: clientesDetalle },
     { data: proyectosDetalle },
   ] = await Promise.all([
-    clienteIds.length > 0
-      ? supabase.from('clientes').select('id, nombre').in('id', clienteIds)
+    todosClienteIds.length > 0
+      ? supabase.from('clientes').select('id, nombre').in('id', todosClienteIds)
       : Promise.resolve({ data: [] }),
     todosProyIds.length > 0
       ? supabase.from('proyectos').select('id, nombre, cliente_id').in('id', todosProyIds)
@@ -214,20 +163,15 @@ export default async function CostesPage({
   const clientesMap  = new Map((clientesDetalle ?? []).map(c => [c.id, c]))
   const proyectosMap = new Map((proyectosDetalle ?? []).map(p => [p.id, p]))
 
-  // Mapa de clientes completo (para label de los registros directos)
-  const clientesAllMap = new Map((clientesAll ?? []).map(c => [c.id, c]))
-
-  // ── 3. Helper: obtener cliente_id efectivo de un registro ────────────────
-  // Un registro puede tener cliente_id directamente (nuevo) o via contenido_id (antiguo)
-  function getClienteIdEfectivo(r: typeof regs[0]): string | null {
-    if (r.cliente_id) return r.cliente_id
-    if (r.contenido_id) return contenidosMap.get(r.contenido_id)?.cliente_id ?? null
-    return null
+  // Helper para obtener el cliente_id efectivo de un registro
+  function getClienteId(r: (typeof regs)[0]): string | null {
+    return r.cliente_id
+      ?? (r.contenido_id ? (contenidosMap.get(r.contenido_id)?.cliente_id ?? null) : null)
   }
 
-  // ── 4. Filtrar por cliente ────────────────────────────────────────────────
+  // ── 3. KPIs ──────────────────────────────────────────────────────────────
   const regsFiltrados = filtroCliente
-    ? regs.filter(r => getClienteIdEfectivo(r) === filtroCliente)
+    ? regs.filter(r => getClienteId(r) === filtroCliente)
     : regs
 
   // ── 5. KPIs ───────────────────────────────────────────────────────────────
@@ -285,16 +229,16 @@ export default async function CostesPage({
   const totalPaginas = Math.max(1, Math.ceil(tablaCompleta.length / POR_PAGINA))
   const tablaContenidos = tablaCompleta.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
 
-  // ── 7. Coste por cliente (incluye registros directos sin contenido_id) ───
+  // ── 5. Coste por cliente (incluye registros sin contenido) ───────────────
   const aggCliente = new Map<string, { nombre: string; coste_total: number }>()
   regsFiltrados.forEach(r => {
-    const cid = getClienteIdEfectivo(r)
-    if (!cid) return
-    const cli = clientesAllMap.get(cid) ?? clientesMap.get(cid)
+    const clienteId = getClienteId(r)
+    if (!clienteId) return
+    const cli    = clientesMap.get(clienteId)
     const nombre = cli?.nombre ?? '(sin cliente)'
-    const curr = aggCliente.get(cid) ?? { nombre, coste_total: 0 }
+    const curr   = aggCliente.get(clienteId) ?? { nombre, coste_total: 0 }
     curr.coste_total += Number(r.coste_usd)
-    aggCliente.set(cid, curr)
+    aggCliente.set(clienteId, curr)
   })
 
   const costesPorCliente: CosteCliente[] = Array.from(aggCliente.entries())
@@ -323,27 +267,19 @@ export default async function CostesPage({
     }))
     .sort((a, b) => b.coste_total - a.coste_total)
 
-  // ── 9. Desglose por servicio ──────────────────────────────────────────────
-  const desgloseServicio: DesgloseServicio[] = SERVICIOS
-    .map(srv => {
-      const tiposSet = new Set(srv.tipos)
-      let llamadas   = 0
-      let coste_total = 0
-      regsFiltrados.forEach(r => {
-        if (tiposSet.has(r.tipo_operacion)) {
-          llamadas    += 1
-          coste_total += Number(r.coste_usd)
-        }
-      })
+  // ── 7. Desglose por servicio / proveedor ─────────────────────────────────
+  const desgloseServicio: DesgloseServicio[] = SERVICIOS_GRUPOS
+    .map(grupo => {
+      const registrosGrupo = regsFiltrados.filter(r => grupo.tipos.includes(r.tipo_operacion))
       return {
-        servicio   : srv.servicio,
-        label      : srv.label,
-        color      : srv.color,
-        llamadas,
-        coste_total,
+        servicio   : grupo.id,
+        label      : grupo.label,
+        color      : grupo.color,
+        coste_total: registrosGrupo.reduce((s, r) => s + Number(r.coste_usd), 0),
+        llamadas   : registrosGrupo.length,
       }
     })
-    .filter(s => s.coste_total > 0)
+    .filter(g => g.coste_total > 0)
     .sort((a, b) => b.coste_total - a.coste_total)
 
   // ── Props para el cliente ─────────────────────────────────────────────────
