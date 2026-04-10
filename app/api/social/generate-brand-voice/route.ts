@@ -43,48 +43,49 @@ export async function POST(request: NextRequest) {
   const { clientId } = body
   if (!clientId) return NextResponse.json({ error: 'clientId requerido' }, { status: 400 })
 
-  const supabase = createAdminClient()
+  try {
+    const supabase = createAdminClient()
 
-  // Cargar datos (brand_context es opcional — silencioso si no existe)
-  const [
-    { data: cliente },
-    { data: platforms },
-    { data: strategy },
-    { data: architecture },
-    brandContextResult,
-  ] = await Promise.all([
-    supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
-    supabase.from('social_platforms').select('platform, is_active, strategic_priority').eq('client_id', clientId).order('platform'),
-    supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
-    supabase.from('social_content_architecture').select('editorial_pillars').eq('client_id', clientId).maybeSingle(),
-    supabase.from('brand_context').select('tone_of_voice, style_keywords, restrictions, raw_summary').eq('client_id', clientId).maybeSingle().then(
-      (r) => r,
-      () => ({ data: null, error: null }), // Silencioso si la tabla no existe
-    ),
-  ])
+    // Cargar datos (brand_context es opcional — silencioso si no existe)
+    const [
+      { data: cliente },
+      { data: platforms },
+      { data: strategy },
+      { data: architecture },
+      brandContextResult,
+    ] = await Promise.all([
+      supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
+      supabase.from('social_platforms').select('platform, strategic_priority').eq('client_id', clientId).order('platform'),
+      supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
+      supabase.from('social_content_architecture').select('editorial_pillars').eq('client_id', clientId).maybeSingle(),
+      supabase.from('brand_context').select('tone_of_voice, style_keywords, restrictions, raw_summary').eq('client_id', clientId).maybeSingle().then(
+        (r) => r,
+        () => ({ data: null, error: null }), // Silencioso si la tabla no existe
+      ),
+    ])
 
-  if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+    if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
 
-  const brandContext = brandContextResult?.data ?? null
+    const brandContext = (brandContextResult as { data: any } | null)?.data ?? null
 
-  const activePlatforms = (platforms ?? [])
-    .filter((p) => p.is_active || p.strategic_priority === 'alta' || p.strategic_priority === 'mantener')
-    .map((p) => PLATFORM_LABELS[p.platform] ?? p.platform)
+    const activePlatforms = (platforms ?? [])
+      .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
+      .map((p) => PLATFORM_LABELS[p.platform] ?? p.platform)
 
-  const editorialPillarsText = jsonbToText(architecture?.editorial_pillars).substring(0, 500)
+    const editorialPillarsText = jsonbToText(architecture?.editorial_pillars).substring(0, 500)
 
-  // Construir sección de brand_context si existe
-  const brandContextSection = brandContext
-    ? `
+    // Construir sección de brand_context si existe
+    const brandContextSection = brandContext
+      ? `
 IDENTIDAD DE MARCA (del brandbook):
 ${brandContext.tone_of_voice ? `Tono de voz: ${brandContext.tone_of_voice}` : ''}
 ${brandContext.style_keywords?.length ? `Keywords de estilo: ${brandContext.style_keywords.join(', ')}` : ''}
 ${brandContext.restrictions ? `Restricciones de marca: ${brandContext.restrictions}` : ''}
-${brandContext.raw_summary ? `Resumen de marca: ${brandContext.raw_summary.substring(0, 500)}` : ''}
+${brandContext.raw_summary ? `Resumen de marca: ${String(brandContext.raw_summary).substring(0, 500)}` : ''}
 `.trim()
-    : ''
+      : ''
 
-  const userPrompt = `CLIENTE: ${cliente.nombre}${cliente.sector ? ` (sector: ${cliente.sector})` : ''}
+    const userPrompt = `CLIENTE: ${cliente.nombre}${cliente.sector ? ` (sector: ${cliente.sector})` : ''}
 
 ${brandContextSection}
 
@@ -94,7 +95,7 @@ ${editorialPillarsText || '(no disponibles)'}
 PLATAFORMAS ACTIVAS: ${activePlatforms.join(', ') || '(no definidas)'}
 
 ESTRATEGIA (extracto Fase 2):
-${strategy?.platform_decisions ? strategy.platform_decisions.substring(0, 400) : '(no disponible)'}
+${strategy?.platform_decisions ? String(strategy.platform_decisions).substring(0, 400) : '(no disponible)'}
 
 Genera las guidelines de tono y voz en cuatro bloques:
 
@@ -133,13 +134,12 @@ Responde SOLO con JSON sin markdown:
   "consistencyGuidelines": "..."
 }`
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const anthropic = new Anthropic()
 
-  try {
     const response = await anthropic.messages.create({
-      model : 'claude-sonnet-4-5',
+      model     : 'claude-sonnet-4-5',
       max_tokens: 5120,
-      system: `Eres un consultor senior especializado en identidad editorial y brand voice para redes sociales. Tu trabajo es definir cómo una marca habla en redes: no solo el tono abstracto, sino las reglas concretas que un community manager puede aplicar en cada post.
+      system    : `Eres un consultor senior especializado en identidad editorial y brand voice para redes sociales. Tu trabajo es definir cómo una marca habla en redes: no solo el tono abstracto, sino las reglas concretas que un community manager puede aplicar en cada post.
 
 Las guidelines deben ser operativas, no teóricas. Cada regla debe poder aplicarse en 5 segundos antes de publicar.`,
       messages: [{ role: 'user', content: userPrompt }],
