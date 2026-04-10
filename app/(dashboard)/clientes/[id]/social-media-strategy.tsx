@@ -7,7 +7,10 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import Phase1Audit from '@/components/social/phases/Phase1Audit'
+import Phase1Audit         from '@/components/social/phases/Phase1Audit'
+import Phase2Strategy     from '@/components/social/phases/Phase2Strategy'
+import Phase3Architecture from '@/components/social/phases/Phase3Architecture'
+import Phase4BrandVoice   from '@/components/social/phases/Phase4BrandVoice'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -282,15 +285,23 @@ export default function SocialMediaStrategy({ clientId }: Props) {
             {/* Contenido de la fase */}
             {!unlocked ? (
               <PhaseBlocked phaseNumber={fase.numero} />
-            ) : phaseStatus.completed ? (
-              <PhaseCompleted
-                phaseNumber  = {fase.numero}
-                approvedAt   = {phaseStatus.approvedAt}
-                approving    = {approving === fase.numero}
-                onEdit       = {() => handleApprove(fase.numero)} // undo
-              />
             ) : fase.numero === 1 ? (
               <Phase1Audit
+                clientId        = {clientId}
+                onPhaseComplete = {fetchStatus}
+              />
+            ) : fase.numero === 2 ? (
+              <Phase2Strategy
+                clientId        = {clientId}
+                onPhaseComplete = {fetchStatus}
+              />
+            ) : fase.numero === 3 ? (
+              <Phase3Architecture
+                clientId        = {clientId}
+                onPhaseComplete = {fetchStatus}
+              />
+            ) : fase.numero === 4 ? (
+              <Phase4BrandVoice
                 clientId        = {clientId}
                 onPhaseComplete = {fetchStatus}
               />
