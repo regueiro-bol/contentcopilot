@@ -347,18 +347,19 @@ export async function POST(request: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: {
-    url              : string
-    cliente_id       : string
-    competidor_id   ?: string
-    tipo             : 'cliente' | 'competidor'
-    max_articulos   ?: number
-    nombre_competidor?: string
+    url                     : string
+    cliente_id              : string
+    competidor_id          ?: string
+    referencia_editorial_id?: string
+    tipo                    : 'cliente' | 'competidor'
+    max_articulos          ?: number
+    nombre_competidor      ?: string
   }
   try { body = await request.json() } catch {
     return NextResponse.json({ error: 'Body JSON inválido' }, { status: 400 })
   }
 
-  const { url, cliente_id, competidor_id, tipo, nombre_competidor } = body
+  const { url, cliente_id, competidor_id, referencia_editorial_id, tipo, nombre_competidor } = body
   const maxArts = Math.min(body.max_articulos ?? 50, 50)
 
   if (!url || !cliente_id) {
@@ -379,7 +380,8 @@ export async function POST(request: NextRequest) {
   if (artBasicos.length === 0) {
     await supabase.from('analisis_web').insert({
       cliente_id,
-      competidor_id: competidor_id ?? null,
+      competidor_id           : competidor_id ?? null,
+      referencia_editorial_id : referencia_editorial_id ?? null,
       tipo,
       url_analizada: urlNorm,
       num_articulos : 0,
@@ -452,7 +454,7 @@ export async function POST(request: NextRequest) {
       tokens_input  : inputTok,
       tokens_output : outputTok,
       coste_usd     : calcularCosteClaudeUSD(inputTok, outputTok),
-      metadatos     : { dominio, tipo, competidor_id: competidor_id ?? null },
+      metadatos     : { dominio, tipo, competidor_id: competidor_id ?? null, referencia_editorial_id: referencia_editorial_id ?? null },
     }).catch(console.error)
   }
 
@@ -462,6 +464,7 @@ export async function POST(request: NextRequest) {
     .insert({
       cliente_id,
       competidor_id           : competidor_id ?? null,
+      referencia_editorial_id : referencia_editorial_id ?? null,
       tipo,
       url_analizada           : urlNorm,
       num_articulos           : artParaAnalisis.length,

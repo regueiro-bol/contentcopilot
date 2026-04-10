@@ -1558,6 +1558,7 @@ export default function ClienteDetalleClient({
               latestReport={latestCiReport}
               embedded
               manageOnly
+              showAnalisisWeb
               sectionTitle="Competencia publicitaria"
             />
           </div>

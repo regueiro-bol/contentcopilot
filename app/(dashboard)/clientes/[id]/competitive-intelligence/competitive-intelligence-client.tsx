@@ -31,6 +31,8 @@ interface Props {
   readOnlyCompetitors?: boolean
   /** Texto del título de la sección de competidores. */
   sectionTitle?:        string
+  /** Muestra el bloque de análisis de contenido web por competidor. */
+  showAnalisisWeb?:     boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -743,6 +745,7 @@ function ReportView({ content, report }: { content: ReportContent; report: CiRep
 interface AnalisisWebRow {
   id                      : string
   competidor_id           : string | null
+  referencia_editorial_id : string | null
   tipo                    : 'cliente' | 'competidor'
   url_analizada           : string
   fecha_analisis          : string
@@ -760,6 +763,13 @@ interface AnalisisWebRow {
     periodo_detectado      ?: string
   } | null
   estado : 'completado' | 'error' | 'procesando'
+}
+
+interface ReferenciaEditorial {
+  id        : string
+  nombre    : string
+  url       : string | null
+  presencias: Array<{ plataforma: string; url: string | null }>
 }
 
 function InformeWebCard({
@@ -979,36 +989,53 @@ const MENSAJES_ANALISIS = [
   'Casi listo...',
 ]
 
-function AnalisisWebCompetidores({
-  clientId,
-  competitors,
-}: {
-  clientId   : string
-  competitors: Competitor[]
-}) {
+function AnalisisWebCompetidores({ clientId }: { clientId: string }) {
+  const [refs, setRefs]               = useState<ReferenciaEditorial[]>([])
   const [analisisMap, setAnalisisMap] = useState<Record<string, AnalisisWebRow | null>>({})
   const [analizando, setAnalizando]   = useState<string | null>(null)
   const [mensajeCarga, setMensajeCarga] = useState('')
-  const [urlModal, setUrlModal] = useState<{ competitorId: string; nombre: string; url: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [urlModal, setUrlModal]       = useState<{ refId: string; nombre: string; url: string } | null>(null)
+  const [error, setError]             = useState<string | null>(null)
+  const [cargando, setCargando]       = useState(true)
 
-  // Cargar análisis existentes
+  // Cargar competidores editoriales y sus análisis existentes
   useEffect(() => {
     async function cargar() {
+      setCargando(true)
       try {
-        const res = await fetch(`/api/analisis-web?cliente_id=${clientId}`)
-        if (!res.ok) return
-        const { analisis } = await res.json() as { analisis: AnalisisWebRow[] }
-        const map: Record<string, AnalisisWebRow | null> = {}
-        competitors.forEach((c) => { map[c.id] = null })
-        analisis.filter((a) => a.competidor_id && a.tipo === 'competidor').forEach((a) => {
-          if (a.competidor_id) map[a.competidor_id] = a
-        })
-        setAnalisisMap(map)
+        const [refsRes, analisisRes] = await Promise.all([
+          fetch(`/api/clientes/${clientId}/referencias`),
+          fetch(`/api/analisis-web?cliente_id=${clientId}`),
+        ])
+        if (!refsRes.ok) return
+
+        const { referencias } = await refsRes.json() as { referencias: Array<{
+          id: string; nombre: string; tipo: string; url: string | null
+          presencias: Array<{ plataforma: string; url: string | null }>
+        }> }
+
+        // Sólo competidores editoriales activos
+        const editoriales: ReferenciaEditorial[] = referencias
+          .filter((r) => r.tipo === 'competidor_editorial')
+          .map((r) => ({ id: r.id, nombre: r.nombre, url: r.url, presencias: r.presencias ?? [] }))
+
+        setRefs(editoriales)
+
+        // Mapear análisis por referencia_editorial_id
+        if (analisisRes.ok) {
+          const { analisis } = await analisisRes.json() as { analisis: AnalisisWebRow[] }
+          const map: Record<string, AnalisisWebRow | null> = {}
+          editoriales.forEach((r) => { map[r.id] = null })
+          analisis
+            .filter((a) => a.referencia_editorial_id && a.tipo === 'competidor')
+            .forEach((a) => { if (a.referencia_editorial_id) map[a.referencia_editorial_id] = a })
+          setAnalisisMap(map)
+        }
       } catch { /* silencioso */ }
+      finally { setCargando(false) }
     }
-    if (competitors.length > 0) cargar()
-  }, [clientId, competitors])
+    cargar()
+  }, [clientId])
 
   // Rotar mensajes durante el análisis
   useEffect(() => {
@@ -1022,11 +1049,11 @@ function AnalisisWebCompetidores({
     return () => clearInterval(timer)
   }, [analizando])
 
-  async function iniciarAnalisis(competitorId: string, url: string) {
-    const comp = competitors.find((c) => c.id === competitorId)
-    if (!comp) return
+  async function iniciarAnalisis(refId: string, url: string) {
+    const ref = refs.find((r) => r.id === refId)
+    if (!ref) return
     setUrlModal(null)
-    setAnalizando(competitorId)
+    setAnalizando(refId)
     setError(null)
     try {
       const res = await fetch('/api/analisis-web', {
@@ -1034,10 +1061,10 @@ function AnalisisWebCompetidores({
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
           url,
-          cliente_id       : clientId,
-          competidor_id    : competitorId,
-          tipo             : 'competidor',
-          nombre_competidor: comp.page_name,
+          cliente_id              : clientId,
+          referencia_editorial_id : refId,
+          tipo                    : 'competidor',
+          nombre_competidor       : ref.nombre,
         }),
       })
       const data = await res.json() as { error?: string } & Record<string, unknown>
@@ -1048,9 +1075,9 @@ function AnalisisWebCompetidores({
       if (getRes.ok) {
         const { analisis } = await getRes.json() as { analisis: AnalisisWebRow[] }
         const map = { ...analisisMap }
-        analisis.filter((a) => a.competidor_id && a.tipo === 'competidor').forEach((a) => {
-          if (a.competidor_id) map[a.competidor_id] = a
-        })
+        analisis
+          .filter((a) => a.referencia_editorial_id && a.tipo === 'competidor')
+          .forEach((a) => { if (a.referencia_editorial_id) map[a.referencia_editorial_id] = a })
         setAnalisisMap(map)
       }
     } catch (err) {
@@ -1060,7 +1087,23 @@ function AnalisisWebCompetidores({
     }
   }
 
-  if (competitors.length === 0) return null
+  if (cargando) return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center gap-2 text-sm text-gray-400">
+      <Loader2 className="h-4 w-4 animate-spin" /> Cargando competidores editoriales...
+    </div>
+  )
+
+  if (refs.length === 0) return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Globe className="h-5 w-5 text-blue-600" />
+        <h2 className="text-base font-semibold text-gray-900">Análisis de contenido web</h2>
+      </div>
+      <p className="text-sm text-gray-400">
+        Añade competidores editoriales en la sección &quot;Competencia editorial&quot; de arriba para poder analizar su contenido.
+      </p>
+    </div>
+  )
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -1078,32 +1121,35 @@ function AnalisisWebCompetidores({
       )}
 
       <div className="divide-y divide-gray-100">
-        {competitors.map((comp) => {
-          const analisis       = analisisMap[comp.id]
-          const esteAnalizando = analizando === comp.id
+        {refs.map((ref) => {
+          const analisis       = analisisMap[ref.id]
+          const esteAnalizando = analizando === ref.id
 
-          // Prerellenar URL: si page_name parece un dominio (tiene . y no espacios)
-          const urlSugerida = analisis?.url_analizada ?? (
-            comp.page_name.includes('.') && !comp.page_name.includes(' ')
-              ? `https://${comp.page_name}`
-              : ''
-          )
+          // Prefill URL: presencia web > url directa > último análisis > vacío
+          const urlWeb    = ref.presencias.find((p) => p.plataforma === 'web')?.url ?? null
+          const urlSugerida = analisis?.url_analizada ?? urlWeb ?? ref.url ?? ''
 
           return (
-            <div key={comp.id} className="py-4">
+            <div key={ref.id} className="py-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-7 w-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
                     <span className="text-xs font-bold text-blue-700">
-                      {comp.page_name.slice(0, 2).toUpperCase()}
+                      {ref.nombre.slice(0, 2).toUpperCase()}
                     </span>
                   </div>
                   <div className="min-w-0">
-                    <span className="text-sm font-medium text-gray-800 truncate block">{comp.page_name}</span>
-                    {analisis && (
+                    <span className="text-sm font-medium text-gray-800 truncate block">{ref.nombre}</span>
+                    {analisis && analisis.estado !== 'error' && (
                       <span className="inline-flex items-center gap-1 text-xs text-green-700 font-medium">
                         <CheckCircle2 className="h-3 w-3" />
                         Analizado · {new Date(analisis.fecha_analisis).toLocaleDateString('es-ES')}
+                      </span>
+                    )}
+                    {analisis?.estado === 'error' && (
+                      <span className="inline-flex items-center gap-1 text-xs text-red-600 font-medium">
+                        <AlertCircle className="h-3 w-3" />
+                        Error en análisis anterior
                       </span>
                     )}
                   </div>
@@ -1120,20 +1166,20 @@ function AnalisisWebCompetidores({
                       size="sm"
                       variant="outline"
                       className="gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
-                      onClick={() => setUrlModal({ competitorId: comp.id, nombre: comp.page_name, url: urlSugerida })}
+                      onClick={() => setUrlModal({ refId: ref.id, nombre: ref.nombre, url: urlSugerida })}
                     >
                       <Globe className="h-3.5 w-3.5" />
-                      {analisis ? 'Reanalizar' : 'Analizar contenido'}
+                      {analisis && analisis.estado !== 'error' ? 'Reanalizar' : 'Analizar contenido'}
                     </Button>
                   )}
                 </div>
               </div>
 
               {/* Informe */}
-              {analisis && !esteAnalizando && (
+              {analisis && analisis.estado !== 'error' && !esteAnalizando && (
                 <InformeWebCard
                   analisis={analisis}
-                  onReanalizar={() => setUrlModal({ competitorId: comp.id, nombre: comp.page_name, url: urlSugerida })}
+                  onReanalizar={() => setUrlModal({ refId: ref.id, nombre: ref.nombre, url: urlSugerida })}
                 />
               )}
             </div>
@@ -1146,7 +1192,7 @@ function AnalisisWebCompetidores({
         <ModalUrlAnalisis
           nombre={urlModal.nombre}
           urlInicial={urlModal.url}
-          onAnalizar={(url) => iniciarAnalisis(urlModal.competitorId, url)}
+          onAnalizar={(url) => iniciarAnalisis(urlModal.refId, url)}
           onCancelar={() => setUrlModal(null)}
         />
       )}
@@ -1168,6 +1214,7 @@ export default function CompetitiveIntelligenceClient({
   manageOnly = false,
   readOnlyCompetitors = false,
   sectionTitle,
+  showAnalisisWeb = false,
 }: Props) {
   const router = useRouter()
   const [competitors, setCompetitors]       = useState<Competitor[]>(initialCompetitors)
@@ -1312,11 +1359,8 @@ export default function CompetitiveIntelligenceClient({
       />
 
       {/* Sección análisis web por competidor */}
-      {!manageOnly && (
-        <AnalisisWebCompetidores
-          clientId={clientId}
-          competitors={competitors}
-        />
+      {(showAnalisisWeb || !manageOnly) && (
+        <AnalisisWebCompetidores clientId={clientId} />
       )}
 
       {!manageOnly && (

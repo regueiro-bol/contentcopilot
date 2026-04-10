@@ -55,6 +55,8 @@ export interface Competitor {
   platform:             string
   page_name:            string
   page_id:              string | null
+  url_web:              string | null
+  advertiser_name:      string | null
   active:               boolean
   check_frequency_days: number
   last_checked_at:      string | null
