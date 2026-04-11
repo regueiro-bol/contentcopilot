@@ -3,10 +3,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   ChevronLeft, ChevronRight, Plus, Loader2, FileText,
-  AlertCircle, X, Sparkles, ClipboardList,
+  AlertCircle, X, Sparkles, ClipboardList, Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import {
   PLATFORMS, PLATFORM_LABELS, PLATFORM_COLORS, STATUS_COLORS,
   type Platform,
@@ -17,6 +16,8 @@ import CalendarEntryDrawer, {
 import CalendarDraftReview, {
   type DraftEntry, type DraftStats,
 } from './CalendarDraftReview'
+import PostEditorDrawer from './PostEditorDrawer'
+import type { SocialPost } from './SocialPosts'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,16 @@ function computeStats(entries: DraftEntry[]): DraftStats {
 const TODAY    = new Date().toISOString().split('T')[0]
 const WEEKDAYS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
 
+/** Dot colours for the linked social_post status (shown inside calendar chips) */
+const POST_STATUS_CHIP: Record<string, { dot: string; faded?: boolean; showCheck?: boolean }> = {
+  borrador     : { dot: 'bg-gray-300' },
+  en_produccion: { dot: 'bg-yellow-300' },
+  aprobado     : { dot: 'bg-green-400' },
+  en_diseno    : { dot: 'bg-orange-400' },
+  listo        : { dot: 'bg-emerald-400' },
+  publicado    : { dot: 'bg-green-300', faded: true, showCheck: true },
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
@@ -134,6 +145,11 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
   const [drawerOpen,    setDrawerOpen]    = useState(false)
   const [editingEntry,  setEditingEntry]  = useState<CalendarEntry | null>(null)
   const [clickedDate,   setClickedDate]   = useState<string | undefined>()
+
+  // Post editor drawer (opened from calendar chips that have a social_post_id)
+  const [postEditorOpen,  setPostEditorOpen]  = useState(false)
+  const [editingPost,     setEditingPost]     = useState<SocialPost | null>(null)
+  const [loadingPostId,   setLoadingPostId]   = useState<string | null>(null)
 
   // Uncovered articles panel
   const [showUncovered, setShowUncovered] = useState(false)
@@ -265,6 +281,30 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
     setEditingEntry(entry)
     setClickedDate(undefined)
     setDrawerOpen(true)
+  }
+
+  /** Opens the PostEditorDrawer for the linked social post (fetches from API) */
+  async function openPostEditor(entry: CalendarEntry) {
+    if (!entry.social_post_id) { openEdit(entry); return }
+    setLoadingPostId(entry.social_post_id)
+    try {
+      const res = await fetch(`/api/social/posts?postId=${entry.social_post_id}`)
+      if (!res.ok) throw new Error('No se pudo cargar la pieza')
+      const post = await res.json() as SocialPost
+      setEditingPost(post)
+      setPostEditorOpen(true)
+    } catch {
+      // Fallback to calendar entry drawer on error
+      openEdit(entry)
+    } finally {
+      setLoadingPostId(null)
+    }
+  }
+
+  /** Smart chip click: opens PostEditorDrawer if entry has social_post_id, else CalendarEntryDrawer */
+  function handleChipClick(entry: CalendarEntry) {
+    if (entry.social_post_id) openPostEditor(entry)
+    else openEdit(entry)
   }
 
   function handleSaved(saved: CalendarEntry) {
@@ -588,8 +628,10 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
                       isWeekend={isWeekend}
                       entries={dayEntries}
                       articles={dayArticles}
+                      loadingPostId={loadingPostId}
                       onClickDay={() => openCreate(dateStr)}
-                      onClickEntry={openEdit}
+                      onClickEntry={handleChipClick}
+                      onClickSettings={openEdit}
                     />
                   )
                 })}
@@ -622,7 +664,7 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
           )}
         </div>
 
-        {/* ── Drawer ── */}
+        {/* ── Calendar entry drawer (metadata edit) ── */}
         <CalendarEntryDrawer
           open            = {drawerOpen}
           clientId        = {clientId}
@@ -633,6 +675,15 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
           onClose         = {() => setDrawerOpen(false)}
           onSaved         = {handleSaved}
           onDeleted       = {handleDeleted}
+        />
+
+        {/* ── Post editor drawer (opened from chip click when post exists) ── */}
+        <PostEditorDrawer
+          open     = {postEditorOpen}
+          clientId = {clientId}
+          post     = {editingPost}
+          onClose  = {() => { setPostEditorOpen(false); setEditingPost(null) }}
+          onSaved  = {() => { setPostEditorOpen(false); setEditingPost(null); fetchData() }}
         />
       </div>
 
@@ -797,21 +848,24 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
 // ─── DayCell sub-component ────────────────────────────────────────────────────
 
 interface DayCellProps {
-  day          : number
-  dateStr      : string
-  isToday      : boolean
-  isWeekend    : boolean
-  entries      : CalendarEntry[]
-  articles     : BlogArticle[]
-  onClickDay   : () => void
-  onClickEntry : (entry: CalendarEntry) => void
+  day             : number
+  dateStr         : string
+  isToday         : boolean
+  isWeekend       : boolean
+  entries         : CalendarEntry[]
+  articles        : BlogArticle[]
+  loadingPostId   : string | null
+  onClickDay      : () => void
+  onClickEntry    : (entry: CalendarEntry) => void  // smart: PostEditor or CalendarDrawer
+  onClickSettings : (entry: CalendarEntry) => void  // always CalendarEntryDrawer
 }
 
 const MAX_VISIBLE = 2
 
 function DayCell({
   day, dateStr, isToday, isWeekend,
-  entries, articles, onClickDay, onClickEntry,
+  entries, articles, loadingPostId,
+  onClickDay, onClickEntry, onClickSettings,
 }: DayCellProps) {
   const [showAll, setShowAll] = useState(false)
 
@@ -861,18 +915,48 @@ function DayCell({
 
       {/* Social entry chips */}
       {visibleEntries.map((entry) => {
-        const colors = PLATFORM_COLORS[entry.platform as Platform]
-        const status = STATUS_COLORS[entry.status]
+        const colors        = PLATFORM_COLORS[entry.platform as Platform]
+        const postIndicator = entry.post_status ? POST_STATUS_CHIP[entry.post_status] : null
+        const calIndicator  = STATUS_COLORS[entry.status]
+        const dotClass      = postIndicator?.dot ?? calIndicator?.dot ?? 'bg-white/60'
+        const isLoading     = loadingPostId !== null && loadingPostId === entry.social_post_id
+        const hasImage      = !!entry.post_asset_url
+        const hasSocialPost = !!entry.social_post_id
+
         return (
           <div
             key={entry.id}
-            onClick={(e) => { e.stopPropagation(); onClickEntry(entry) }}
-            className={`flex items-center gap-1 rounded px-1 py-0.5 mb-0.5 cursor-pointer ${colors.bg} ${colors.text} opacity-90 hover:opacity-100`}
+            onClick={(e) => e.stopPropagation()}
+            className={`flex items-center rounded mb-0.5 overflow-hidden
+              ${colors.bg} ${colors.text}
+              ${postIndicator?.faded ? 'opacity-50' : 'opacity-90 hover:opacity-100'}
+            `}
           >
-            <div className={`h-1.5 w-1.5 rounded-full shrink-0 bg-white/60 ring-1 ring-white/40 ${status?.dot ?? ''}`} />
-            <span className="text-xs truncate leading-tight">
-              {entry.title ?? PLATFORM_LABELS[entry.platform as Platform]}
-            </span>
+            {/* Main area: click → PostEditorDrawer (if linked post) or CalendarEntryDrawer */}
+            <button
+              className="flex items-center gap-1 px-1 py-0.5 flex-1 min-w-0 hover:bg-black/10 transition-colors"
+              onClick={() => onClickEntry(entry)}
+              title={hasSocialPost ? 'Ver/editar pieza social' : 'Ver entrada del calendario'}
+            >
+              {isLoading
+                ? <Loader2 className="h-1.5 w-1.5 shrink-0 animate-spin" />
+                : <div className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotClass}`} />
+              }
+              <span className="text-xs truncate leading-tight">
+                {entry.title ?? PLATFORM_LABELS[entry.platform as Platform]}
+              </span>
+              {hasImage && <span className="text-[9px] shrink-0 ml-0.5">🖼</span>}
+              {postIndicator?.showCheck && <span className="text-[9px] shrink-0">✓</span>}
+            </button>
+
+            {/* Gear button: always opens CalendarEntryDrawer for metadata */}
+            <button
+              className="px-1 py-0.5 hover:bg-black/15 transition-colors shrink-0"
+              onClick={() => onClickSettings(entry)}
+              title="Editar metadatos del calendario"
+            >
+              <Settings className="h-2.5 w-2.5 opacity-50" />
+            </button>
           </div>
         )
       })}

@@ -56,6 +56,7 @@ export default function GenerateImageModal({
   const [genError,     setGenError]     = useState('')
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null)
   const [saving,       setSaving]       = useState(false)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   async function handleGenerate() {
     if (!prompt.trim()) return
@@ -109,6 +110,7 @@ export default function GenerateImageModal({
   }
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
         {/* Header */}
@@ -217,13 +219,22 @@ export default function GenerateImageModal({
 
           {/* Generated image preview */}
           {generatedUrl && (
-            <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
+            <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 relative group">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={generatedUrl}
                 alt="Imagen generada"
-                className="w-full max-h-72 object-contain"
+                className="w-full max-h-72 object-contain cursor-zoom-in"
+                onClick={() => setLightboxOpen(true)}
               />
+              <button
+                onClick={() => setLightboxOpen(true)}
+                className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/20 transition-colors"
+              >
+                <span className="text-white text-xs font-medium bg-black/50 px-2.5 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                  Ver en tamaño completo
+                </span>
+              </button>
             </div>
           )}
 
@@ -279,5 +290,28 @@ export default function GenerateImageModal({
         </div>
       </div>
     </div>
+
+    {/* Lightbox */}
+    {lightboxOpen && generatedUrl && (
+      <div
+        className="fixed inset-0 bg-black/90 z-[70] flex items-center justify-center p-4"
+        onClick={() => setLightboxOpen(false)}
+      >
+        <button
+          className="absolute top-4 right-4 text-white/70 hover:text-white"
+          onClick={() => setLightboxOpen(false)}
+        >
+          <X className="h-7 w-7" />
+        </button>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={generatedUrl}
+          alt="Imagen generada"
+          className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+    )}
+    </>
   )
 }
