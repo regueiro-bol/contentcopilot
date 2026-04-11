@@ -152,7 +152,7 @@ export default function SocialPosts({ clientId }: Props) {
             className="text-xs gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50"
           >
             <Zap className="h-3.5 w-3.5" />
-            Generar en masa
+            Generar desde calendario
           </Button>
           <Button
             size="sm"
@@ -232,7 +232,7 @@ export default function SocialPosts({ clientId }: Props) {
       />
 
       {bulkOpen && (
-        <BulkGenerateModal
+        <BulkFromCalendarModal
           clientId={clientId}
           onClose={() => setBulkOpen(false)}
           onGenerated={() => { setBulkOpen(false); fetchPosts() }}
@@ -325,94 +325,117 @@ function EmptyState({ onNew }: { onNew: () => void }) {
   )
 }
 
-// ─── Bulk Generate Modal ─────────────────────────────────────────────────────
+// ─── Bulk Generate from Calendar Modal ───────────────────────────────────────
 
-const PLATFORM_FORMATS: Record<string, string[]> = {
-  linkedin : ['Artículo nativo', 'Post de texto', 'Documento PDF', 'Vídeo corto', 'Encuesta'],
-  twitter_x: ['Tweet único', 'Hilo de tweets', 'Tweet con imagen'],
-  instagram: ['Post imagen', 'Carrusel', 'Reel', 'Story'],
-  facebook : ['Post texto', 'Post imagen', 'Vídeo nativo', 'Reel'],
-  tiktok   : ['Vídeo corto (<60s)', 'Vídeo largo (>60s)', 'Live'],
-  youtube  : ['Vídeo largo (>10min)', 'Shorts', 'Live'],
+interface CalendarEntry {
+  id            : string
+  platform      : string
+  format?       : string | null
+  title?        : string | null
+  description?  : string | null
+  scheduled_date: string
+  content_type? : string | null
+  social_post_id?: string | null
 }
 
-interface BulkSpec {
-  platform     : string
-  format       : string
-  contentPillar: string
-  scheduledDate: string
+function toYYYYMM(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-function BulkGenerateModal({
+function BulkFromCalendarModal({
   clientId,
   onClose,
   onGenerated,
 }: {
-  clientId     : string
-  onClose      : () => void
-  onGenerated  : () => void
+  clientId   : string
+  onClose    : () => void
+  onGenerated: () => void
 }) {
-  const [specs,      setSpecs]      = useState<BulkSpec[]>([
-    { platform: 'linkedin', format: '', contentPillar: '', scheduledDate: '' },
-  ])
-  const [generating, setGenerating] = useState(false)
-  const [error,      setError]      = useState('')
-  const [result,     setResult]     = useState<{ created: number } | null>(null)
+  const [calendarMonth,   setCalendarMonth]   = useState<string>(() => toYYYYMM(new Date()))
+  const [entries,         setEntries]         = useState<CalendarEntry[]>([])
+  const [selected,        setSelected]        = useState<Set<string>>(new Set())
+  const [loadingEntries,  setLoadingEntries]  = useState(false)
+  const [fetchError,      setFetchError]      = useState('')
+  const [generating,      setGenerating]      = useState(false)
+  const [genError,        setGenError]        = useState('')
+  const [result,          setResult]          = useState<{ created: number } | null>(null)
 
-  function addRow() {
-    setSpecs((prev) => [...prev, { platform: 'linkedin', format: '', contentPillar: '', scheduledDate: '' }])
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoadingEntries(true)
+      setFetchError('')
+      try {
+        const res = await fetch(`/api/social/calendar?clientId=${clientId}&month=${calendarMonth}`)
+        if (!res.ok) throw new Error('Error al cargar el calendario')
+        const data = (await res.json()) as CalendarEntry[]
+        if (cancelled) return
+        const unlinked = data.filter((e) => !e.social_post_id)
+        setEntries(unlinked)
+        setSelected(new Set(unlinked.map((e) => e.id)))
+      } catch (err) {
+        if (!cancelled) setFetchError(err instanceof Error ? err.message : 'Error')
+      } finally {
+        if (!cancelled) setLoadingEntries(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [clientId, calendarMonth])
+
+  function toggleEntry(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
   }
 
-  function removeRow(i: number) {
-    setSpecs((prev) => prev.filter((_, idx) => idx !== i))
-  }
-
-  function updateRow(i: number, field: keyof BulkSpec, value: string) {
-    setSpecs((prev) => prev.map((s, idx) => idx === i ? { ...s, [field]: value } : s))
+  function toggleAll() {
+    setSelected(selected.size === entries.length ? new Set() : new Set(entries.map((e) => e.id)))
   }
 
   async function handleGenerate() {
-    const valid = specs.filter((s) => s.platform)
-    if (!valid.length) return
-
+    const ids = Array.from(selected)
+    if (!ids.length) return
     setGenerating(true)
-    setError('')
+    setGenError('')
     try {
       const res = await fetch('/api/social/generate-posts-bulk', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({
-          clientId,
-          posts: valid.map((s) => ({
-            platform     : s.platform,
-            format       : s.format || undefined,
-            contentPillar: s.contentPillar || undefined,
-            scheduledDate: s.scheduledDate || undefined,
-          })),
-        }),
+        body   : JSON.stringify({ clientId, calendarEntryIds: ids }),
       })
       const data = await res.json() as { created: number } | { error: string }
       if (!res.ok) throw new Error((data as any).error)
       setResult(data as { created: number })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al generar')
+      setGenError(err instanceof Error ? err.message : 'Error al generar')
     } finally {
       setGenerating(false)
     }
   }
 
+  function formatDate(s: string) {
+    return new Date(s + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })
+  }
+
+  const selectedCount = selected.size
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[85vh] flex flex-col">
+        {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
           <div>
-            <h2 className="text-base font-semibold text-gray-900">Generar piezas en masa</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Define las piezas y genera todos los copys de una vez</p>
+            <h2 className="text-base font-semibold text-gray-900">Generar desde el calendario</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Genera copys para las entradas del calendario sin pieza</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl font-light">✕</button>
         </div>
 
         {result ? (
+          /* ── Success state ── */
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
             <CheckCircle2 className="h-12 w-12 text-green-500 mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
@@ -425,76 +448,112 @@ function BulkGenerateModal({
           </div>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              {specs.map((spec, i) => (
-                <div key={i} className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                  <span className="text-xs font-medium text-gray-400 w-5 shrink-0">{i + 1}</span>
-
-                  <select
-                    value={spec.platform}
-                    onChange={(e) => updateRow(i, 'platform', e.target.value)}
-                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-pink-300 flex-1"
-                  >
-                    {Object.entries(PLATFORM_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={spec.format}
-                    onChange={(e) => updateRow(i, 'format', e.target.value)}
-                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-pink-300 flex-1"
-                  >
-                    <option value="">Formato libre</option>
-                    {(PLATFORM_FORMATS[spec.platform] ?? []).map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-
-                  <input
-                    type="text"
-                    placeholder="Pilar (opcional)"
-                    value={spec.contentPillar}
-                    onChange={(e) => updateRow(i, 'contentPillar', e.target.value)}
-                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-pink-300 flex-1"
-                  />
-
-                  <input
-                    type="date"
-                    value={spec.scheduledDate}
-                    onChange={(e) => updateRow(i, 'scheduledDate', e.target.value)}
-                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-pink-300 w-32 shrink-0"
-                  />
-
-                  <button
-                    onClick={() => removeRow(i)}
-                    disabled={specs.length === 1}
-                    className="text-gray-300 hover:text-red-400 disabled:opacity-30 shrink-0"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-
-              {specs.length < 20 && (
-                <button
-                  onClick={addRow}
-                  className="w-full text-xs text-gray-400 hover:text-pink-600 border border-dashed border-gray-200 rounded-xl py-2.5 transition-colors"
-                >
-                  + Añadir pieza
-                </button>
+            {/* Month selector */}
+            <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-3">
+              <label className="text-xs font-medium text-gray-500">Mes:</label>
+              <input
+                type="month"
+                value={calendarMonth}
+                onChange={(e) => setCalendarMonth(e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
+              {!loadingEntries && entries.length > 0 && (
+                <span className="text-xs text-gray-400 ml-auto">
+                  {entries.length} entrada{entries.length !== 1 ? 's' : ''} sin pieza
+                </span>
               )}
+            </div>
 
-              {error && (
+            {/* Entry list */}
+            <div className="flex-1 overflow-y-auto p-5">
+              {loadingEntries ? (
+                <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">Cargando entradas…</span>
+                </div>
+              ) : fetchError ? (
                 <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 rounded-lg p-3">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  {error}
+                  {fetchError}
+                </div>
+              ) : entries.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="h-12 w-12 rounded-xl bg-gray-100 flex items-center justify-center mb-3">
+                    <Zap className="h-6 w-6 text-gray-300" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-600">Sin entradas pendientes</p>
+                  <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                    No hay entradas en el calendario sin pieza generada para este mes.
+                    Añade entradas en el Calendario primero.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {/* Select-all row */}
+                  <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
+                    <input
+                      type="checkbox"
+                      checked={selectedCount === entries.length && entries.length > 0}
+                      onChange={toggleAll}
+                      className="h-3.5 w-3.5 rounded accent-violet-600"
+                    />
+                    <span className="text-xs font-medium text-gray-500">
+                      {selectedCount === entries.length ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                    </span>
+                  </div>
+
+                  {entries.map((entry) => (
+                    <label
+                      key={entry.id}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        selected.has(entry.id)
+                          ? 'border-violet-200 bg-violet-50'
+                          : 'border-gray-100 bg-white hover:border-gray-200'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(entry.id)}
+                        onChange={() => toggleEntry(entry.id)}
+                        className="mt-0.5 h-3.5 w-3.5 rounded accent-violet-600 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-semibold text-gray-700">
+                            {formatDate(entry.scheduled_date)}
+                          </span>
+                          <span className="text-xs text-gray-400">—</span>
+                          <span className="text-xs text-gray-600">
+                            {PLATFORM_LABELS[entry.platform] ?? entry.platform}
+                          </span>
+                          {entry.format && (
+                            <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                              {entry.format}
+                            </span>
+                          )}
+                        </div>
+                        {entry.title && (
+                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{entry.title}</p>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {genError && (
+                <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 rounded-lg p-3 mt-3">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  {genError}
                 </div>
               )}
             </div>
 
+            {/* Footer */}
             <div className="p-5 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-xs text-gray-400">{specs.length} pieza{specs.length !== 1 ? 's' : ''} a generar</span>
+              <span className="text-xs text-gray-400">
+                {selectedCount > 0 ? `${selectedCount} seleccionada${selectedCount !== 1 ? 's' : ''}` : 'Nada seleccionado'}
+              </span>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={onClose} className="text-xs text-gray-500">
                   Cancelar
@@ -502,12 +561,12 @@ function BulkGenerateModal({
                 <Button
                   size="sm"
                   onClick={handleGenerate}
-                  disabled={generating || specs.every((s) => !s.platform)}
-                  className="text-xs gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
+                  disabled={generating || selectedCount === 0}
+                  className="text-xs gap-1.5 bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
                 >
                   {generating
-                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generando ({specs.length})…</>
-                    : <><Sparkles className="h-3.5 w-3.5" /> Generar {specs.length} pieza{specs.length !== 1 ? 's' : ''}</>
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generando…</>
+                    : <><Sparkles className="h-3.5 w-3.5" /> Generar seleccionadas ({selectedCount})</>
                   }
                 </Button>
               </div>

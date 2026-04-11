@@ -2,9 +2,14 @@
  * POST /api/social/generate-posts-bulk
  *
  * Genera y guarda copys para múltiples piezas de una vez.
- * Útil para generar el contenido de una semana o un mes completo.
  *
- * Body: { clientId, posts: Array<{ platform, format?, contentPillar?, scheduledDate?, context? }> }
+ * Modo A — desde el calendario:
+ *   Body: { clientId, calendarEntryIds: string[] }
+ *   Reads social_calendar entries, generates posts, links social_post_id back.
+ *
+ * Modo B — manual:
+ *   Body: { clientId, posts: Array<{ platform, format?, contentPillar?, scheduledDate?, context? }> }
+ *
  * Returns: { created: number, ids: string[] }
  */
 
@@ -42,22 +47,47 @@ interface PostSpec {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { clientId: string; posts: PostSpec[] }
+  let body: { clientId: string; posts?: PostSpec[]; calendarEntryIds?: string[] }
   try { body = await request.json() } catch {
     return NextResponse.json({ error: 'Body JSON inválido' }, { status: 400 })
   }
 
-  const { clientId, posts } = body
-  if (!clientId || !posts?.length) {
-    return NextResponse.json({ error: 'clientId y posts son obligatorios' }, { status: 400 })
+  const { clientId, calendarEntryIds } = body
+  if (!clientId) {
+    return NextResponse.json({ error: 'clientId es obligatorio' }, { status: 400 })
   }
-
-  if (posts.length > 20) {
-    return NextResponse.json({ error: 'Máximo 20 piezas por llamada' }, { status: 400 })
+  if (!calendarEntryIds?.length && !body.posts?.length) {
+    return NextResponse.json({ error: 'posts o calendarEntryIds son obligatorios' }, { status: 400 })
   }
 
   try {
     const supabase = createAdminClient()
+
+    // ── Resolve specs from calendar entries if needed ──
+    let posts: PostSpec[] = body.posts ?? []
+    // Parallel array: calendarIds[i] is the social_calendar.id for posts[i], or null
+    let calendarIds: Array<string | null> = posts.map(() => null)
+
+    if (calendarEntryIds?.length) {
+      const { data: calEntries, error: calError } = await supabase
+        .from('social_calendar')
+        .select('id, platform, format, title, description, scheduled_date, content_type')
+        .in('id', calendarEntryIds)
+
+      if (calError) {
+        console.error('[generate-posts-bulk] Calendar fetch error:', calError.message)
+        return NextResponse.json({ error: calError.message }, { status: 500 })
+      }
+
+      posts = (calEntries ?? []).map((e) => ({
+        platform     : e.platform,
+        format       : e.format       ?? undefined,
+        contentPillar: e.content_type ?? undefined,
+        scheduledDate: e.scheduled_date ?? undefined,
+        context      : [e.title, e.description].filter(Boolean).join(' — ') || undefined,
+      }))
+      calendarIds = (calEntries ?? []).map((e) => e.id)
+    }
 
     const [{ data: cliente }, { data: brandVoice }] = await Promise.all([
       supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
@@ -91,8 +121,14 @@ export async function POST(request: NextRequest) {
     let totalInputTokens  = 0
     let totalOutputTokens = 0
 
+    if (posts.length > 20) {
+      return NextResponse.json({ error: 'Máximo 20 piezas por llamada' }, { status: 400 })
+    }
+
     // Generar secuencialmente para respetar rate limits
-    for (const spec of posts) {
+    for (let i = 0; i < posts.length; i++) {
+      const spec          = posts[i]
+      const calendarId    = calendarIds[i] ?? null
       const platformLabel = PLATFORM_LABELS[spec.platform] ?? spec.platform
       const copyRules     = PLATFORM_COPY_RULES[spec.platform] ?? ''
 
@@ -150,7 +186,18 @@ JSON sin markdown:
           .select('id')
           .single()
 
-        if (created?.id) createdIds.push(created.id)
+        if (created?.id) {
+          createdIds.push(created.id)
+
+          // Link the calendar entry back to the new post
+          if (calendarId) {
+            const { error: linkErr } = await supabase
+              .from('social_calendar')
+              .update({ social_post_id: created.id, updated_at: now })
+              .eq('id', calendarId)
+            if (linkErr) console.error('[generate-posts-bulk] calendar link error:', linkErr.message)
+          }
+        }
       } catch {
         // Continuar con el siguiente si hay error en una pieza
         continue
