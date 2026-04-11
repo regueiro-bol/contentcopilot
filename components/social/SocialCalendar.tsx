@@ -18,6 +18,7 @@ import CalendarDraftReview, {
 } from './CalendarDraftReview'
 import PostEditorDrawer from './PostEditorDrawer'
 import DayPostsPanel from './DayPostsPanel'
+import PostLightbox from './PostLightbox'
 import type { SocialPost } from './SocialPosts'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -173,6 +174,10 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
   const [dayPanelOpen,    setDayPanelOpen]    = useState(false)
   const [dayPanelDate,    setDayPanelDate]    = useState('')
   const [dayPanelEntries, setDayPanelEntries] = useState<CalendarEntry[]>([])
+
+  // Lightbox (opened from chip click or DayPostsPanel card)
+  const [lightboxPost,  setLightboxPost]  = useState<SocialPost | null>(null)
+  const [lightboxPosts, setLightboxPosts] = useState<SocialPost[]>([])
 
   // Uncovered articles panel
   const [showUncovered, setShowUncovered] = useState(false)
@@ -339,28 +344,29 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
     setDrawerOpen(true)
   }
 
-  /** Opens the PostEditorDrawer for the linked social post (fetches from API) */
-  async function openPostEditor(entry: CalendarEntry) {
+  /** Chip click: opens Lightbox directly if entry has social_post_id, else CalendarEntryDrawer */
+  async function handleChipClick(entry: CalendarEntry) {
     if (!entry.social_post_id) { openEdit(entry); return }
     setLoadingPostId(entry.social_post_id)
     try {
       const res = await fetch(`/api/social/posts?postId=${entry.social_post_id}`)
       if (!res.ok) throw new Error('No se pudo cargar la pieza')
       const post = await res.json() as SocialPost
-      setEditingPost(post)
-      setPostEditorOpen(true)
+      setLightboxPosts([post])
+      setLightboxPost(post)
     } catch {
-      // Fallback to calendar entry drawer on error
       openEdit(entry)
     } finally {
       setLoadingPostId(null)
     }
   }
 
-  /** Smart chip click: opens PostEditorDrawer if entry has social_post_id, else CalendarEntryDrawer */
-  function handleChipClick(entry: CalendarEntry) {
-    if (entry.social_post_id) openPostEditor(entry)
-    else openEdit(entry)
+  /** Called from Lightbox "Editar" button — close lightbox, open PostEditorDrawer */
+  function handleLightboxEdit(post: SocialPost) {
+    setLightboxPost(null)
+    setLightboxPosts([])
+    setEditingPost(post)
+    setPostEditorOpen(true)
   }
 
   /** Day number click: opens DayPostsPanel if day has linked posts, else opens create drawer */
@@ -788,11 +794,32 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
       {/* ── Day posts panel ── */}
       {dayPanelOpen && (
         <DayPostsPanel
-          date          = {dayPanelDate}
-          clientId      = {clientId}
-          entries       = {dayPanelEntries}
-          onClose       = {() => setDayPanelOpen(false)}
-          onPostUpdated = {fetchData}
+          date           = {dayPanelDate}
+          clientId       = {clientId}
+          entries        = {dayPanelEntries}
+          onClose        = {() => setDayPanelOpen(false)}
+          onPostUpdated  = {fetchData}
+          onOpenLightbox = {(post, allPosts) => {
+            setLightboxPosts(allPosts)
+            setLightboxPost(post)
+          }}
+        />
+      )}
+
+      {/* ── Lightbox (from chip click or DayPostsPanel card) ── */}
+      {lightboxPost && (
+        <PostLightbox
+          post         = {lightboxPost}
+          posts        = {lightboxPosts}
+          onClose      = {() => { setLightboxPost(null); setLightboxPosts([]) }}
+          onApprove    = {() => fetchData()}
+          onReject     = {() => fetchData()}
+          onEdit       = {handleLightboxEdit}
+          onPostUpdated= {(updated) => {
+            setLightboxPosts(prev => prev.map(p => p.id === updated.id ? updated : p))
+            setLightboxPost(prev => prev && prev.id === updated.id ? updated : prev)
+            fetchData()
+          }}
         />
       )}
 

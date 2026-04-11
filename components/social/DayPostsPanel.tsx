@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react'
 import { X, Loader2, Check, RotateCcw, ChevronRight } from 'lucide-react'
 import { PLATFORM_LABELS, PLATFORM_COLORS } from '@/lib/social/platforms'
 import type { SocialPost } from './SocialPosts'
-import PostLightbox from './PostLightbox'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,11 +25,12 @@ interface CalendarEntry {
 }
 
 interface Props {
-  date          : string          // YYYY-MM-DD
-  clientId      : string
-  entries       : CalendarEntry[] // entries for this day (already filtered)
-  onClose       : () => void
-  onPostUpdated?: () => void      // called when a post is approved/rejected, to refresh parent
+  date           : string          // YYYY-MM-DD
+  clientId       : string
+  entries        : CalendarEntry[] // entries for this day (already filtered)
+  onClose        : () => void
+  onPostUpdated? : () => void      // called when a post is approved/rejected, to refresh parent
+  onOpenLightbox?: (post: SocialPost, allPosts: SocialPost[]) => void
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -71,10 +71,10 @@ export default function DayPostsPanel({
   entries,
   onClose,
   onPostUpdated,
+  onOpenLightbox,
 }: Props) {
-  const [posts,       setPosts]       = useState<SocialPost[]>([])
-  const [loading,     setLoading]     = useState(true)
-  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const [posts,   setPosts]   = useState<SocialPost[]>([])
+  const [loading, setLoading] = useState(true)
 
   // Stable dep: only re-fetch when the set of post IDs changes
   const postIdsDep = JSON.stringify(entries.map(e => e.social_post_id))
@@ -212,7 +212,7 @@ export default function DayPostsPanel({
                   key={post.id}
                   post={post}
                   idx={idx}
-                  onOpenLightbox={setLightboxIdx}
+                  onOpenLightbox={() => onOpenLightbox?.(post, posts)}
                   onApprove={miniApprove}
                   onReject={miniReject}
                 />
@@ -238,21 +238,8 @@ export default function DayPostsPanel({
         </div>
       </div>
 
-      {/* ── Lightbox ──────────────────────────────────────────────────────── */}
-      {lightboxIdx !== null && posts[lightboxIdx] && (
-        <PostLightbox
-          post={posts[lightboxIdx]}
-          posts={posts}
-          onClose={() => setLightboxIdx(null)}
-          onApprove={() => { /* handled via onPostUpdated in lightbox */ }}
-          onReject={() => {}}
-          onEdit={() => setLightboxIdx(null)}
-          onPostUpdated={(updated) => {
-            setPosts(prev => prev.map(p => p.id === updated.id ? updated : p))
-            onPostUpdated?.()
-          }}
-        />
-      )}
+
+
     </>
   )
 }
@@ -262,7 +249,7 @@ export default function DayPostsPanel({
 interface MiniCardProps {
   post          : SocialPost
   idx           : number
-  onOpenLightbox: (idx: number) => void
+  onOpenLightbox: () => void
   onApprove     : (post: SocialPost) => void
   onReject      : (post: SocialPost) => void
 }
@@ -282,7 +269,7 @@ function MiniPostCard({ post, idx, onOpenLightbox, onApprove, onReject }: MiniCa
   return (
     <div
       className={`rounded-xl border overflow-hidden cursor-pointer hover:shadow-md transition-shadow group ${borderClass}`}
-      onClick={() => onOpenLightbox(idx)}
+      onClick={() => onOpenLightbox()}
     >
       {/* Image area */}
       <div className="relative aspect-square bg-gray-100">
@@ -357,7 +344,7 @@ function MiniPostCard({ post, idx, onOpenLightbox, onApprove, onReject }: MiniCa
           )}
           <button
             title="Ver"
-            onClick={() => onOpenLightbox(idx)}
+            onClick={() => onOpenLightbox()}
             className="text-[10px] px-2 h-6 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 ml-auto flex items-center gap-0.5 transition-colors"
           >
             Ver <ChevronRight className="h-3 w-3" />
