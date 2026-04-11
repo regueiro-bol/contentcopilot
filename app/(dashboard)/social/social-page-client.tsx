@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   Share2, ChevronDown, AlertTriangle, Calendar, FileText,
@@ -37,11 +38,29 @@ interface Props {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SocialPageClient({ clientes }: Props) {
-  const [clienteId, setClienteId]       = useState<string>('')
-  const [status, setStatus]             = useState<StrategyStatus | null>(null)
-  const [loadingStatus, setLoadingStatus] = useState(false)
+  const searchParams = useSearchParams()
+
+  const [clienteId,      setClienteId]      = useState<string>('')
+  const [status,         setStatus]         = useState<StrategyStatus | null>(null)
+  const [loadingStatus,  setLoadingStatus]  = useState(false)
+  const [activeTab,      setActiveTab]      = useState('calendario')
+  const [autoOpenPlan,   setAutoOpenPlan]   = useState(false)
 
   const clienteSeleccionado = clientes.find((c) => c.id === clienteId)
+
+  // ── Read URL params on mount ──
+  useEffect(() => {
+    const paramClientId = searchParams.get('clientId')
+    const paramAction   = searchParams.get('action')
+    if (paramClientId && clientes.some((c) => c.id === paramClientId)) {
+      setClienteId(paramClientId)
+      if (paramAction === 'generate-calendar') {
+        setActiveTab('calendario')
+        setAutoOpenPlan(true)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!clienteId) { setStatus(null); return }
@@ -166,7 +185,7 @@ export default function SocialPageClient({ clientes }: Props) {
 
           {/* Tabs de ejecución (solo si estrategia completa) */}
           {estrategiaCompleta && (
-            <Tabs defaultValue="calendario">
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList>
                 <TabsTrigger value="calendario" className="gap-1.5">
                   <Calendar className="h-3.5 w-3.5" />
@@ -187,7 +206,10 @@ export default function SocialPageClient({ clientes }: Props) {
               </TabsList>
 
               <TabsContent value="calendario" className="mt-4">
-                <SocialCalendar clientId={clienteId} />
+                <SocialCalendar
+                  clientId           = {clienteId}
+                  autoOpenPlanModal  = {autoOpenPlan}
+                />
               </TabsContent>
               <TabsContent value="piezas">
                 {clienteId
