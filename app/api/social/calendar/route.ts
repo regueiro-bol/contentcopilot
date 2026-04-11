@@ -19,9 +19,11 @@ export async function GET(req: NextRequest) {
   const endDate     = new Date(year, mon, 0).toISOString().split('T')[0]
 
   const supabase = createAdminClient()
-  const { data, error } = await supabase
+
+  // ── Query 1: calendar entries (plain, no JOIN) ──
+  const { data: entries, error } = await supabase
     .from('social_calendar')
-    .select('*, post:social_posts!social_post_id(status, asset_url, humanized, copy_approved)')
+    .select('*')
     .eq('client_id', clientId)
     .gte('scheduled_date', startDate)
     .lte('scheduled_date', endDate)
@@ -30,19 +32,38 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Flatten nested post fields to top-level for easy consumption
-  const flattened = (data ?? []).map((entry) => {
-    const { post, ...rest } = entry as any
+  // ── Query 2: linked social_posts (only when entries have social_post_id) ──
+  // FK direction: social_calendar.social_post_id → social_posts.id
+  const postIds = (entries ?? [])
+    .map((e: any) => e.social_post_id)
+    .filter(Boolean) as string[]
+
+  let postsMap: Record<string, { status: string; asset_url: string | null; humanized: boolean | null; copy_approved: boolean | null }> = {}
+
+  if (postIds.length > 0) {
+    const { data: posts } = await supabase
+      .from('social_posts')
+      .select('id, status, asset_url, humanized, copy_approved')
+      .in('id', postIds)
+
+    for (const p of posts ?? []) {
+      postsMap[(p as any).id] = p as any
+    }
+  }
+
+  // ── Merge: enrich each entry with its linked post fields ──
+  const enriched = (entries ?? []).map((entry: any) => {
+    const post = entry.social_post_id ? postsMap[entry.social_post_id] : null
     return {
-      ...rest,
-      post_status   : post?.status    ?? null,
-      post_asset_url: post?.asset_url ?? null,
-      post_humanized: post?.humanized ?? null,
-      post_has_copy : post?.copy_approved != null,
+      ...entry,
+      post_status   : post?.status       ?? null,
+      post_asset_url: post?.asset_url    ?? null,
+      post_humanized: post?.humanized    ?? null,
+      post_has_copy : post?.copy_approved != null ? !!post.copy_approved : false,
     }
   })
 
-  return NextResponse.json(flattened)
+  return NextResponse.json(enriched)
 }
 
 // ─── POST: create a new entry ─────────────────────────────────────────────────
