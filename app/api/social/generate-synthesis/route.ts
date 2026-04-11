@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     // Cargar datos del cliente
     const { data: cliente } = await supabase
       .from('clientes')
-      .select('nombre, sector, descripcion')
+      .select('nombre, sector, descripcion, identidad_corporativa')
       .eq('id', clientId)
       .single()
 
@@ -72,11 +72,16 @@ PLATAFORMA: ${p.platform.toUpperCase()}
       ? (benchmark ?? []).map((b) => `- ${b.name} (${b.platform}): ${b.what_they_do_well ?? 'sin descripción'}`).join('\n')
       : '(Sin referentes de benchmark configurados)'
 
-    const prompt = `Eres un estratega de social media experto. Analiza la auditoría completa de redes sociales del cliente y genera la síntesis de la Fase 1.
+    const clienteContext = [
+      cliente.sector             ? `Sector: ${cliente.sector}` : '',
+      (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+      (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
+    ].filter(Boolean).join('\n')
+
+    const prompt = `Analiza la auditoría completa de redes sociales del cliente y genera la síntesis de la Fase 1.
 
 CLIENTE: ${cliente.nombre}
-SECTOR: ${cliente.sector ?? 'No especificado'}
-DESCRIPCIÓN: ${(cliente as any).descripcion ?? 'No especificada'}
+${clienteContext || `SECTOR: ${cliente.sector ?? 'No especificado'}`}
 
 ═══ AUDITORÍA POR PLATAFORMAS ═══
 ${platformsSummary}
@@ -102,6 +107,12 @@ REGLAS:
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 1024,
+      system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
+
+Cliente: ${cliente.nombre}
+${clienteContext}
+
+Tu trabajo es sintetizar la auditoría de redes sociales identificando fortalezas aprovechables y debilidades accionables, adaptadas al sector y contexto real de este cliente. Basa el análisis en los datos reales. Nunca uses generalidades.`,
       messages  : [{ role: 'user', content: prompt }],
     })
 

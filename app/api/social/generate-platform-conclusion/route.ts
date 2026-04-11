@@ -58,9 +58,15 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient()
     const { data: cliente } = await supabase
       .from('clientes')
-      .select('nombre, sector')
+      .select('nombre, sector, descripcion, identidad_corporativa')
       .eq('id', clientId)
       .single()
+
+    const clienteContext = [
+      cliente?.sector             ? `Sector: ${cliente.sector}` : '',
+      (cliente as any)?.descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+      (cliente as any)?.identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 200)}` : '',
+    ].filter(Boolean).join('\n')
 
     const platformDisplayName = PLATFORM_NAMES[platform] ?? platform
 
@@ -75,7 +81,7 @@ export async function POST(request: NextRequest) {
       ? scores.reduce((a, b) => a + b, 0) / scores.length
       : null
 
-    const prompt = `Eres un estratega de social media. Analiza los datos de auditoría de ${platformDisplayName} para el cliente "${cliente?.nombre ?? 'este cliente'}" (sector: ${cliente?.sector ?? 'no especificado'}) y escribe una conclusión estratégica concisa.
+    const prompt = `Analiza los datos de auditoría de ${platformDisplayName} para el cliente "${cliente?.nombre ?? 'este cliente'}" y escribe una conclusión estratégica concisa.
 
 DATOS DE ${platformDisplayName.toUpperCase()}:
 - Presencia activa: ${platformData.is_active ? 'Sí' : 'No'}
@@ -104,6 +110,12 @@ Responde SOLO con el texto de la conclusión, sin títulos ni formato extra.`
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 512,
+      system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
+
+Cliente: ${cliente?.nombre ?? 'el cliente'}
+${clienteContext}
+
+Tu trabajo es evaluar la presencia en una plataforma específica y emitir un veredicto estratégico claro, adaptado al sector y contexto de este cliente. Nunca uses enfoques genéricos.`,
       messages  : [{ role: 'user', content: prompt }],
     })
 

@@ -47,16 +47,22 @@ export async function POST(request: NextRequest) {
   const supabase = createAdminClient()
 
   const [{ data: cliente }, { data: platforms }, { data: strategy }, { data: architecture }] = await Promise.all([
-    supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
-    supabase.from('social_platforms').select('platform, is_active, followers, avg_engagement, posts_per_week, strategic_priority').eq('client_id', clientId).order('platform'),
+    supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
+    supabase.from('social_platforms').select('platform, followers, avg_engagement, posts_per_week, strategic_priority').eq('client_id', clientId).order('platform'),
     supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_content_architecture').select('publishing_cadence').eq('client_id', clientId).maybeSingle(),
   ])
 
   if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
 
+  const clienteContext = [
+    cliente.sector             ? `Sector: ${cliente.sector}` : '',
+    (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+    (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
+  ].filter(Boolean).join('\n')
+
   const activePlatformsSummary = (platforms ?? [])
-    .filter((p) => p.is_active || p.strategic_priority === 'alta' || p.strategic_priority === 'mantener')
+    .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
     .map((p) => {
       const name = PLATFORM_LABELS[p.platform] ?? p.platform
       return `${name}: ${p.followers ?? 0} seguidores | Engagement: ${p.avg_engagement ? `${p.avg_engagement}%` : 'N/D'} | Posts/semana actual: ${p.posts_per_week ?? 'N/D'}`
@@ -115,9 +121,14 @@ Responde SOLO con JSON sin markdown:
     const response = await anthropic.messages.create({
       model : 'claude-sonnet-4-5',
       max_tokens: 4096,
-      system: `Eres un consultor senior de social media especializado en medición de resultados y reporting para clientes B2B. Tu trabajo es definir un sistema de KPIs que mida lo que realmente importa: si la marca está construyendo autoridad y alcanzando sus objetivos estratégicos, no solo si acumula likes.
+      system: `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
-Los KPIs deben ser realistas, medibles con herramientas estándar y organizados para que el cliente entienda qué significan.`,
+Cliente: ${cliente.nombre}
+${clienteContext}
+
+Tu trabajo es definir un sistema de KPIs adaptado específicamente al sector, objetivos y contexto de este cliente. Nunca uses enfoques genéricos ni benchmarks de industrias que no correspondan.
+
+Los KPIs deben ser realistas, medibles con herramientas estándar y organizados para que el cliente entienda qué significan. Lo que importa es si la marca está construyendo autoridad real, no si acumula likes.`,
       messages: [{ role: 'user', content: userPrompt }],
     })
 

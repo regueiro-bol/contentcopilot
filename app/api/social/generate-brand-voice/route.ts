@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       { data: architecture },
       brandContextResult,
     ] = await Promise.all([
-      supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
+      supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
       supabase.from('social_platforms').select('platform, strategic_priority').eq('client_id', clientId).order('platform'),
       supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
       supabase.from('social_content_architecture').select('editorial_pillars').eq('client_id', clientId).maybeSingle(),
@@ -65,6 +65,12 @@ export async function POST(request: NextRequest) {
     ])
 
     if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+
+    const clienteContext = [
+      cliente.sector             ? `Sector: ${cliente.sector}` : '',
+      (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+      (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
+    ].filter(Boolean).join('\n')
 
     const brandContext = (brandContextResult as { data: any } | null)?.data ?? null
 
@@ -139,7 +145,12 @@ Responde SOLO con JSON sin markdown:
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 5120,
-      system    : `Eres un consultor senior especializado en identidad editorial y brand voice para redes sociales. Tu trabajo es definir cómo una marca habla en redes: no solo el tono abstracto, sino las reglas concretas que un community manager puede aplicar en cada post.
+      system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
+
+Cliente: ${cliente.nombre}
+${clienteContext}
+
+Tu trabajo es definir cómo esta marca habla en redes, adaptado específicamente a su sector, audiencia y personalidad. No el tono abstracto: las reglas concretas que un community manager puede aplicar en cada post. Nunca uses enfoques genéricos.
 
 Las guidelines deben ser operativas, no teóricas. Cada regla debe poder aplicarse en 5 segundos antes de publicar.`,
       messages: [{ role: 'user', content: userPrompt }],

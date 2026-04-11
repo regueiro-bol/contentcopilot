@@ -35,12 +35,18 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient()
 
     const [{ data: cliente }, { data: platforms }, { data: strategy }] = await Promise.all([
-      supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
+      supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
       supabase.from('social_platforms').select('platform, strategic_priority, strategic_conclusion').eq('client_id', clientId).order('platform'),
       supabase.from('social_strategy').select('platform_decisions, channel_architecture').eq('client_id', clientId).maybeSingle(),
     ])
 
     if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+
+    const clienteContext = [
+      cliente.sector             ? `Sector: ${cliente.sector}` : '',
+      (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+      (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
+    ].filter(Boolean).join('\n')
 
     const activePlatforms = (platforms ?? [])
       .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
@@ -97,9 +103,14 @@ Responde SOLO con JSON sin markdown:
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 5120,
-      system    : `Eres un consultor senior de social media especializado en arquitectura de contenidos para marcas B2B. Tu trabajo es definir la estructura editorial que sostendrá toda la producción de contenido social: pilares, formatos y cadencia.
+      system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
-Los pilares no son categorías temáticas genéricas: son posiciones intelectuales que la marca ocupa. Un pilar editorial dice qué lugar único ocupa la marca en la conversación de su sector, no solo sobre qué temas habla.`,
+Cliente: ${cliente.nombre}
+${clienteContext}
+
+Tu trabajo es definir la estructura editorial que sostendrá toda la producción de contenido social: pilares, formatos y cadencia, adaptados específicamente al sector, audiencia y contexto de este cliente. Nunca uses enfoques genéricos.
+
+Los pilares no son categorías temáticas genéricas: son posiciones intelectuales que la marca ocupa. Un pilar editorial dice qué lugar único ocupa la marca en la conversación de su sector.`,
       messages: [{ role: 'user', content: userPrompt }],
     })
 

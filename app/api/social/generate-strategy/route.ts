@@ -36,12 +36,18 @@ export async function POST(request: NextRequest) {
 
     // Leer datos necesarios en paralelo
     const [{ data: cliente }, { data: platforms }, { data: synthesis }] = await Promise.all([
-      supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
+      supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
       supabase.from('social_platforms').select('platform, followers, posts_per_week, avg_engagement, score_brand_consistency, score_editorial_quality, score_activity, score_community, strategic_priority, strategic_conclusion').eq('client_id', clientId).order('platform'),
       supabase.from('social_audit_synthesis').select('main_strengths, main_weaknesses').eq('client_id', clientId).maybeSingle(),
     ])
 
     if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+
+    const clienteContext = [
+      cliente.sector             ? `Sector: ${cliente.sector}` : '',
+      (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+      (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
+    ].filter(Boolean).join('\n')
 
     // Construir resumen de plataformas
     const platformsSummary = (platforms ?? []).map((p) => {
@@ -96,9 +102,14 @@ Responde SOLO con JSON sin markdown:
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 4096,
-      system    : `Eres un consultor senior de social media especializado en estrategia editorial para agencias de contenidos B2B. Tu trabajo es tomar los resultados de una auditoría de redes sociales y convertirlos en decisiones estratégicas claras y accionables.
+      system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
-Las decisiones deben ser razonadas, no genéricas. Cada plataforma recibe un veredicto claro: qué hacer, por qué y con qué nivel de inversión editorial. Evita recomendaciones vagas. Si una plataforma no vale la pena, dilo.`,
+Cliente: ${cliente.nombre}
+${clienteContext}
+
+Tu trabajo es tomar los resultados de una auditoría de redes sociales y convertirlos en decisiones estratégicas claras y accionables, adaptadas específicamente al sector, audiencia y contexto de este cliente. Nunca uses enfoques genéricos.
+
+Las decisiones deben ser razonadas. Cada plataforma recibe un veredicto claro: qué hacer, por qué y con qué nivel de inversión editorial. Evita recomendaciones vagas. Si una plataforma no vale la pena, dilo.`,
       messages: [{ role: 'user', content: userPrompt }],
     })
 
