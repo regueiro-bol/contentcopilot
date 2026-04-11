@@ -1,12 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
-  Palette, ChevronDown, Loader2, CheckCircle2, Upload,
-  Link as LinkIcon, AlertCircle, Calendar, ChevronRight,
+  Palette, ChevronDown, Loader2, CheckCircle2, Calendar,
 } from 'lucide-react'
-import { Button }  from '@/components/ui/button'
-import { Badge }   from '@/components/ui/badge'
+import PostEditorDrawer    from '@/components/social/PostEditorDrawer'
+import { Badge }           from '@/components/ui/badge'
 import type { SocialPost } from '@/components/social/SocialPosts'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,7 +36,8 @@ export default function DesignPageClient({ clientes }: Props) {
   const [filterClientId, setFilterClientId] = useState('')
   const [posts,          setPosts]          = useState<DesignPost[]>([])
   const [loading,        setLoading]        = useState(true)
-  const [expandedPost,   setExpandedPost]   = useState<string | null>(null)
+  const [selectedPost,   setSelectedPost]   = useState<DesignPost | null>(null)
+  const [drawerOpen,     setDrawerOpen]     = useState(false)
 
   const fetchPosts = useCallback(async () => {
     setLoading(true)
@@ -52,6 +52,17 @@ export default function DesignPageClient({ clientes }: Props) {
 
   useEffect(() => { fetchPosts() }, [fetchPosts])
 
+  function openDrawer(post: DesignPost) {
+    setSelectedPost(post)
+    setDrawerOpen(true)
+  }
+
+  function handleSaved() {
+    setDrawerOpen(false)
+    setSelectedPost(null)
+    fetchPosts()
+  }
+
   return (
     <div className="p-6 space-y-6 max-w-4xl mx-auto">
       {/* Header */}
@@ -61,7 +72,7 @@ export default function DesignPageClient({ clientes }: Props) {
         </div>
         <div>
           <h1 className="text-xl font-bold text-gray-900">Panel de Diseño</h1>
-          <p className="text-sm text-gray-500">Piezas de contenido pendientes de recurso visual</p>
+          <p className="text-sm text-gray-500">Piezas pendientes de recurso visual</p>
         </div>
       </div>
 
@@ -109,23 +120,32 @@ export default function DesignPageClient({ clientes }: Props) {
           </div>
           <p className="text-base font-semibold text-gray-700 mb-1">Sin piezas en diseño</p>
           <p className="text-sm text-gray-400">
-            {filterClientId ? 'Este cliente no tiene piezas pendientes de diseño.' : 'No hay piezas pendientes de recurso visual en ningún cliente.'}
+            {filterClientId
+              ? 'Este cliente no tiene piezas pendientes de diseño.'
+              : 'No hay piezas pendientes de recurso visual.'}
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-2">
           {posts.map((post) => (
             <DesignCard
               key={post.id}
               post={post}
               showClient={!filterClientId}
-              isExpanded={expandedPost === post.id}
-              onToggle={() => setExpandedPost((prev) => prev === post.id ? null : post.id)}
-              onMarkedReady={fetchPosts}
+              onClick={() => openDrawer(post)}
             />
           ))}
         </div>
       )}
+
+      {/* Drawer */}
+      <PostEditorDrawer
+        open={drawerOpen}
+        clientId={selectedPost?.client_id ?? ''}
+        post={selectedPost}
+        onClose={() => { setDrawerOpen(false); setSelectedPost(null) }}
+        onSaved={handleSaved}
+      />
     </div>
   )
 }
@@ -133,120 +153,30 @@ export default function DesignPageClient({ clientes }: Props) {
 // ─── Design Card ──────────────────────────────────────────────────────────────
 
 function DesignCard({
-  post, showClient, isExpanded, onToggle, onMarkedReady,
+  post,
+  showClient,
+  onClick,
 }: {
-  post        : DesignPost
-  showClient  : boolean
-  isExpanded  : boolean
-  onToggle    : () => void
-  onMarkedReady: () => void
+  post      : DesignPost
+  showClient: boolean
+  onClick   : () => void
 }) {
-  const [assetUrl,     setAssetUrl]     = useState(post.asset_url ?? '')
-  const [assetType,    setAssetType]    = useState<'image' | 'video'>('image')
-  const [previewUrl,   setPreviewUrl]   = useState<string | null>(null)
-  const [uploading,    setUploading]    = useState(false)
-  const [uploadError,  setUploadError]  = useState('')
-  const [marking,      setMarking]      = useState(false)
-  const [markedDone,   setMarkedDone]   = useState(false)
-  const [progress,     setProgress]     = useState(0)
-  const fileInputRef   = useRef<HTMLInputElement>(null)
-
-  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    // Local preview
-    const objectUrl = URL.createObjectURL(file)
-    setPreviewUrl(objectUrl)
-    setAssetType(file.type.startsWith('video/') ? 'video' : 'image')
-
-    setUploading(true)
-    setUploadError('')
-    setProgress(10)
-
-    try {
-      const formData = new FormData()
-      formData.append('file',     file)
-      formData.append('clientId', post.client_id)
-      formData.append('postId',   post.id)
-
-      setProgress(40)
-      const res = await fetch('/api/social/upload-asset', {
-        method: 'POST',
-        body  : formData,
-      })
-      const data = await res.json() as { url: string; assetType: string } | { error: string }
-      if (!res.ok) throw new Error((data as any).error)
-
-      setProgress(100)
-      setAssetUrl((data as any).url)
-      setAssetType((data as any).assetType)
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Error al subir el archivo')
-      setPreviewUrl(null)
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  function handleUrlPaste(url: string) {
-    setAssetUrl(url)
-    if (url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)) {
-      setPreviewUrl(url)
-      setAssetType('image')
-    } else if (url.match(/\.(mp4|webm|mov)(\?|$)/i)) {
-      setPreviewUrl(url)
-      setAssetType('video')
-    }
-  }
-
-  async function handleMarkReady() {
-    if (!assetUrl.trim()) return
-    setMarking(true)
-    try {
-      const res = await fetch('/api/social/posts', {
-        method : 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({
-          id          : post.id,
-          status      : 'listo',
-          asset_url   : assetUrl.trim(),
-          asset_type  : assetType,
-          asset_source: 'designer',
-          updated_at  : new Date().toISOString(),
-        }),
-      })
-      if (!res.ok) throw new Error('Error al guardar')
-      setMarkedDone(true)
-      setTimeout(() => onMarkedReady(), 1200)
-    } catch { /* silencioso */ }
-    finally { setMarking(false) }
-  }
-
-  if (markedDone) {
-    return (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 flex items-center gap-3">
-        <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-        <p className="text-sm font-medium text-emerald-800">Pieza lista para publicar ✓</p>
-      </div>
-    )
-  }
-
   return (
-    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-      {/* Card header */}
-      <button
-        onClick={onToggle}
-        className="w-full p-4 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors"
-      >
-        <div className={`h-8 w-8 rounded-lg ${PLATFORM_COLORS[post.platform] ?? 'bg-gray-600'} flex items-center justify-center shrink-0`}>
+    <button
+      onClick={onClick}
+      className="w-full text-left rounded-xl border border-gray-200 bg-white p-4 hover:border-orange-300 hover:shadow-sm transition-all group"
+    >
+      <div className="flex items-start gap-3">
+        {/* Platform badge */}
+        <div className={`mt-0.5 h-8 w-8 rounded-lg ${PLATFORM_COLORS[post.platform] ?? 'bg-gray-600'} flex items-center justify-center shrink-0`}>
           <span className="text-white text-xs font-bold">
             {(PLATFORM_LABELS[post.platform] ?? post.platform).slice(0, 2).toUpperCase()}
           </span>
         </div>
 
+        {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mb-0.5">
             {showClient && (
               <Badge variant="secondary" className="text-xs">{post.client_nombre}</Badge>
             )}
@@ -254,117 +184,35 @@ function DesignCard({
               {PLATFORM_LABELS[post.platform] ?? post.platform}
             </span>
             {post.format && (
-              <span className="text-xs text-gray-400">{post.format}</span>
+              <span className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                {post.format}
+              </span>
             )}
           </div>
+
           {post.hook && (
-            <p className="text-sm text-gray-700 mt-0.5 line-clamp-1">"{post.hook}"</p>
+            <p className="text-sm font-medium text-gray-900 line-clamp-1">"{post.hook}"</p>
           )}
+
+          {post.design_notes && (
+            <p className="text-xs text-orange-700 mt-0.5 line-clamp-1">
+              📝 {post.design_notes}
+            </p>
+          )}
+
           {post.scheduled_date && (
-            <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
-              <Calendar className="h-3 w-3" />
-              Para publicar: {new Date(post.scheduled_date + 'T12:00:00').toLocaleDateString('es-ES', {
+            <div className="flex items-center gap-1 mt-1.5 text-xs text-gray-400">
+              <Calendar className="h-3 w-3 shrink-0" />
+              {new Date(post.scheduled_date + 'T12:00:00').toLocaleDateString('es-ES', {
                 weekday: 'long', day: 'numeric', month: 'long',
               })}
             </div>
           )}
         </div>
 
-        <ChevronRight className={`h-4 w-4 text-gray-400 transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`} />
-      </button>
-
-      {/* Expanded content */}
-      {isExpanded && (
-        <div className="px-4 pb-4 border-t border-gray-100 space-y-4 pt-4">
-          {/* Visual briefing */}
-          {post.visual_description && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Briefing visual</p>
-              <p className="text-sm text-gray-700 leading-relaxed">{post.visual_description}</p>
-            </div>
-          )}
-
-          {/* Design notes */}
-          {post.design_notes && post.design_notes !== post.visual_description && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Instrucciones adicionales</p>
-              <p className="text-sm text-gray-600 leading-relaxed">{post.design_notes}</p>
-            </div>
-          )}
-
-          {/* Upload zone */}
-          <div className="rounded-xl border-2 border-dashed border-gray-200 p-4 space-y-3 bg-gray-50">
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Subir recurso visual</p>
-
-            {/* File upload */}
-            <div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,video/*"
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="gap-1.5 text-xs"
-              >
-                {uploading
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Subiendo ({progress}%)…</>
-                  : <><Upload className="h-3.5 w-3.5" /> Seleccionar archivo</>
-                }
-              </Button>
-              <span className="text-xs text-gray-400 ml-2">Imágenes hasta 10MB · Vídeos hasta 50MB</span>
-            </div>
-
-            {/* URL input */}
-            <div className="flex items-center gap-2">
-              <LinkIcon className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-              <input
-                type="url"
-                placeholder="O pegar URL del recurso (Canva, Drive, Dropbox…)"
-                value={assetUrl}
-                onChange={(e) => handleUrlPaste(e.target.value)}
-                className="flex-1 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-              />
-            </div>
-
-            {/* Preview */}
-            {previewUrl && (
-              <div className="rounded-lg overflow-hidden border border-gray-200 bg-white max-h-48">
-                {assetType === 'video'
-                  ? <video src={previewUrl} controls className="w-full max-h-48 object-contain" />
-                  // eslint-disable-next-line @next/next/no-img-element
-                  : <img src={previewUrl} alt="Preview" className="w-full max-h-48 object-contain" />
-                }
-              </div>
-            )}
-
-            {uploadError && (
-              <div className="flex items-center gap-2 text-xs text-red-600">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                {uploadError}
-              </div>
-            )}
-          </div>
-
-          {/* Mark ready button */}
-          <Button
-            onClick={handleMarkReady}
-            disabled={marking || !assetUrl.trim()}
-            className="w-full gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm"
-          >
-            {marking
-              ? <><Loader2 className="h-4 w-4 animate-spin" /> Guardando…</>
-              : <><CheckCircle2 className="h-4 w-4" /> Marcar como listo</>
-            }
-          </Button>
-        </div>
-      )}
-    </div>
+        {/* Chevron hint */}
+        <span className="text-gray-300 group-hover:text-orange-400 text-lg leading-none shrink-0 mt-0.5">›</span>
+      </div>
+    </button>
   )
 }
-
