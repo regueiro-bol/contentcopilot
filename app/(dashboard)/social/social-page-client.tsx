@@ -4,13 +4,15 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   Share2, ChevronDown, AlertTriangle, Calendar, FileText,
-  Send, Loader2, ExternalLink, ShieldCheck,
+  Send, Loader2, ExternalLink, ShieldCheck, BarChart2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import SocialCalendar from '@/components/social/SocialCalendar'
-import SocialPosts    from '@/components/social/SocialPosts'
+import SocialCalendar      from '@/components/social/SocialCalendar'
+import SocialPosts         from '@/components/social/SocialPosts'
+import SocialPublication   from '@/components/social/SocialPublication'
+import SocialKPIsDashboard from '@/components/social/SocialKPIsDashboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,6 +180,10 @@ export default function SocialPageClient({ clientes }: Props) {
                   <Send className="h-3.5 w-3.5" />
                   Publicación
                 </TabsTrigger>
+                <TabsTrigger value="kpis" className="gap-1.5">
+                  <BarChart2 className="h-3.5 w-3.5" />
+                  KPIs
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="calendario" className="mt-4">
@@ -189,8 +195,17 @@ export default function SocialPageClient({ clientes }: Props) {
                   : <PlaceholderSprint sprint={7} titulo="Producción de piezas" descripcion="Selecciona un cliente para gestionar sus piezas de contenido." />
                 }
               </TabsContent>
-              <TabsContent value="publicacion">
-                <PlaceholderSprint sprint={7} titulo="Publicación" descripcion="Conexión con APIs de redes sociales para publicar directamente desde la plataforma." />
+              <TabsContent value="publicacion" className="mt-4">
+                {clienteId
+                  ? <SocialPublication clientId={clienteId} />
+                  : <PlaceholderSprint sprint={8} titulo="Publicación" descripcion="Selecciona un cliente para gestionar sus publicaciones." />
+                }
+              </TabsContent>
+              <TabsContent value="kpis" className="mt-4">
+                {clienteId
+                  ? <SocialKPIsDashboard clientId={clienteId} />
+                  : <PlaceholderSprint sprint={8} titulo="KPIs y métricas" descripcion="Selecciona un cliente para ver su dashboard de métricas." />
+                }
               </TabsContent>
             </Tabs>
           )}
