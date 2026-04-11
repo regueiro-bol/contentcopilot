@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Share2, Check, Lock, Loader2,
   BarChart2, Target, Layers, Mic2, TrendingUp, Rocket,
-  Download, ShieldCheck, RotateCcw, MessageSquare,
+  Download, ShieldCheck, RotateCcw, MessageSquare, Sparkles, ArrowRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -98,6 +99,7 @@ function isPhaseUnlocked(status: StrategyStatus | null, phase: number): boolean 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function SocialMediaStrategy({ clientId }: Props) {
+  const router = useRouter()
   const [status, setStatus]           = useState<StrategyStatus | null>(null)
   const [loading, setLoading]         = useState(true)
   const [activePhase, setActivePhase] = useState(1)
@@ -227,14 +229,14 @@ export default function SocialMediaStrategy({ clientId }: Props) {
         </div>
       </div>
 
-      {/* ── Panel de validación por cliente (solo cuando strategy completada) ── */}
-      {overallStatus === 'completed' && (
+      {/* ── Panel de validación por cliente (visible cuando phase_6_completed = true) ── */}
+      {status?.phase6?.completed === true && (
         <div className={`rounded-xl border p-5 space-y-3 ${
-          status?.clientValidated
+          status.clientValidated
             ? 'bg-emerald-50 border-emerald-200'
             : 'bg-white border-gray-200'
         }`}>
-          {status?.clientValidated ? (
+          {status.clientValidated ? (
             /* ── Estado: validada ── */
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -262,18 +264,20 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                   >
                     <RotateCcw className="h-3 w-3" /> Iniciar revisión
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleValidate(false)}
-                    disabled={validating}
-                    className="text-xs text-gray-400 hover:text-amber-600 gap-1"
-                  >
-                    {validating
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      : 'Desmarcar'
-                    }
-                  </Button>
+                  {process.env.NODE_ENV === 'development' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleValidate(false)}
+                      disabled={validating}
+                      className="text-xs text-gray-400 hover:text-amber-600 gap-1"
+                    >
+                      {validating
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : 'Desmarcar'
+                      }
+                    </Button>
+                  )}
                 </div>
               </div>
               {status.revisionNotes && (
@@ -288,14 +292,14 @@ export default function SocialMediaStrategy({ clientId }: Props) {
           ) : (
             /* ── Estado: pendiente de validación ── */
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-800">Validación por cliente</p>
+                  <p className="text-sm font-semibold text-gray-800">Estrategia completa — pendiente de validación</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Marca la estrategia como aprobada por el cliente para activar la herencia en ejecución.
+                    Marca la estrategia como aprobada por el cliente para activar el módulo de ejecución.
                   </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 ml-4">
+                <div className="flex items-center gap-2 shrink-0">
                   <Button
                     variant="outline"
                     size="sm"
@@ -305,12 +309,20 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                     <RotateCcw className="h-3 w-3" /> Iniciar revisión
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowRevisionPanel(true)}
+                    className="text-xs gap-1.5 border-gray-200 text-gray-600 hover:bg-gray-50"
+                  >
+                    + Nueva versión desde cero
+                  </Button>
+                  <Button
                     size="sm"
                     onClick={() => setShowNotes((v) => !v)}
                     className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
                   >
                     <ShieldCheck className="h-3.5 w-3.5" />
-                    Validar con cliente
+                    ✓ Marcar como validada por cliente
                   </Button>
                 </div>
               </div>
@@ -344,6 +356,35 @@ export default function SocialMediaStrategy({ clientId }: Props) {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Siguiente paso: generar calendario inicial ── */}
+      {status?.clientValidated && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="h-9 w-9 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                <Sparkles className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-blue-900">La estrategia está lista</p>
+                <p className="text-xs text-blue-700 mt-1 max-w-md leading-relaxed">
+                  Con la estrategia validada puedes generar el calendario editorial inicial.
+                  La IA lo creará basándose en los pilares, formatos y cadencia definidos.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => router.push(`/social?clientId=${clientId}&action=generate-calendar`)}
+              className="shrink-0 gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Generar calendario inicial
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
       )}
 
