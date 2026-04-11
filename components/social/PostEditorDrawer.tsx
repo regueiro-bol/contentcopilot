@@ -34,14 +34,6 @@ const STATUS_OPTIONS = [
   { value: 'publicado', label: 'Publicado'  },
 ]
 
-// Formats that can use AI image generation (not video/story formats)
-const VIDEO_FORMATS = ['Reel', 'Vídeo corto', 'Vídeo largo (>60s)', 'Vídeo corto (<60s)',
-  'Vídeo largo (>10min)', 'Shorts', 'Live', 'Premiere', 'Vídeo nativo', 'Story',
-  'Vídeo IGTV', 'Tweet con vídeo', 'Dueto', 'Stitch', 'Serie']
-
-function canUseAIImage(fmt: string) {
-  return !VIDEO_FORMATS.some((v) => fmt.toLowerCase().includes(v.toLowerCase()))
-}
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -519,16 +511,14 @@ export default function PostEditorDrawer({ open, clientId, post, onClose, onSave
                     Esta pieza necesita un recurso visual para poder publicarse.
                   </p>
                   <div className="flex gap-2">
-                    {(!format || canUseAIImage(format)) && (
-                      <Button
-                        size="sm"
-                        onClick={() => setShowGenImageModal(true)}
-                        className="flex-1 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        <Sparkles className="h-3.5 w-3.5" />
-                        Generar imagen con IA
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => setShowGenImageModal(true)}
+                      className="flex-1 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Generar imagen con IA
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"
