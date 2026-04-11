@@ -53,8 +53,8 @@ export async function POST(request: NextRequest) {
     { data: architecture },
     { data: kpis },
   ] = await Promise.all([
-    supabase.from('clientes').select('nombre, sector').eq('id', clientId).single(),
-    supabase.from('social_platforms').select('platform, is_active, strategic_priority').eq('client_id', clientId).order('platform'),
+    supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
+    supabase.from('social_platforms').select('platform, strategic_priority').eq('client_id', clientId).order('platform'),
     supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_content_architecture').select('publishing_cadence').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_kpis').select('kpis_by_objective').eq('client_id', clientId).maybeSingle(),
@@ -62,8 +62,14 @@ export async function POST(request: NextRequest) {
 
   if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
 
+  const clienteContext = [
+    cliente.sector             ? `Sector: ${cliente.sector}` : '',
+    (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
+    (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
+  ].filter(Boolean).join('\n')
+
   const activePlatforms = (platforms ?? [])
-    .filter((p) => p.is_active || p.strategic_priority === 'alta' || p.strategic_priority === 'mantener')
+    .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
     .map((p) => PLATFORM_LABELS[p.platform] ?? p.platform)
 
   const cadenceText     = jsonbToText(architecture?.publishing_cadence).substring(0, 300)
@@ -124,7 +130,12 @@ Responde SOLO con JSON sin markdown:
     const response = await anthropic.messages.create({
       model : 'claude-sonnet-4-5',
       max_tokens: 5120,
-      system: `Eres un consultor senior de social media especializado en implementación y gestión de cuentas B2B. Tu trabajo es traducir una estrategia completa en un plan de acción realista: qué hace quién, cuándo y con qué recursos.
+      system: `Eres un consultor senior de social media y estrategia de contenidos digitales.
+
+Cliente: ${cliente.nombre}
+${clienteContext}
+
+Tu trabajo es traducir una estrategia completa en un plan de acción realista adaptado al sector, tamaño y contexto de este cliente: qué hace quién, cuándo y con qué recursos. Nunca uses enfoques genéricos.
 
 El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se cumplen que un plan de 200 que se abandona en el mes 2.`,
       messages: [{ role: 'user', content: userPrompt }],
