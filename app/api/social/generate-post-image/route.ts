@@ -175,7 +175,9 @@ export async function POST(request: NextRequest) {
     const needsCompose = (includeLogo && logoAssets && logoAssets.length > 0) || (overlayText?.trim())
 
     if (needsCompose) {
-      const base = sharp(imgBuffer).resize(dims.width, dims.height, { fit: 'cover' })
+      // Keep in PNG (with alpha support) during all composition steps.
+      // Only convert to JPEG at the very last step.
+      const base = sharp(imgBuffer).resize(dims.width, dims.height, { fit: 'cover' }).png()
       const compositeInputs: sharp.OverlayOptions[] = []
 
       // Logo overlay
@@ -194,13 +196,16 @@ export async function POST(request: NextRequest) {
 
           if (logoBuffer) {
             const logoSize = Math.round(dims.width * 0.15)
+            // Keep PNG with alpha channel intact — do NOT convert to JPEG here.
+            // blend:'over' tells sharp to respect the alpha channel.
             const resizedLogo = await sharp(logoBuffer)
               .resize(logoSize, logoSize, { fit: 'inside' })
-              .png()
+              .png()            // preserve alpha
               .toBuffer()
 
             compositeInputs.push({
               input : resizedLogo,
+              blend : 'over',  // respects alpha transparency
               top   : Math.round(dims.height * 0.04),
               left  : Math.round(dims.width  * 0.04),
             })
@@ -253,7 +258,14 @@ export async function POST(request: NextRequest) {
       }
 
       if (compositeInputs.length > 0) {
-        finalBuffer = Buffer.from(await base.composite(compositeInputs).jpeg({ quality: 90 }).toBuffer())
+        // Composite on PNG pipeline (alpha preserved), then flatten to JPEG at the end
+        finalBuffer = Buffer.from(
+          await base
+            .composite(compositeInputs)
+            .flatten({ background: { r: 255, g: 255, b: 255 } }) // flatten alpha before JPEG
+            .jpeg({ quality: 90 })
+            .toBuffer(),
+        )
       } else {
         finalBuffer = Buffer.from(await base.jpeg({ quality: 90 }).toBuffer())
       }

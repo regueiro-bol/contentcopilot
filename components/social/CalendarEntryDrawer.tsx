@@ -23,6 +23,11 @@ export interface CalendarEntry {
   status          : string
   blog_contenido_id: string | null
   social_post_id  : string | null
+  // Flattened from JOIN with social_posts
+  post_status?    : string | null
+  post_asset_url? : string | null
+  post_humanized? : boolean | null
+  post_has_copy?  : boolean | null
 }
 
 export interface BlogArticle {

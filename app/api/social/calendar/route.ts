@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('social_calendar')
-    .select('*')
+    .select('*, post:social_posts!social_post_id(status, asset_url, humanized, copy_approved)')
     .eq('client_id', clientId)
     .gte('scheduled_date', startDate)
     .lte('scheduled_date', endDate)
@@ -29,7 +29,20 @@ export async function GET(req: NextRequest) {
     .order('platform',        { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data ?? [])
+
+  // Flatten nested post fields to top-level for easy consumption
+  const flattened = (data ?? []).map((entry) => {
+    const { post, ...rest } = entry as any
+    return {
+      ...rest,
+      post_status   : post?.status    ?? null,
+      post_asset_url: post?.asset_url ?? null,
+      post_humanized: post?.humanized ?? null,
+      post_has_copy : post?.copy_approved != null,
+    }
+  })
+
+  return NextResponse.json(flattened)
 }
 
 // ─── POST: create a new entry ─────────────────────────────────────────────────

@@ -18,13 +18,22 @@ export async function GET(request: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const { searchParams } = request.nextUrl
+  const postId   = searchParams.get('postId')
   const clientId = searchParams.get('clientId')
+
+  const supabase = createAdminClient()
+
+  // Single-post fetch by ID (no clientId required)
+  if (postId) {
+    const { data, error } = await supabase.from('social_posts').select('*').eq('id', postId).single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json(data)
+  }
+
   if (!clientId) return NextResponse.json({ error: 'clientId requerido' }, { status: 400 })
 
   const platform = searchParams.get('platform')
   const status   = searchParams.get('status')
-
-  const supabase = createAdminClient()
 
   let query = supabase
     .from('social_posts')
