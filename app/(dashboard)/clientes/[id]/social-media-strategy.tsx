@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Share2, Check, Lock, Loader2,
+  Share2, Check, Lock, Loader2, AlertTriangle,
   BarChart2, Target, Layers, Mic2, TrendingUp, Rocket,
   Download, ShieldCheck, RotateCcw, MessageSquare, Sparkles, ArrowRight,
 } from 'lucide-react'
@@ -104,10 +104,12 @@ export default function SocialMediaStrategy({ clientId }: Props) {
   const [loading, setLoading]         = useState(true)
   const [activePhase, setActivePhase] = useState(1)
   const [approving, setApproving]     = useState<number | null>(null)
-  const [validating, setValidating]         = useState(false)
-  const [showNotes, setShowNotes]           = useState(false)
-  const [notesInput, setNotesInput]         = useState('')
-  const [showRevisionPanel, setShowRevisionPanel] = useState(false)
+  const [validating,          setValidating]          = useState(false)
+  const [showNotes,           setShowNotes]           = useState(false)
+  const [notesInput,          setNotesInput]          = useState('')
+  const [showRevisionPanel,   setShowRevisionPanel]   = useState(false)
+  const [showNewVersionModal, setShowNewVersionModal] = useState(false)
+  const [newVersionLoading,   setNewVersionLoading]   = useState(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -166,6 +168,23 @@ export default function SocialMediaStrategy({ clientId }: Props) {
       }
     } catch { /* silencioso */ }
     finally { setValidating(false) }
+  }
+
+  async function handleNewVersion() {
+    setNewVersionLoading(true)
+    try {
+      const res = await fetch('/api/social/new-version', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ clientId }),
+      })
+      if (res.ok) {
+        setShowNewVersionModal(false)
+        await fetchStatus()
+        setActivePhase(2) // Advance to first phase to redo
+      }
+    } catch { /* silencioso */ }
+    finally { setNewVersionLoading(false) }
   }
 
   if (loading) {
@@ -311,7 +330,7 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setShowRevisionPanel(true)}
+                    onClick={() => setShowNewVersionModal(true)}
                     className="text-xs gap-1.5 border-gray-200 text-gray-600 hover:bg-gray-50"
                   >
                     + Nueva versión desde cero
@@ -520,6 +539,51 @@ export default function SocialMediaStrategy({ clientId }: Props) {
           </div>
         )
       })}
+
+      {/* ── Modal: nueva versión desde cero ── */}
+      {showNewVersionModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-9 w-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">¿Comenzar una nueva versión?</h3>
+                <p className="text-xs text-gray-600 mt-1.5 leading-relaxed">
+                  La estrategia actual se archivará. Los datos de auditoría y benchmark se conservan.
+                  Las fases 2–6 quedarán sin completar para que puedas regenerarlas desde cero.
+                </p>
+                <p className="text-xs text-amber-700 mt-2 font-medium">
+                  Esta acción no se puede deshacer.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowNewVersionModal(false)}
+                disabled={newVersionLoading}
+                className="text-xs text-gray-500"
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleNewVersion}
+                disabled={newVersionLoading}
+                className="text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                {newVersionLoading
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Archivando…</>
+                  : '✓ Sí, comenzar nueva versión'
+                }
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Panel de revisión IA ── */}
       <StrategyRevisionPanel
