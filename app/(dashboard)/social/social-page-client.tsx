@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   Share2, ChevronDown, AlertTriangle, Calendar, FileText,
-  Send, Loader2, ExternalLink,
+  Send, Loader2, ExternalLink, ShieldCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,9 +20,11 @@ interface Cliente {
 }
 
 interface StrategyStatus {
-  completedCount: number
-  overallStatus : 'not_started' | 'in_progress' | 'completed'
-  phase6        : { completed: boolean }
+  completedCount   : number
+  overallStatus    : 'not_started' | 'in_progress' | 'completed'
+  phase6           : { completed: boolean }
+  clientValidated  : boolean
+  clientValidatedAt: string | null
 }
 
 interface Props {
@@ -118,9 +120,14 @@ export default function SocialPageClient({ clientes }: Props) {
                   Estrategia en progreso ({status.completedCount}/6 fases)
                 </Badge>
               )}
-              {status.overallStatus === 'completed' && (
+              {status.overallStatus === 'completed' && !status.clientValidated && (
                 <Badge className="bg-green-100 text-green-800 border-green-200">
                   Estrategia completa
+                </Badge>
+              )}
+              {status.clientValidated && (
+                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 gap-1 flex items-center">
+                  <ShieldCheck className="h-3 w-3" /> Estrategia validada
                 </Badge>
               )}
             </div>
