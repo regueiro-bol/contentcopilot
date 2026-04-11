@@ -4,9 +4,12 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Loader2, Sparkles, Filter, RefreshCw,
   Zap, CheckCircle2, Clock, Edit3, Eye, AlertCircle,
+  LayoutGrid, LayoutList,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import PostEditorDrawer from './PostEditorDrawer'
+import PostsGallery from './PostsGallery'
+import PostLightbox from './PostLightbox'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,13 +65,29 @@ const STATUS_OPTIONS   = ['', 'borrador', 'revision', 'aprobado', 'publicado']
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SocialPosts({ clientId }: Props) {
-  const [posts,         setPosts]         = useState<SocialPost[]>([])
-  const [loading,       setLoading]       = useState(true)
+  const [posts,          setPosts]         = useState<SocialPost[]>([])
+  const [loading,        setLoading]       = useState(true)
   const [filterPlatform, setFilterPlatform] = useState('')
-  const [filterStatus,  setFilterStatus]  = useState('')
-  const [selectedPost,  setSelectedPost]  = useState<SocialPost | null>(null)
-  const [drawerOpen,    setDrawerOpen]    = useState(false)
-  const [bulkOpen,      setBulkOpen]      = useState(false)
+  const [filterStatus,   setFilterStatus]  = useState('')
+  const [selectedPost,   setSelectedPost]  = useState<SocialPost | null>(null)
+  const [drawerOpen,     setDrawerOpen]    = useState(false)
+  const [bulkOpen,       setBulkOpen]      = useState(false)
+
+  // Gallery view state (persisted in localStorage)
+  const [view, setView] = useState<'lista' | 'galeria'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('social_posts_view') as 'lista' | 'galeria') ?? 'lista'
+    }
+    return 'lista'
+  })
+
+  // Bulk review lightbox
+  const [reviewPosts,       setReviewPosts]       = useState<SocialPost[]>([])
+  const [reviewLightboxOpen, setReviewLightboxOpen] = useState(false)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem('social_posts_view', view)
+  }, [view])
 
   const fetchPosts = useCallback(async () => {
     setLoading(true)
@@ -97,6 +116,32 @@ export default function SocialPosts({ clientId }: Props) {
   function handleSaved() {
     setDrawerOpen(false)
     fetchPosts()
+  }
+
+  /** Called when gallery/lightbox optimistically updates a post */
+  function handlePostUpdated(updated: SocialPost) {
+    setPosts((prev) => prev.map((p) => p.id === updated.id ? updated : p))
+    setReviewPosts((prev) => prev.map((p) => p.id === updated.id ? updated : p))
+  }
+
+  /** Called after bulk generation with optional IDs to review immediately */
+  async function handleBulkGenerated(reviewIds?: string[]) {
+    setBulkOpen(false)
+    fetchPosts()
+    if (reviewIds && reviewIds.length > 0) {
+      try {
+        const fetched = await Promise.all(
+          reviewIds.map((id) =>
+            fetch(`/api/social/posts?postId=${id}`).then((r) => r.ok ? r.json() as Promise<SocialPost> : null)
+          )
+        )
+        const valid = fetched.filter(Boolean) as SocialPost[]
+        if (valid.length > 0) {
+          setReviewPosts(valid)
+          setReviewLightboxOpen(true)
+        }
+      } catch { /* silencioso */ }
+    }
   }
 
   const grouped = posts.reduce<Record<string, SocialPost[]>>((acc, p) => {
@@ -151,6 +196,23 @@ export default function SocialPosts({ clientId }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* View toggle */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setView('lista')}
+              className={`p-1.5 transition-colors ${view === 'lista' ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+              title="Vista lista"
+            >
+              <LayoutList className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setView('galeria')}
+              className={`p-1.5 transition-colors ${view === 'galeria' ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+              title="Vista galería"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </button>
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -200,6 +262,12 @@ export default function SocialPosts({ clientId }: Props) {
         </div>
       ) : posts.length === 0 ? (
         <EmptyState onNew={openNew} />
+      ) : view === 'galeria' ? (
+        <PostsGallery
+          posts={posts}
+          onEdit={openEdit}
+          onPostUpdated={handlePostUpdated}
+        />
       ) : (
         <div className="space-y-6">
           {sortedDates.map((dateKey) => (
@@ -241,7 +309,20 @@ export default function SocialPosts({ clientId }: Props) {
         <BulkFromCalendarModal
           clientId={clientId}
           onClose={() => setBulkOpen(false)}
-          onGenerated={() => { setBulkOpen(false); fetchPosts() }}
+          onGenerated={handleBulkGenerated}
+        />
+      )}
+
+      {/* ── Bulk review lightbox ── */}
+      {reviewLightboxOpen && reviewPosts.length > 0 && (
+        <PostLightbox
+          post={reviewPosts[0]}
+          posts={reviewPosts}
+          onClose={() => { setReviewLightboxOpen(false); setReviewPosts([]) }}
+          onApprove={(id) => handlePostUpdated({ ...reviewPosts.find(p => p.id === id)!, status: 'aprobado' })}
+          onReject={(id)  => handlePostUpdated({ ...reviewPosts.find(p => p.id === id)!, status: 'borrador' })}
+          onEdit={(p) => { setReviewLightboxOpen(false); openEdit(p) }}
+          onPostUpdated={handlePostUpdated}
         />
       )}
     </div>
@@ -355,7 +436,7 @@ function BulkFromCalendarModal({
 }: {
   clientId   : string
   onClose    : () => void
-  onGenerated: () => void
+  onGenerated: (reviewIds?: string[]) => void
 }) {
   const [calendarMonth,   setCalendarMonth]   = useState<string>(() => toYYYYMM(new Date()))
   const [entries,         setEntries]         = useState<CalendarEntry[]>([])
@@ -364,7 +445,7 @@ function BulkFromCalendarModal({
   const [fetchError,      setFetchError]      = useState('')
   const [generating,      setGenerating]      = useState(false)
   const [genError,        setGenError]        = useState('')
-  const [result,          setResult]          = useState<{ created: number } | null>(null)
+  const [result,          setResult]          = useState<{ created: number; ids: string[] } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -412,9 +493,9 @@ function BulkFromCalendarModal({
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({ clientId, calendarEntryIds: ids }),
       })
-      const data = await res.json() as { created: number } | { error: string }
+      const data = await res.json() as { created: number; ids: string[] } | { error: string }
       if (!res.ok) throw new Error((data as any).error)
-      setResult(data as { created: number })
+      setResult(data as { created: number; ids: string[] })
     } catch (err) {
       setGenError(err instanceof Error ? err.message : 'Error al generar')
     } finally {
@@ -445,12 +526,25 @@ function BulkFromCalendarModal({
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
             <CheckCircle2 className="h-12 w-12 text-green-500 mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              {result.created} pieza{result.created !== 1 ? 's' : ''} generada{result.created !== 1 ? 's' : ''}
+              ✨ {result.created} pieza{result.created !== 1 ? 's' : ''} generada{result.created !== 1 ? 's' : ''}
             </h3>
-            <p className="text-sm text-gray-500 mb-6">El copy está listo para revisar y ajustar.</p>
-            <Button onClick={onGenerated} className="bg-pink-600 hover:bg-pink-700 text-white">
-              Ver piezas
-            </Button>
+            <p className="text-sm text-gray-500 mb-6">El copy está listo. Revísalas antes de aprobar.</p>
+            <div className="flex flex-col gap-2 w-full max-w-xs">
+              <Button
+                onClick={() => onGenerated(result.ids)}
+                className="bg-pink-600 hover:bg-pink-700 text-white gap-1.5"
+              >
+                <Eye className="h-4 w-4" />
+                Revisar ahora
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => onGenerated()}
+                className="text-gray-600"
+              >
+                Ver en lista
+              </Button>
+            </div>
           </div>
         ) : (
           <>

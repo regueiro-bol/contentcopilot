@@ -17,6 +17,7 @@ import CalendarDraftReview, {
   type DraftEntry, type DraftStats,
 } from './CalendarDraftReview'
 import PostEditorDrawer from './PostEditorDrawer'
+import DayPostsPanel from './DayPostsPanel'
 import type { SocialPost } from './SocialPosts'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -150,6 +151,11 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
   const [postEditorOpen,  setPostEditorOpen]  = useState(false)
   const [editingPost,     setEditingPost]     = useState<SocialPost | null>(null)
   const [loadingPostId,   setLoadingPostId]   = useState<string | null>(null)
+
+  // Day posts panel (mini-gallery for a specific day)
+  const [dayPanelOpen,    setDayPanelOpen]    = useState(false)
+  const [dayPanelDate,    setDayPanelDate]    = useState('')
+  const [dayPanelEntries, setDayPanelEntries] = useState<CalendarEntry[]>([])
 
   // Uncovered articles panel
   const [showUncovered, setShowUncovered] = useState(false)
@@ -305,6 +311,18 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
   function handleChipClick(entry: CalendarEntry) {
     if (entry.social_post_id) openPostEditor(entry)
     else openEdit(entry)
+  }
+
+  /** Day number click: opens DayPostsPanel if day has linked posts, else opens create drawer */
+  function handleDayClick(dateStr: string, dayEntries: CalendarEntry[]) {
+    const hasLinkedPosts = dayEntries.some((e) => e.social_post_id)
+    if (hasLinkedPosts) {
+      setDayPanelDate(dateStr)
+      setDayPanelEntries(dayEntries)
+      setDayPanelOpen(true)
+    } else {
+      openCreate(dateStr)
+    }
   }
 
   function handleSaved(saved: CalendarEntry) {
@@ -629,7 +647,7 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
                       entries={dayEntries}
                       articles={dayArticles}
                       loadingPostId={loadingPostId}
-                      onClickDay={() => openCreate(dateStr)}
+                      onClickDay={() => handleDayClick(dateStr, dayEntries)}
                       onClickEntry={handleChipClick}
                       onClickSettings={openEdit}
                     />
@@ -686,6 +704,17 @@ export default function SocialCalendar({ clientId, autoOpenPlanModal }: Props) {
           onSaved  = {() => { setPostEditorOpen(false); setEditingPost(null); fetchData() }}
         />
       </div>
+
+      {/* ── Day posts panel ── */}
+      {dayPanelOpen && (
+        <DayPostsPanel
+          date          = {dayPanelDate}
+          clientId      = {clientId}
+          entries       = {dayPanelEntries}
+          onClose       = {() => setDayPanelOpen(false)}
+          onPostUpdated = {fetchData}
+        />
+      )}
 
       {/* ── Plan modal ── */}
       {showPlanModal && (
