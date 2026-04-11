@@ -229,14 +229,14 @@ export default function SocialMediaStrategy({ clientId }: Props) {
         </div>
       </div>
 
-      {/* ── Panel de validación por cliente (solo cuando strategy completada) ── */}
-      {overallStatus === 'completed' && (
+      {/* ── Panel de validación por cliente (visible cuando phase_6_completed = true) ── */}
+      {status?.phase6?.completed === true && (
         <div className={`rounded-xl border p-5 space-y-3 ${
-          status?.clientValidated
+          status.clientValidated
             ? 'bg-emerald-50 border-emerald-200'
             : 'bg-white border-gray-200'
         }`}>
-          {status?.clientValidated ? (
+          {status.clientValidated ? (
             /* ── Estado: validada ── */
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -264,18 +264,20 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                   >
                     <RotateCcw className="h-3 w-3" /> Iniciar revisión
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleValidate(false)}
-                    disabled={validating}
-                    className="text-xs text-gray-400 hover:text-amber-600 gap-1"
-                  >
-                    {validating
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      : 'Desmarcar'
-                    }
-                  </Button>
+                  {process.env.NODE_ENV === 'development' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleValidate(false)}
+                      disabled={validating}
+                      className="text-xs text-gray-400 hover:text-amber-600 gap-1"
+                    >
+                      {validating
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : 'Desmarcar'
+                      }
+                    </Button>
+                  )}
                 </div>
               </div>
               {status.revisionNotes && (
@@ -290,14 +292,14 @@ export default function SocialMediaStrategy({ clientId }: Props) {
           ) : (
             /* ── Estado: pendiente de validación ── */
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-800">Validación por cliente</p>
+                  <p className="text-sm font-semibold text-gray-800">Estrategia completa — pendiente de validación</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Marca la estrategia como aprobada por el cliente para activar la herencia en ejecución.
+                    Marca la estrategia como aprobada por el cliente para activar el módulo de ejecución.
                   </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 ml-4">
+                <div className="flex items-center gap-2 shrink-0">
                   <Button
                     variant="outline"
                     size="sm"
@@ -307,12 +309,20 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                     <RotateCcw className="h-3 w-3" /> Iniciar revisión
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowRevisionPanel(true)}
+                    className="text-xs gap-1.5 border-gray-200 text-gray-600 hover:bg-gray-50"
+                  >
+                    + Nueva versión desde cero
+                  </Button>
+                  <Button
                     size="sm"
                     onClick={() => setShowNotes((v) => !v)}
                     className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
                   >
                     <ShieldCheck className="h-3.5 w-3.5" />
-                    Validar con cliente
+                    ✓ Marcar como validada por cliente
                   </Button>
                 </div>
               </div>
