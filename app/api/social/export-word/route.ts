@@ -94,16 +94,6 @@ const PLATFORM_FORMATS_DATA: Record<string, Array<{
   ],
 }
 
-// ─── JSONB helper ─────────────────────────────────────────────────────────────
-
-function jsonbToText(val: unknown): string {
-  if (!val) return ''
-  if (typeof val === 'string') return val
-  if (typeof val === 'object' && val !== null && 'content' in val) {
-    return String((val as { content: string }).content)
-  }
-  return ''
-}
 
 // ─── Typography primitives ────────────────────────────────────────────────────
 
@@ -131,45 +121,123 @@ function normalPara(text: string): Paragraph {
 function bulletPara(text: string): Paragraph {
   return new Paragraph({
     children: [
-      new TextRun({ text: '\u2022  ', size: 20, font: 'Arial', color: '2E5F8A' }),
+      new TextRun({ text: '\u2022 ', size: 20, font: 'Arial', color: '2E5F8A' }),
       new TextRun({ text, size: 20, font: 'Arial', color: '333333' }),
     ],
-    indent : { left: 400 },
-    spacing: { before: 0, after: 80 },
+    indent : { left: 360 },
+    spacing: { before: 60, after: 60 },
   })
 }
 
 /**
- * parseAndRender — strips markdown, detects H3 keywords and bullets,
- * returns docx Paragraph[].
+ * parseInlineFormatting — splits a line into TextRun[] handling
+ * **bold** and *italic* markers inline.
  */
-function parseAndRender(
-  text: string | null | undefined,
-  placeholder = '(Pendiente de completar)',
-): Paragraph[] {
-  const raw = (text ?? '').trim()
+function parseInlineFormatting(text: string): TextRun[] {
+  const runs: TextRun[] = []
+  const regex = /(\*\*([^*]+)\*\*|\*([^*]+)\*|([^*]+))/g
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(text)) !== null) {
+    if (match[2]) {
+      runs.push(new TextRun({ text: match[2], bold: true,    font: 'Arial', size: 20, color: '1A2B4A' }))
+    } else if (match[3]) {
+      runs.push(new TextRun({ text: match[3], italics: true, font: 'Arial', size: 20, color: '333333' }))
+    } else if (match[4]) {
+      const clean = match[4].replace(/_/g, '')
+      if (clean.trim()) {
+        runs.push(new TextRun({ text: clean, font: 'Arial', size: 20, color: '333333' }))
+      }
+    }
+  }
+  return runs.length > 0
+    ? runs
+    : [new TextRun({ text: text.replace(/[*_]/g, ''), font: 'Arial', size: 20, color: '333333' })]
+}
+
+/**
+ * parseAndRender — handles JSONB {content:"..."}, strips markdown,
+ * detects uppercase section headers, bullets, metadata key: value lines,
+ * and inline **bold** / *italic* formatting.
+ */
+function parseAndRender(text: unknown, placeholder = '(Pendiente de completar)'): Paragraph[] {
+  if (!text) return placeholder ? [normalPara(placeholder)] : []
+
+  // Unwrap JSONB { content: "..." } objects
+  let rawText: string
+  if (typeof text === 'object' && text !== null && 'content' in text) {
+    rawText = String((text as { content: unknown }).content ?? '')
+  } else {
+    rawText = String(text)
+  }
+
+  const raw = rawText.trim()
   if (!raw) return placeholder ? [normalPara(placeholder)] : []
 
-  // Strip markdown formatting characters
-  const clean = raw
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/__(.*?)__/g, '$1')
-    .replace(/^#{1,6}\s*/gm, '')
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
 
-  const lines  = clean.split('\n')
   const result: Paragraph[] = []
 
   for (const line of lines) {
-    const l = line.trim()
-    if (!l) { result.push(emptyPara()); continue }
-    if (/^(PILAR|BLOQUE|HORIZONTE|NIVEL|KPI)\b/i.test(l)) {
-      result.push(h3Para(l)); continue
+    // ── CASE 1: Uppercase header with em-dash / en-dash / hyphen separator
+    //   e.g. "INSTAGRAM — FEED:" or "BLOQUE 1 — ESTRATEGIA"
+    if (
+      /^[A-ZÁÉÍÓÚÑ\s]+\s*[—–-]\s*[A-ZÁÉÍÓÚÑ\s]+:?$/.test(line) ||
+      /^(BLOQUE|PILAR|HORIZONTE|NIVEL|KPI|FASE)\s+\d/i.test(line)
+    ) {
+      result.push(new Paragraph({
+        children: [new TextRun({
+          text : line.replace(/[*_]/g, '').replace(/:$/, ''),
+          bold : true, size: 24, font: 'Arial', color: '2E5F8A',
+        })],
+        spacing: { before: 280, after: 100 },
+      }))
+      continue
     }
-    if (l.startsWith('- ')) {
-      result.push(bulletPara(l.slice(2))); continue
+
+    // ── CASE 2: Line starting with * or ** (styled format name)
+    //   e.g. "*Carrusel Educativo Premium* (Dinero Inteligente):"
+    if (line.startsWith('*') || line.startsWith('**')) {
+      result.push(new Paragraph({
+        children: parseInlineFormatting(line),
+        spacing : { before: 160, after: 60 },
+        indent  : { left: 360 },
+      }))
+      continue
     }
-    result.push(normalPara(l))
+
+    // ── CASE 3: Bullet list "- item" or "• item"
+    if (line.startsWith('- ') || line.startsWith('\u2022 ')) {
+      const cleanText = line.replace(/^[-\u2022]\s+/, '').replace(/[*_]/g, '')
+      result.push(bulletPara(cleanText))
+      continue
+    }
+
+    // ── CASE 4: Metadata label "Función:", "Frecuencia:", "Cadencia:", etc.
+    if (/^(Función|Frecuencia|Cadencia|Objetivo|Plataforma|Formato):/i.test(line)) {
+      const colon = line.indexOf(':')
+      const label = line.slice(0, colon)
+      const value = line.slice(colon + 1).trim().replace(/[*_]/g, '')
+      result.push(new Paragraph({
+        children: [
+          new TextRun({ text: label + ': ', bold: true, font: 'Arial', size: 18, color: '2E5F8A' }),
+          new TextRun({ text: value,         font: 'Arial', size: 18, color: '555555' }),
+        ],
+        spacing: { before: 40, after: 40 },
+        indent : { left: 720 },
+      }))
+      continue
+    }
+
+    // ── CASE 5: Normal paragraph with possible inline formatting
+    result.push(new Paragraph({
+      children: parseInlineFormatting(line),
+      spacing : { before: 80, after: 80 },
+    }))
   }
+
   return result
 }
 
@@ -607,15 +675,15 @@ export async function GET(request: NextRequest) {
         ...sectionTitle('3. Arquitectura de Contenidos'),
 
         subTitle('3.1 Pilares editoriales'),
-        ...parseAndRender(jsonbToText(architecture?.editorial_pillars)),
+        ...parseAndRender(architecture?.editorial_pillars),
         sectionSeparator(),
 
         subTitle('3.2 Formatos por plataforma'),
-        ...parseAndRender(jsonbToText(architecture?.formats_by_platform)),
+        ...parseAndRender(architecture?.formats_by_platform),
         sectionSeparator(),
 
         subTitle('3.3 Cadencia de publicación'),
-        ...parseAndRender(jsonbToText(architecture?.publishing_cadence)),
+        ...parseAndRender(architecture?.publishing_cadence),
         sectionSeparator(),
 
         subTitle('3.4 Calendario tipo semanal'),
@@ -660,7 +728,7 @@ export async function GET(request: NextRequest) {
         sectionSeparator(),
 
         subTitle('4.2 Registro por plataforma'),
-        ...parseAndRender(jsonbToText(brandVoice?.register_by_platform)),
+        ...parseAndRender(brandVoice?.register_by_platform),
         sectionSeparator(),
 
         subTitle('4.3 Lo que la marca nunca dice'),
@@ -674,7 +742,7 @@ export async function GET(request: NextRequest) {
         ...sectionTitle('5. KPIs y Métricas'),
 
         subTitle('5.1 Indicadores de éxito por objetivo'),
-        ...parseAndRender(jsonbToText(kpis?.kpis_by_objective)),
+        ...parseAndRender(kpis?.kpis_by_objective),
         sectionSeparator(),
 
         subTitle('5.2 Metodología de medición'),
@@ -688,7 +756,7 @@ export async function GET(request: NextRequest) {
         ...sectionTitle('6. Plan de Acción'),
 
         subTitle('6.1 Roadmap de implementación'),
-        ...parseAndRender(jsonbToText(actionPlan?.roadmap)),
+        ...parseAndRender(actionPlan?.roadmap),
         sectionSeparator(),
 
         subTitle('6.2 Primeros 90 días — acciones concretas'),
