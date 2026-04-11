@@ -2,7 +2,7 @@
  * lib/visual/generators/satori-renderer.ts
  *
  * Renders branded data cards and quote cards as PNG buffers
- * using Satori (JSX → SVG) + @resvg/resvg-js (SVG → PNG).
+ * using Satori (JSX → SVG) + sharp (SVG → PNG).
  *
  * Templates:
  *   data_highlight  – large number + label + subtext
@@ -14,7 +14,7 @@
  */
 
 import satori                      from 'satori'
-import { Resvg }                   from '@resvg/resvg-js'
+import sharp                       from 'sharp'
 import { createElement as h }      from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -322,6 +322,11 @@ export async function renderSatoriTemplate(inp: SatoriInput): Promise<Buffer> {
     fonts,
   })
 
-  const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: inp.width } })
-  return Buffer.from(resvg.render().asPng())
+  // Convert SVG → PNG using sharp (librsvg-backed, no native .node binaries needed)
+  return Buffer.from(
+    await sharp(Buffer.from(svg))
+      .resize(inp.width, inp.height)
+      .png()
+      .toBuffer()
+  )
 }

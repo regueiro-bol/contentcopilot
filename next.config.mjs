@@ -11,7 +11,7 @@ const nextConfig = {
   experimental: {
     // sharp necesita ser tratado como paquete externo en Vercel
     // para que use los binarios nativos del runtime en lugar de bundlearse
-    serverComponentsExternalPackages: ['sharp', 'fluent-ffmpeg', '@ffmpeg-installer/ffmpeg', 'exceljs'],
+    serverComponentsExternalPackages: ['sharp', 'fluent-ffmpeg', '@ffmpeg-installer/ffmpeg', 'exceljs', '@resvg/resvg-js'],
     // Permite subidas de hasta 50 MB en Server Actions y Route Handlers
     serverActions: {
       bodySizeLimit: '52mb',
