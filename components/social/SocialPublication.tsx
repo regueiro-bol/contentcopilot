@@ -54,13 +54,17 @@ export default function SocialPublication({ clientId }: Props) {
   const fetchPosts = useCallback(async () => {
     setLoading(true)
     try {
-      const [pendRes, pubRes, voiceRes] = await Promise.all([
+      const [pendAprobRes, pendListoRes, pubRes, voiceRes] = await Promise.all([
         fetch(`/api/social/posts?clientId=${clientId}&status=aprobado`),
+        fetch(`/api/social/posts?clientId=${clientId}&status=listo`),
         fetch(`/api/social/posts?clientId=${clientId}&status=publicado`),
         fetch(`/api/social/brand-voice?clientId=${clientId}`).catch(() => ({ ok: false } as Response)),
       ])
 
-      if (pendRes.ok) setPendingPosts(await pendRes.json() as SocialPost[])
+      const aprobados = pendAprobRes.ok ? await pendAprobRes.json() as SocialPost[] : []
+      const listos    = pendListoRes.ok ? await pendListoRes.json() as SocialPost[] : []
+      // Listos primero (tienen imagen), luego aprobados
+      setPendingPosts([...listos, ...aprobados])
       if (pubRes.ok) {
         const all = await pubRes.json() as SocialPost[]
         // Filter published this month
@@ -305,9 +309,10 @@ function PendingPostCard({
 }) {
   const copy    = post.copy_approved ?? post.copy_draft ?? ''
   const preview = copy.slice(0, 120) + (copy.length > 120 ? '…' : '')
+  const isListo = post.status === 'listo'
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden hover:border-amber-300 transition-colors">
+    <div className={`rounded-xl border bg-white overflow-hidden transition-colors ${isListo ? 'border-emerald-200 hover:border-emerald-300' : 'border-gray-200 hover:border-amber-300'}`}>
       <div className="p-4">
         <div className="flex items-start gap-3">
           {/* Platform badge */}
@@ -331,6 +336,10 @@ function PendingPostCard({
               {post.humanized && (
                 <span className="text-xs text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded-md">✓ humanizado</span>
               )}
+              {isListo
+                ? <span className="text-xs text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-100">✓ listo</span>
+                : <span className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-md border border-orange-100">Sin imagen</span>
+              }
             </div>
 
             {post.hook && (
@@ -347,13 +356,37 @@ function PendingPostCard({
               </div>
             )}
           </div>
+
+          {/* Thumbnail */}
+          {post.asset_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={post.asset_url}
+              alt="Visual"
+              className="h-10 w-10 rounded-lg object-cover shrink-0 border border-gray-100"
+            />
+          )}
         </div>
 
-        {/* Expanded copy */}
-        {isExpanded && copy && (
-          <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-700 whitespace-pre-wrap leading-relaxed border border-gray-100">
-            {copy}
-          </div>
+        {/* Expanded asset + copy */}
+        {isExpanded && (
+          <>
+            {post.asset_url && (
+              <div className="mt-3 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 max-w-xs mx-auto">
+                {post.asset_type === 'video' ? (
+                  <video src={post.asset_url} controls className="w-full max-h-64 object-contain" />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={post.asset_url} alt="Visual" className="w-full max-h-64 object-contain" />
+                )}
+              </div>
+            )}
+            {copy && (
+              <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-700 whitespace-pre-wrap leading-relaxed border border-gray-100">
+                {copy}
+              </div>
+            )}
+          </>
         )}
 
         {/* Actions */}
@@ -433,11 +466,14 @@ function PublishModal({
   onPublished: () => void
 }) {
   const today = new Date().toISOString().split('T')[0]
-  const [publishedAt,    setPublishedAt]    = useState(today)
-  const [publishedUrl,   setPublishedUrl]   = useState('')
-  const [publishedNotes, setPublishedNotes] = useState('')
-  const [saving,         setSaving]         = useState(false)
-  const [errorMsg,       setErrorMsg]       = useState('')
+  const [publishedAt,       setPublishedAt]       = useState(today)
+  const [publishedUrl,      setPublishedUrl]       = useState('')
+  const [publishedNotes,    setPublishedNotes]     = useState('')
+  const [saving,            setSaving]             = useState(false)
+  const [errorMsg,          setErrorMsg]           = useState('')
+  const [noImageConfirmed,  setNoImageConfirmed]   = useState(false)
+
+  const hasNoAsset = !post.asset_url
 
   async function handleConfirm() {
     setSaving(true)
@@ -514,6 +550,27 @@ function PublishModal({
             />
           </div>
 
+          {/* No-image warning */}
+          {hasNoAsset && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-800">
+                  ⚠️ Esta pieza no tiene recurso visual asociado. ¿Publicar igualmente?
+                </p>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={noImageConfirmed}
+                  onChange={(e) => setNoImageConfirmed(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-amber-600"
+                />
+                <span className="text-xs text-amber-700">Sí, publicar sin imagen</span>
+              </label>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 rounded-lg p-3">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
@@ -529,7 +586,7 @@ function PublishModal({
           <Button
             size="sm"
             onClick={handleConfirm}
-            disabled={saving || !publishedAt}
+            disabled={saving || !publishedAt || (hasNoAsset && !noImageConfirmed)}
             className="text-xs gap-1.5 bg-green-600 hover:bg-green-700 text-white"
           >
             {saving
