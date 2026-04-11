@@ -91,6 +91,7 @@ ${benchmarkSummary}
 
 Genera un JSON con esta estructura EXACTA (sin markdown, solo JSON):
 {
+  "platform_context": "Texto de 120-160 palabras con el marco estratégico por plataforma: para cada plataforma auditada, una frase que explique qué papel juega actualmente en el ecosistema del cliente y si debe ser prioritaria, mantenida o descartada. Usa los nombres propios de las plataformas (LinkedIn, Instagram, etc.).",
   "main_strengths": "Texto de 100-150 palabras describiendo las 3-4 principales fortalezas actuales del cliente en redes. Sé específico y menciona plataformas concretas.",
   "main_weaknesses": "Texto de 100-150 palabras describiendo las 3-4 principales debilidades o gaps. Prioriza las más críticas para el negocio."
 }
@@ -121,8 +122,9 @@ Tu trabajo es sintetizar la auditoría de redes sociales identificando fortaleza
     if (!jsonMatch) throw new Error('Claude no devolvió JSON válido')
 
     const result = JSON.parse(jsonMatch[0]) as {
-      main_strengths : string
-      main_weaknesses: string
+      platform_context: string
+      main_strengths  : string
+      main_weaknesses : string
     }
 
     // Registrar coste (fire-and-forget)

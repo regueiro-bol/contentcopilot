@@ -130,6 +130,33 @@ function bulletPara(text: string): Paragraph {
 }
 
 /**
+ * preSplit — splits raw text into lines preserving intentional paragraph
+ * breaks (double-newline → empty string sentinel for emptyPara).
+ *
+ * Algorithm:
+ *  1. Split on two-or-more consecutive newlines → paragraph groups
+ *  2. Within each group, split on single newline → individual lines
+ *  3. Trim each line, drop blanks inside a group
+ *  4. Insert '' (empty string) between groups as paragraph-break sentinel
+ */
+function preSplit(raw: string): string[] {
+  const groups = raw.split(/\n{2,}/)
+  const result: string[] = []
+
+  for (let i = 0; i < groups.length; i++) {
+    const lines = groups[i].split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+    if (lines.length === 0) continue
+
+    result.push(...lines)
+
+    // Paragraph separator between groups (not after the last one)
+    if (i < groups.length - 1) result.push('')
+  }
+
+  return result
+}
+
+/**
  * parseInlineFormatting — splits a line into TextRun[] handling
  * **bold** and *italic* markers inline.
  */
@@ -173,14 +200,17 @@ function parseAndRender(text: unknown, placeholder = '(Pendiente de completar)')
   const raw = rawText.trim()
   if (!raw) return placeholder ? [normalPara(placeholder)] : []
 
-  const lines = raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
+  const lines = preSplit(raw)
 
   const result: Paragraph[] = []
 
   for (const line of lines) {
+    // ── CASE 0: Empty string → paragraph break
+    if (line === '') {
+      result.push(emptyPara())
+      continue
+    }
+
     // ── CASE 1: Uppercase header with em-dash / en-dash / hyphen separator
     //   e.g. "INSTAGRAM — FEED:" or "BLOQUE 1 — ESTRATEGIA"
     if (
@@ -239,6 +269,99 @@ function parseAndRender(text: unknown, placeholder = '(Pendiente de completar)')
   }
 
   return result
+}
+
+/**
+ * makeDafoTable — renders a 2×2 DAFO analysis table.
+ * Each quadrant has a coloured header row + bullet content rows.
+ * Layout: [FORTALEZAS | DEBILIDADES] / [OPORTUNIDADES | AMENAZAS]
+ */
+function makeDafoTable(
+  fortalezas    : string,
+  debilidades   : string,
+  oportunidades : string,
+  amenazas      : string,
+): Table {
+  const COL_W  = Math.floor(CONTENT_W / 2) // 4513
+  const REST_W = CONTENT_W - COL_W          // 4513
+
+  const headerCell = (text: string, fill: string): TableCell =>
+    new TableCell({
+      width  : { size: COL_W, type: WidthType.DXA },
+      shading: { fill, type: ShadingType.CLEAR },
+      borders: NO_BORDERS,
+      margins: { top: 100, bottom: 100, left: 200, right: 200 },
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold: true, size: 20, font: 'Arial', color: 'FFFFFF' })],
+      })],
+    })
+
+  const contentCell = (text: string): TableCell => {
+    const bullets = text
+      .split('\n')
+      .map((l) => l.trim().replace(/^[•\-\*]\s*/, ''))
+      .filter((l) => l.length > 0)
+    return new TableCell({
+      width  : { size: COL_W, type: WidthType.DXA },
+      shading: { fill: 'FAFBFC', type: ShadingType.CLEAR },
+      borders: { top: BORDER_CELL, bottom: BORDER_CELL, left: BORDER_CELL, right: BORDER_CELL },
+      margins: { top: 80, bottom: 80, left: 180, right: 180 },
+      children: bullets.length > 0
+        ? bullets.map((b) => bulletPara(b))
+        : [normalPara('—')],
+    })
+  }
+
+  // Right column uses REST_W to avoid rounding drift
+  const headerCellRight = (text: string, fill: string): TableCell =>
+    new TableCell({
+      width  : { size: REST_W, type: WidthType.DXA },
+      shading: { fill, type: ShadingType.CLEAR },
+      borders: NO_BORDERS,
+      margins: { top: 100, bottom: 100, left: 200, right: 200 },
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold: true, size: 20, font: 'Arial', color: 'FFFFFF' })],
+      })],
+    })
+
+  const contentCellRight = (text: string): TableCell => {
+    const bullets = text
+      .split('\n')
+      .map((l) => l.trim().replace(/^[•\-\*]\s*/, ''))
+      .filter((l) => l.length > 0)
+    return new TableCell({
+      width  : { size: REST_W, type: WidthType.DXA },
+      shading: { fill: 'FAFBFC', type: ShadingType.CLEAR },
+      borders: { top: BORDER_CELL, bottom: BORDER_CELL, left: BORDER_CELL, right: BORDER_CELL },
+      margins: { top: 80, bottom: 80, left: 180, right: 180 },
+      children: bullets.length > 0
+        ? bullets.map((b) => bulletPara(b))
+        : [normalPara('—')],
+    })
+  }
+
+  return new Table({
+    width       : { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: [COL_W, REST_W],
+    rows: [
+      new TableRow({ children: [
+        headerCell('FORTALEZAS',  '2D9E6B'), // green
+        headerCellRight('DEBILIDADES',  'E53935'), // red
+      ]}),
+      new TableRow({ children: [
+        contentCell(fortalezas),
+        contentCellRight(debilidades),
+      ]}),
+      new TableRow({ children: [
+        headerCell('OPORTUNIDADES', '2E5F8A'), // blue
+        headerCellRight('AMENAZAS',      'E67E22'), // amber
+      ]}),
+      new TableRow({ children: [
+        contentCell(oportunidades),
+        contentCellRight(amenazas),
+      ]}),
+    ],
+  })
 }
 
 /** H2 — subsection title (e.g. "1.1 Síntesis…") */
@@ -447,7 +570,7 @@ export async function GET(request: NextRequest) {
     supabase.from('clientes').select('nombre').eq('id', clientId).single(),
     supabase.from('social_platforms').select('*').eq('client_id', clientId).order('platform'),
     supabase.from('social_benchmark').select('*').eq('client_id', clientId).order('sort_order'),
-    supabase.from('social_audit_synthesis').select('*').eq('client_id', clientId).maybeSingle(),
+    supabase.from('social_audit_synthesis').select('main_strengths, main_weaknesses, platform_context, intro_text, dafo_fortalezas, dafo_debilidades, dafo_oportunidades, dafo_amenazas').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_strategy').select('*').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_content_architecture').select('*').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_brand_voice').select('*').eq('client_id', clientId).maybeSingle(),
@@ -624,15 +747,44 @@ export async function GET(request: NextRequest) {
         // ── SECCIÓN 1: AUDITORÍA Y BENCHMARK ─────────────────────────────────
         ...sectionTitle('1. Auditoría y Benchmark'),
 
+        // 1.0 Introducción estratégica (si existe)
+        ...(auditSynth?.intro_text ? [
+          ...parseAndRender(auditSynth.intro_text),
+          sectionSeparator(),
+        ] : []),
+
+        // 1.1 Fortalezas
         ...(auditSynth?.main_strengths ? [
           subTitle('1.1 Fortalezas principales'),
           ...parseAndRender(auditSynth.main_strengths),
           sectionSeparator(),
         ] : []),
 
+        // 1.2 Debilidades
         ...(auditSynth?.main_weaknesses ? [
           subTitle('1.2 Debilidades y gaps'),
           ...parseAndRender(auditSynth.main_weaknesses),
+          sectionSeparator(),
+        ] : []),
+
+        // DAFO (si existen todos los cuadrantes)
+        ...((auditSynth as any)?.dafo_fortalezas && (auditSynth as any)?.dafo_debilidades
+          && (auditSynth as any)?.dafo_oportunidades && (auditSynth as any)?.dafo_amenazas ? [
+          subTitle('Análisis DAFO'),
+          makeDafoTable(
+            (auditSynth as any).dafo_fortalezas,
+            (auditSynth as any).dafo_debilidades,
+            (auditSynth as any).dafo_oportunidades,
+            (auditSynth as any).dafo_amenazas,
+          ),
+          emptyPara(),
+          sectionSeparator(),
+        ] : []),
+
+        // 1.3 Marco estratégico por plataforma (si existe)
+        ...((auditSynth as any)?.platform_context ? [
+          subTitle('Marco estratégico por plataforma'),
+          ...parseAndRender((auditSynth as any).platform_context),
           sectionSeparator(),
         ] : []),
 
