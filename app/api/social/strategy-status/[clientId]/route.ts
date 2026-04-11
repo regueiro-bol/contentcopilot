@@ -41,7 +41,7 @@ export async function GET(
     { data: kpis },
     { data: actionPlan },
   ] = await Promise.all([
-    supabase.from('social_audit_synthesis')      .select('phase_1_completed, phase_1_approved_at').eq('client_id', clientId).maybeSingle(),
+    supabase.from('social_audit_synthesis')      .select('phase_1_completed, phase_1_approved_at, client_validated, client_validated_at, revision_notes').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_strategy')             .select('phase_2_completed, phase_2_approved_at').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_content_architecture') .select('phase_3_completed, phase_3_approved_at').eq('client_id', clientId).maybeSingle(),
     supabase.from('social_brand_voice')          .select('phase_4_completed, phase_4_approved_at').eq('client_id', clientId).maybeSingle(),
@@ -65,5 +65,8 @@ export async function GET(
     phase1, phase2, phase3, phase4, phase5, phase6,
     completedCount,
     overallStatus,
+    clientValidated  : Boolean((audit as Record<string, unknown> | null)?.client_validated),
+    clientValidatedAt: ((audit as Record<string, unknown> | null)?.client_validated_at as string | null) ?? null,
+    revisionNotes    : ((audit as Record<string, unknown> | null)?.revision_notes as string | null) ?? null,
   })
 }

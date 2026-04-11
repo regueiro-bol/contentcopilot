@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Share2, Check, Lock, Loader2,
   BarChart2, Target, Layers, Mic2, TrendingUp, Rocket,
-  Download,
+  Download, ShieldCheck, RotateCcw, MessageSquare,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,14 +23,17 @@ interface PhaseStatus {
 }
 
 interface StrategyStatus {
-  phase1        : PhaseStatus
-  phase2        : PhaseStatus
-  phase3        : PhaseStatus
-  phase4        : PhaseStatus
-  phase5        : PhaseStatus
-  phase6        : PhaseStatus
-  completedCount: number
-  overallStatus : 'not_started' | 'in_progress' | 'completed'
+  phase1           : PhaseStatus
+  phase2           : PhaseStatus
+  phase3           : PhaseStatus
+  phase4           : PhaseStatus
+  phase5           : PhaseStatus
+  phase6           : PhaseStatus
+  completedCount   : number
+  overallStatus    : 'not_started' | 'in_progress' | 'completed'
+  clientValidated  : boolean
+  clientValidatedAt: string | null
+  revisionNotes    : string | null
 }
 
 interface Props {
@@ -94,10 +97,13 @@ function isPhaseUnlocked(status: StrategyStatus | null, phase: number): boolean 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function SocialMediaStrategy({ clientId }: Props) {
-  const [status, setStatus]         = useState<StrategyStatus | null>(null)
-  const [loading, setLoading]       = useState(true)
+  const [status, setStatus]           = useState<StrategyStatus | null>(null)
+  const [loading, setLoading]         = useState(true)
   const [activePhase, setActivePhase] = useState(1)
-  const [approving, setApproving]   = useState<number | null>(null)
+  const [approving, setApproving]     = useState<number | null>(null)
+  const [validating, setValidating]   = useState(false)
+  const [showNotes, setShowNotes]     = useState(false)
+  const [notesInput, setNotesInput]   = useState('')
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -137,6 +143,27 @@ export default function SocialMediaStrategy({ clientId }: Props) {
     finally { setApproving(null) }
   }
 
+  async function handleValidate(validated: boolean) {
+    setValidating(true)
+    try {
+      const res = await fetch('/api/social/validate-strategy', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          clientId,
+          validated,
+          notes: notesInput.trim() || undefined,
+        }),
+      })
+      if (res.ok) {
+        await fetchStatus()
+        if (!validated) setNotesInput('')
+        setShowNotes(false)
+      }
+    } catch { /* silencioso */ }
+    finally { setValidating(false) }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -174,9 +201,14 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                 En progreso ({completedCount}/6 fases)
               </Badge>
             )}
-            {overallStatus === 'completed' && (
+            {overallStatus === 'completed' && !status?.clientValidated && (
               <Badge className="bg-green-100 text-green-800 border-green-200">
                 ✓ Completada
+              </Badge>
+            )}
+            {status?.clientValidated && (
+              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 gap-1">
+                <ShieldCheck className="h-3 w-3" /> Validada por cliente
               </Badge>
             )}
             <Button
@@ -192,6 +224,106 @@ export default function SocialMediaStrategy({ clientId }: Props) {
           </div>
         </div>
       </div>
+
+      {/* ── Panel de validación por cliente (solo cuando strategy completada) ── */}
+      {overallStatus === 'completed' && (
+        <div className={`rounded-xl border p-5 space-y-3 ${
+          status?.clientValidated
+            ? 'bg-emerald-50 border-emerald-200'
+            : 'bg-white border-gray-200'
+        }`}>
+          {status?.clientValidated ? (
+            /* ── Estado: validada ── */
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-full bg-emerald-500 flex items-center justify-center shrink-0">
+                    <ShieldCheck className="h-4 w-4 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-800">Validada por el cliente</p>
+                    {status.clientValidatedAt && (
+                      <p className="text-xs text-emerald-600 mt-0.5">
+                        {new Date(status.clientValidatedAt).toLocaleDateString('es-ES', {
+                          day: 'numeric', month: 'long', year: 'numeric',
+                        })}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleValidate(false)}
+                  disabled={validating}
+                  className="text-xs text-gray-400 hover:text-amber-600 gap-1"
+                >
+                  {validating
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <><RotateCcw className="h-3 w-3" /> Desmarcar</>
+                  }
+                </Button>
+              </div>
+              {status.revisionNotes && (
+                <div className="rounded-lg bg-white border border-emerald-200 px-3 py-2">
+                  <p className="text-xs font-medium text-emerald-700 mb-1 flex items-center gap-1">
+                    <MessageSquare className="h-3 w-3" /> Notas de revisión
+                  </p>
+                  <p className="text-xs text-gray-600 whitespace-pre-line">{status.revisionNotes}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* ── Estado: pendiente de validación ── */
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Validación por cliente</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Marca la estrategia como aprobada por el cliente para activar la herencia en ejecución.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => setShowNotes((v) => !v)}
+                  className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shrink-0 ml-4"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Validar con cliente
+                </Button>
+              </div>
+
+              {showNotes && (
+                <div className="space-y-2.5 pt-1">
+                  <textarea
+                    rows={3}
+                    value={notesInput}
+                    onChange={(e) => setNotesInput(e.target.value)}
+                    placeholder="Notas de la validación (opcional): feedback del cliente, ajustes acordados…"
+                    className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-300 resize-none"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setShowNotes(false)} className="text-xs h-7">
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => handleValidate(true)}
+                      disabled={validating}
+                      className="text-xs h-7 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      {validating
+                        ? <><Loader2 className="h-3 w-3 animate-spin" /> Guardando…</>
+                        : <><Check className="h-3 w-3" /> Confirmar validación</>
+                      }
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Wizard: barra de progreso ── */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
