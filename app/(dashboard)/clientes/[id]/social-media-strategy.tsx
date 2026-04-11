@@ -14,6 +14,7 @@ import Phase3Architecture  from '@/components/social/phases/Phase3Architecture'
 import Phase4BrandVoice    from '@/components/social/phases/Phase4BrandVoice'
 import Phase5KPIs          from '@/components/social/phases/Phase5KPIs'
 import Phase6ActionPlan    from '@/components/social/phases/Phase6ActionPlan'
+import StrategyRevisionPanel from '@/components/social/StrategyRevisionPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,9 +102,10 @@ export default function SocialMediaStrategy({ clientId }: Props) {
   const [loading, setLoading]         = useState(true)
   const [activePhase, setActivePhase] = useState(1)
   const [approving, setApproving]     = useState<number | null>(null)
-  const [validating, setValidating]   = useState(false)
-  const [showNotes, setShowNotes]     = useState(false)
-  const [notesInput, setNotesInput]   = useState('')
+  const [validating, setValidating]         = useState(false)
+  const [showNotes, setShowNotes]           = useState(false)
+  const [notesInput, setNotesInput]         = useState('')
+  const [showRevisionPanel, setShowRevisionPanel] = useState(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -251,18 +253,28 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                     )}
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleValidate(false)}
-                  disabled={validating}
-                  className="text-xs text-gray-400 hover:text-amber-600 gap-1"
-                >
-                  {validating
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <><RotateCcw className="h-3 w-3" /> Desmarcar</>
-                  }
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowRevisionPanel(true)}
+                    className="text-xs gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50"
+                  >
+                    <RotateCcw className="h-3 w-3" /> Iniciar revisión
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleValidate(false)}
+                    disabled={validating}
+                    className="text-xs text-gray-400 hover:text-amber-600 gap-1"
+                  >
+                    {validating
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : 'Desmarcar'
+                    }
+                  </Button>
+                </div>
               </div>
               {status.revisionNotes && (
                 <div className="rounded-lg bg-white border border-emerald-200 px-3 py-2">
@@ -283,14 +295,24 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                     Marca la estrategia como aprobada por el cliente para activar la herencia en ejecución.
                   </p>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={() => setShowNotes((v) => !v)}
-                  className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shrink-0 ml-4"
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  Validar con cliente
-                </Button>
+                <div className="flex items-center gap-2 shrink-0 ml-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowRevisionPanel(true)}
+                    className="text-xs gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50"
+                  >
+                    <RotateCcw className="h-3 w-3" /> Iniciar revisión
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => setShowNotes((v) => !v)}
+                    className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Validar con cliente
+                  </Button>
+                </div>
               </div>
 
               {showNotes && (
@@ -457,6 +479,14 @@ export default function SocialMediaStrategy({ clientId }: Props) {
           </div>
         )
       })}
+
+      {/* ── Panel de revisión IA ── */}
+      <StrategyRevisionPanel
+        open     ={showRevisionPanel}
+        clientId ={clientId}
+        onClose  ={() => setShowRevisionPanel(false)}
+        onApplied={() => { setShowRevisionPanel(false); fetchStatus() }}
+      />
     </div>
   )
 }

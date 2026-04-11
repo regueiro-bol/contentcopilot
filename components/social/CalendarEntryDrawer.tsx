@@ -90,6 +90,11 @@ export default function CalendarEntryDrawer({
   const [suggestions,     setSuggestions]    = useState<Suggestion[]>([])
   const [error,           setError]          = useState<string | null>(null)
 
+  // ── Strategy context (loaded once per clientId) ──
+  const [strategyPillars,  setStrategyPillars]  = useState<string[]>([])
+  const [strategyFormats,  setStrategyFormats]  = useState<Record<string, string[]>>({})
+  const [strategyValidated, setStrategyValidated] = useState(false)
+
   // ── Populate form on open ──
   useEffect(() => {
     if (!open) return
@@ -127,6 +132,20 @@ export default function CalendarEntryDrawer({
       setFormat('')
     }
   }, [platform]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Load strategy context once ──
+  useEffect(() => {
+    if (!clientId) return
+    fetch(`/api/social/strategy-context?clientId=${clientId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return
+        setStrategyPillars(data.editorialPillars ?? [])
+        setStrategyFormats(data.formatsByPlatform ?? {})
+        setStrategyValidated(Boolean(data.isValidated))
+      })
+      .catch(() => { /* silencioso */ })
+  }, [clientId])
 
   // ── Auto-fill from article ──
   function handleArticleSelect(articleId: string) {
@@ -240,7 +259,10 @@ export default function CalendarEntryDrawer({
     setSuggestions([])
   }
 
-  const formats = PLATFORM_FORMATS[platform] ?? []
+  // Use strategy formats if available, fallback to static PLATFORM_FORMATS
+  const formats = (strategyFormats[platform]?.length ? strategyFormats[platform] : PLATFORM_FORMATS[platform]) ?? []
+  // Use pillar names if available, fallback to generic CONTENT_TYPES
+  const contentTypeOptions = strategyPillars.length > 0 ? strategyPillars : CONTENT_TYPES
 
   // ── Render ──
   if (!open) return null
@@ -262,9 +284,16 @@ export default function CalendarEntryDrawer({
       `}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
-          <h2 className="text-base font-semibold text-gray-900">
-            {isEdit ? 'Editar entrada' : 'Nueva entrada social'}
-          </h2>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-base font-semibold text-gray-900">
+              {isEdit ? 'Editar entrada' : 'Nueva entrada social'}
+            </h2>
+            {strategyValidated && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">
+                <Sparkles className="h-3 w-3" /> Estrategia validada
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="h-5 w-5" />
           </button>
@@ -320,7 +349,7 @@ export default function CalendarEntryDrawer({
                   className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-pink-300"
                 >
                   <option value="">Sin especificar</option>
-                  {CONTENT_TYPES.map((t) => (
+                  {contentTypeOptions.map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
