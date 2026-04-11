@@ -25,6 +25,10 @@ export interface SocialPost {
   humanized?        : boolean | null
   published_at?     : string | null
   created_at?       : string | null
+  asset_url?        : string | null
+  asset_type?       : string | null
+  asset_source?     : string | null
+  design_notes?     : string | null
 }
 
 interface Props {
@@ -44,10 +48,12 @@ const PLATFORM_COLORS: Record<string, string> = {
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ComponentType<any> }> = {
-  borrador  : { label: 'Borrador',  color: 'text-gray-500 bg-gray-100',    icon: Edit3        },
-  revision  : { label: 'Revisión',  color: 'text-amber-700 bg-amber-100',  icon: Clock        },
-  aprobado  : { label: 'Aprobado',  color: 'text-green-700 bg-green-100',  icon: CheckCircle2 },
-  publicado : { label: 'Publicado', color: 'text-blue-700 bg-blue-100',    icon: Eye          },
+  borrador  : { label: 'Borrador',   color: 'text-gray-500 bg-gray-100',    icon: Edit3        },
+  revision  : { label: 'Revisión',   color: 'text-amber-700 bg-amber-100',  icon: Clock        },
+  aprobado  : { label: 'Aprobado',   color: 'text-green-700 bg-green-100',  icon: CheckCircle2 },
+  en_diseno : { label: 'En diseño',  color: 'text-orange-700 bg-orange-100', icon: Clock       },
+  listo     : { label: 'Listo',      color: 'text-emerald-700 bg-emerald-100', icon: CheckCircle2 },
+  publicado : { label: 'Publicado',  color: 'text-blue-700 bg-blue-100',    icon: Eye          },
 }
 
 const PLATFORM_OPTIONS = ['', 'linkedin', 'twitter_x', 'instagram', 'facebook', 'tiktok', 'youtube']
