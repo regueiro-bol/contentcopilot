@@ -313,16 +313,17 @@ export default function Phase3Architecture({ clientId, onPhaseComplete }: Props)
           </div>
           <div className="space-y-2.5">
             {APPROVAL_CHECKLIST.map((item, idx) => (
-              <label key={idx} className="flex items-start gap-3 cursor-pointer group">
+              <div key={idx} role="checkbox" aria-checked={checkItems[idx]} tabIndex={0}
+                onClick={() => { const n = [...checkItems]; n[idx] = !n[idx]; setCheckItems(n) }}
+                onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); const n = [...checkItems]; n[idx] = !n[idx]; setCheckItems(n) } }}
+                className="flex items-start gap-3 cursor-pointer group select-none"
+              >
                 <div className={`mt-0.5 h-4 w-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors
                   ${checkItems[idx] ? 'bg-green-500 border-green-500' : 'border-gray-300 group-hover:border-green-400'}`}>
                   {checkItems[idx] && <Check className="h-2.5 w-2.5 text-white" />}
-                  <input type="checkbox" checked={checkItems[idx]}
-                    onChange={(e) => { const n = [...checkItems]; n[idx] = e.target.checked; setCheckItems(n) }}
-                    className="sr-only" />
                 </div>
                 <span className={`text-sm transition-colors ${checkItems[idx] ? 'text-gray-700 line-through decoration-gray-400' : 'text-gray-600'}`}>{item}</span>
-              </label>
+              </div>
             ))}
           </div>
           <div className="pt-3 border-t border-gray-100 flex items-center justify-between">

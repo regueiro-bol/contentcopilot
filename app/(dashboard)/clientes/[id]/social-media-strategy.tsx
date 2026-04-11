@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Share2, Check, Lock, ChevronRight, Loader2,
+  Share2, Check, Lock, Loader2,
   BarChart2, Target, Layers, Mic2, TrendingUp, Rocket,
   Download,
 } from 'lucide-react'
@@ -45,42 +45,36 @@ const FASES = [
     titulo     : 'Auditoría y benchmark',
     descripcion: 'Análisis del estado actual en redes y comparativa con competidores.',
     icon       : BarChart2,
-    sprintLabel: 'Sprint 2',
   },
   {
     numero     : 2,
     titulo     : 'Estrategia de plataformas',
     descripcion: 'Decisiones sobre en qué redes estar y con qué rol cada una.',
     icon       : Target,
-    sprintLabel: 'Sprint 2',
   },
   {
     numero     : 3,
     titulo     : 'Arquitectura de contenidos',
     descripcion: 'Pilares editoriales, formatos por plataforma y cadencia de publicación.',
     icon       : Layers,
-    sprintLabel: 'Sprint 3',
   },
   {
     numero     : 4,
     titulo     : 'Tono y guidelines',
     descripcion: 'Manual de voz para redes, registro por plataforma y líneas rojas editoriales.',
     icon       : Mic2,
-    sprintLabel: 'Sprint 3',
   },
   {
     numero     : 5,
     titulo     : 'KPIs y métricas',
     descripcion: 'Indicadores de éxito, metodología de medición y sistema de reporting.',
     icon       : TrendingUp,
-    sprintLabel: 'Sprint 4',
   },
   {
     numero     : 6,
     titulo     : 'Plan de acción',
     descripcion: 'Roadmap por horizontes, primeros 90 días y recursos necesarios.',
     icon       : Rocket,
-    sprintLabel: 'Sprint 4',
   },
 ] as const
 
@@ -276,7 +270,6 @@ export default function SocialMediaStrategy({ clientId }: Props) {
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">
                       Fase {String(fase.numero).padStart(2, '0')}
                     </span>
-                    <Badge variant="secondary" className="text-xs">{fase.sprintLabel}</Badge>
                   </div>
                   <h3 className="text-base font-semibold text-gray-900">{fase.titulo}</h3>
                 </div>
@@ -350,53 +343,6 @@ function PhaseBlocked({ phaseNumber }: { phaseNumber: number }) {
   )
 }
 
-function PhasePending({
-  titulo,
-  descripcion,
-  sprintLabel,
-  approving,
-  onApprove,
-}: {
-  titulo      : string
-  descripcion : string
-  sprintLabel : string
-  approving   : boolean
-  onApprove   : () => void
-}) {
-  return (
-    <div className="space-y-5">
-      <div className="rounded-lg bg-pink-50 border border-pink-200 p-5">
-        <p className="text-sm text-pink-800 font-medium mb-1">{titulo}</p>
-        <p className="text-xs text-pink-700">{descripcion}</p>
-        <div className="mt-3 flex items-center gap-2">
-          <Badge className="bg-pink-100 text-pink-700 border-pink-200 text-xs">{sprintLabel}</Badge>
-          <span className="text-xs text-pink-600">Esta fase se construirá en el {sprintLabel}.</span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" disabled className="text-xs gap-1.5 opacity-50">
-            Generar con IA
-          </Button>
-          <span className="text-xs text-gray-400">Disponible en {sprintLabel}</span>
-        </div>
-
-        <Button
-          size="sm"
-          onClick={onApprove}
-          disabled={approving}
-          className="gap-1.5 text-xs bg-pink-600 hover:bg-pink-700 text-white"
-        >
-          {approving
-            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Aprobando…</>
-            : <>Aprobar fase y continuar <ChevronRight className="h-3.5 w-3.5" /></>
-          }
-        </Button>
-      </div>
-    </div>
-  )
-}
 
 function PhaseCompleted({
   approvedAt,

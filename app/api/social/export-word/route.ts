@@ -63,6 +63,106 @@ function emptyPara(): Paragraph {
 const BORDER_CELL = { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' }
 const BORDERS     = { top: BORDER_CELL, bottom: BORDER_CELL, left: BORDER_CELL, right: BORDER_CELL }
 
+// ─── Datos de formatos por plataforma ─────────────────────────────────────────
+
+const PLATFORM_FORMATS_DATA: Record<string, Array<{ formato: string; tipo: string }>> = {
+  linkedin : [
+    { formato: 'Artículo nativo',          tipo: 'Texto largo'        },
+    { formato: 'Post de texto',             tipo: 'Texto'              },
+    { formato: 'Documento PDF nativo',      tipo: 'Documento'          },
+    { formato: 'Vídeo corto',               tipo: 'Vídeo'              },
+    { formato: 'Encuesta',                  tipo: 'Interactivo'        },
+    { formato: 'Celebración / Logro',       tipo: 'Texto + imagen'     },
+    { formato: 'Noticia del sector',        tipo: 'Curaduría'          },
+  ],
+  twitter_x: [
+    { formato: 'Tweet único',               tipo: 'Texto'              },
+    { formato: 'Hilo de tweets',            tipo: 'Texto largo'        },
+    { formato: 'Tweet con imagen',          tipo: 'Imagen'             },
+    { formato: 'Tweet con vídeo',           tipo: 'Vídeo'              },
+    { formato: 'Encuesta',                  tipo: 'Interactivo'        },
+    { formato: 'Respuesta / Conversación',  tipo: 'Conversacional'     },
+  ],
+  instagram: [
+    { formato: 'Post imagen',               tipo: 'Imagen'             },
+    { formato: 'Carrusel',                  tipo: 'Carrusel'           },
+    { formato: 'Reel',                      tipo: 'Vídeo corto'        },
+    { formato: 'Story',                     tipo: 'Efímero'            },
+    { formato: 'Vídeo IGTV',               tipo: 'Vídeo largo'        },
+    { formato: 'Colaboración',              tipo: 'Co-creación'        },
+    { formato: 'UGC',                       tipo: 'Contenido usuario'  },
+  ],
+  facebook : [
+    { formato: 'Post texto',                tipo: 'Texto'              },
+    { formato: 'Post imagen',               tipo: 'Imagen'             },
+    { formato: 'Vídeo nativo',              tipo: 'Vídeo'              },
+    { formato: 'Reel',                      tipo: 'Vídeo corto'        },
+    { formato: 'Story',                     tipo: 'Efímero'            },
+    { formato: 'Evento',                    tipo: 'Evento'             },
+    { formato: 'Live',                      tipo: 'Directo'            },
+  ],
+  tiktok   : [
+    { formato: 'Vídeo corto (<60s)',         tipo: 'Vídeo corto'       },
+    { formato: 'Vídeo largo (>60s)',         tipo: 'Vídeo largo'       },
+    { formato: 'Dueto',                     tipo: 'Co-creación'        },
+    { formato: 'Stitch',                    tipo: 'Remix'              },
+    { formato: 'Live',                      tipo: 'Directo'            },
+    { formato: 'Serie',                     tipo: 'Colección'          },
+  ],
+  youtube  : [
+    { formato: 'Vídeo largo (>10min)',       tipo: 'Vídeo largo'       },
+    { formato: 'Shorts',                    tipo: 'Vídeo corto'        },
+    { formato: 'Live',                      tipo: 'Directo'            },
+    { formato: 'Premiere',                  tipo: 'Estreno'            },
+    { formato: 'Post de comunidad',         tipo: 'Texto'              },
+    { formato: 'Playlist',                  tipo: 'Colección'          },
+  ],
+}
+
+function makePlatformFormatTable(
+  platformKey : string,
+  label       : string,
+): (Paragraph | Table)[] {
+  const formats = PLATFORM_FORMATS_DATA[platformKey] ?? []
+  if (!formats.length) return []
+
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children   : ['Formato', 'Tipo de pieza'].map((h, i) => new TableCell({
+      borders  : BORDERS,
+      width    : { size: [5000, 4360][i], type: WidthType.DXA },
+      shading  : { fill: 'EEF2F7', type: ShadingType.CLEAR },
+      margins  : { top: 80, bottom: 80, left: 120, right: 120 },
+      children : [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 18, font: 'Arial' })] })],
+    })),
+  })
+
+  const dataRows = formats.map(({ formato, tipo }) => new TableRow({
+    children: [
+      { v: formato, w: 5000 },
+      { v: tipo,    w: 4360 },
+    ].map(({ v, w }) => new TableCell({
+      borders : BORDERS,
+      width   : { size: w, type: WidthType.DXA },
+      margins : { top: 80, bottom: 80, left: 120, right: 120 },
+      children: [new Paragraph({ children: [new TextRun({ text: v, size: 18, font: 'Arial' })] })],
+    })),
+  }))
+
+  return [
+    new Paragraph({
+      children: [new TextRun({ text: label, bold: true, size: 22, font: 'Arial', color: '1A2B4A' })],
+      spacing : { before: 160, after: 80 },
+    }),
+    new Table({
+      width        : { size: 9360, type: WidthType.DXA },
+      columnWidths : [5000, 4360],
+      rows         : [headerRow, ...dataRows],
+    }),
+    emptyPara(),
+  ]
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
@@ -111,7 +211,7 @@ export async function GET(request: NextRequest) {
   // ─── Tabla de plataformas ────────────────────────────────────────────────────
 
   const activePlatforms = (platforms ?? []).filter(
-    (p) => p.is_active || (p.followers && p.followers > 0),
+    (p) => p.strategic_priority != null || (p.followers && p.followers > 0),
   )
 
   const platformTableRows = [
@@ -348,6 +448,16 @@ export async function GET(request: NextRequest) {
 
         subTitle('3.4 Calendario tipo semanal'),
         ...bodyText(architecture?.calendar_template),
+        emptyPara(),
+
+        subTitle('3.5 Ecosistema de formatos y producción visual'),
+        ...activePlatforms.flatMap(
+          (p) => makePlatformFormatTable(p.platform, PLATFORM_LABELS[p.platform] ?? p.platform),
+        ),
+        new Paragraph({
+          children: [new TextRun({ text: 'Nota: Los formatos disponibles dependen de la prioridad estratégica asignada a cada plataforma y de los recursos de producción del cliente.', italics: true, size: 18, font: 'Arial', color: '888888' })],
+          spacing : { before: 80, after: 80 },
+        }),
 
         // ── SECCIÓN 4: TONO Y GUIDELINES ─────────────────────────────────────────
         sectionTitle('4. Tono y Guidelines de Marca'),
