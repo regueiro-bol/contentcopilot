@@ -54,6 +54,8 @@ export async function POST(request: NextRequest) {
 
     const userPrompt = `CLIENTE: ${cliente.nombre}${cliente.sector ? ` (sector: ${cliente.sector})` : ''}
 
+IMPORTANTE: Usa los nombres propios de los formatos nativos de cada plataforma (Carruseles, Reels, Stories, LinkedIn Articles, LinkedIn Documentos, TikTok Duets, YouTube Shorts, Hilos de Twitter/X, etc.). No uses nombres genéricos como "post con imagen" cuando existe un nombre nativo específico.
+
 ESTRATEGIA DE PLATAFORMAS (Fase 2):
 Decisiones por plataforma:
 ${strategy?.platform_decisions ?? '(no disponible)'}

@@ -63,6 +63,8 @@ export async function POST(request: NextRequest) {
 
     const userPrompt = `CLIENTE: ${cliente.nombre}${cliente.sector ? ` (sector: ${cliente.sector})` : ''}
 
+IMPORTANTE: Usa siempre los nombres propios de las plataformas (LinkedIn, Instagram, TikTok, Twitter/X, Facebook, YouTube) — nunca abreviaciones ni términos genéricos. Cuando menciones acciones o métricas, cita la plataforma por su nombre propio.
+
 AUDITORÍA POR PLATAFORMAS:
 ${platformsSummary || '(Sin plataformas auditadas)'}
 

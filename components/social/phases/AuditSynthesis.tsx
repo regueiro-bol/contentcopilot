@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 interface SynthesisData {
   id?                           : string
   client_id                     : string
+  platform_context?             : string
   main_strengths?               : string
   main_weaknesses?              : string
   benchmark_patterns?           : string
@@ -73,11 +74,12 @@ export default function AuditSynthesis({ clientId, onPhaseComplete }: Props) {
         body   : JSON.stringify({ clientId }),
       })
       if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
-      const result = await res.json() as { main_strengths: string; main_weaknesses: string }
+      const result = await res.json() as { platform_context: string; main_strengths: string; main_weaknesses: string }
       setSynthesis((prev) => ({
         ...prev,
-        main_strengths : result.main_strengths,
-        main_weaknesses: result.main_weaknesses,
+        platform_context: result.platform_context,
+        main_strengths  : result.main_strengths,
+        main_weaknesses : result.main_weaknesses,
       }))
       setSavedAt(null)
     } catch (err) {
@@ -174,6 +176,18 @@ export default function AuditSynthesis({ clientId, onPhaseComplete }: Props) {
             </Button>
           )}
         </div>
+
+        {/* Marco estratégico por plataforma */}
+        {synthesis.platform_context && (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+            <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">
+              Marco estratégico por plataforma
+            </p>
+            <p className="text-sm text-blue-900 leading-relaxed whitespace-pre-line">
+              {synthesis.platform_context}
+            </p>
+          </div>
+        )}
 
         <div className="space-y-4">
           {/* Fortalezas */}

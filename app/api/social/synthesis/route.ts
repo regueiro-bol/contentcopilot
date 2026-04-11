@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
 
 interface SynthesisPayload {
   client_id                     : string
+  platform_context?             : string | null
   main_strengths?               : string | null
   main_weaknesses?              : string | null
   benchmark_patterns?           : string | null
