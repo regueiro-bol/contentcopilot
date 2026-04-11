@@ -23,7 +23,10 @@ export async function GET(request: NextRequest) {
     .eq('client_id', clientId)
     .maybeSingle()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[validate-strategy] GET error:', error.message, { clientId })
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
 
   return NextResponse.json({
     clientValidated  : data?.client_validated    ?? false,
@@ -58,7 +61,10 @@ export async function POST(request: NextRequest) {
       { onConflict: 'client_id' },
     )
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[validate-strategy] POST upsert error:', error.message, { clientId, validated })
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
 
   return NextResponse.json({
     clientValidated  : validated,
