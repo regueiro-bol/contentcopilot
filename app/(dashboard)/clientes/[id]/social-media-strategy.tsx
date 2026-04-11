@@ -360,20 +360,20 @@ export default function SocialMediaStrategy({ clientId }: Props) {
               <div key={fase.numero} className="flex items-center flex-1">
                 {/* Step */}
                 <button
-                  onClick={() => unlocked && setActivePhase(fase.numero)}
+                  onClick={() => setActivePhase(fase.numero)}
                   disabled={!unlocked}
                   title={!unlocked ? `Completa la fase ${fase.numero - 1} para continuar` : undefined}
-                  className="flex flex-col items-center gap-1 group flex-1 min-w-0"
+                  className={`flex flex-col items-center gap-1 group flex-1 min-w-0 ${unlocked ? 'cursor-pointer' : 'cursor-not-allowed'}`}
                 >
                   <div className={`
                     h-9 w-9 rounded-full flex items-center justify-center text-sm font-semibold transition-all
                     ${phaseStatus.completed
-                      ? 'bg-green-500 text-white ring-2 ring-green-200'
+                      ? 'bg-green-500 text-white ring-2 ring-green-200 hover:ring-4'
                       : isActive
                         ? 'bg-pink-600 text-white ring-2 ring-pink-200'
                         : unlocked
-                          ? 'bg-gray-100 text-gray-600 hover:bg-pink-50 hover:text-pink-600 cursor-pointer'
-                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          ? 'bg-gray-100 text-gray-600 hover:bg-pink-50 hover:text-pink-600'
+                          : 'bg-gray-100 text-gray-400'
                     }
                   `}>
                     {phaseStatus.completed
