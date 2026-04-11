@@ -259,9 +259,11 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
           <p className="text-xs text-green-700 mb-3">
             La estrategia está lista. Puedes usar el módulo de Ejecución desde el menú Social Media para crear el calendario y gestionar las piezas.
           </p>
-          <Button variant="ghost" size="sm" onClick={handleUndoApproval} disabled={approving} className="text-xs text-gray-400 hover:text-red-500">
-            {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
-          </Button>
+          {process.env.NODE_ENV === 'development' && (
+            <Button variant="ghost" size="sm" onClick={handleUndoApproval} disabled={approving} className="text-xs text-gray-400 hover:text-red-500">
+              {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="rounded-xl border border-pink-200 bg-pink-50 p-5 space-y-4">

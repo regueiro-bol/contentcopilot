@@ -430,15 +430,17 @@ function PhaseCompleted({
         <Button variant="outline" size="sm" className="text-xs gap-1.5" disabled>
           Ver / Editar
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onEdit}
-          disabled={approving}
-          className="text-xs text-gray-400 hover:text-red-500"
-        >
-          {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
-        </Button>
+        {process.env.NODE_ENV === 'development' && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onEdit}
+            disabled={approving}
+            className="text-xs text-gray-400 hover:text-red-500"
+          >
+            {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
+          </Button>
+        )}
       </div>
     </div>
   )

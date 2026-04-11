@@ -299,9 +299,11 @@ export default function Phase3Architecture({ clientId, onPhaseComplete }: Props)
               )}
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={handleUndoApproval} disabled={approving} className="text-xs text-gray-400 hover:text-red-500">
-            {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
-          </Button>
+          {process.env.NODE_ENV === 'development' && (
+            <Button variant="ghost" size="sm" onClick={handleUndoApproval} disabled={approving} className="text-xs text-gray-400 hover:text-red-500">
+              {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
