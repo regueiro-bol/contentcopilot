@@ -7,7 +7,6 @@
  * Body: { clientId, platform, platformData: SocialPlatformData }
  */
 
-import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -43,8 +42,6 @@ const PLATFORM_NAMES: Record<string, string> = {
 }
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: { clientId: string; platform: string; platformData: PlatformData }
   try { body = await request.json() } catch {
@@ -56,28 +53,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'clientId, platform y platformData son obligatorios' }, { status: 400 })
   }
 
-  // Cargar nombre del cliente
-  const supabase = createAdminClient()
-  const { data: cliente } = await supabase
-    .from('clientes')
-    .select('nombre, sector')
-    .eq('id', clientId)
-    .single()
+  try {
+    // Cargar nombre del cliente
+    const supabase = createAdminClient()
+    const { data: cliente } = await supabase
+      .from('clientes')
+      .select('nombre, sector')
+      .eq('id', clientId)
+      .single()
 
-  const platformDisplayName = PLATFORM_NAMES[platform] ?? platform
+    const platformDisplayName = PLATFORM_NAMES[platform] ?? platform
 
-  const scores = [
-    platformData.score_brand_consistency,
-    platformData.score_editorial_quality,
-    platformData.score_activity,
-    platformData.score_community,
-  ].filter(Boolean)
+    const scores = [
+      platformData.score_brand_consistency,
+      platformData.score_editorial_quality,
+      platformData.score_activity,
+      platformData.score_community,
+    ].filter((v) => v != null) as number[]
 
-  const avgScore = scores.length > 0
-    ? (scores.reduce((a, b) => (a ?? 0) + (b ?? 0), 0) ?? 0) / scores.length
-    : null
+    const avgScore = scores.length > 0
+      ? scores.reduce((a, b) => a + b, 0) / scores.length
+      : null
 
-  const prompt = `Eres un estratega de social media. Analiza los datos de auditoría de ${platformDisplayName} para el cliente "${cliente?.nombre ?? 'este cliente'}" (sector: ${cliente?.sector ?? 'no especificado'}) y escribe una conclusión estratégica concisa.
+    const prompt = `Eres un estratega de social media. Analiza los datos de auditoría de ${platformDisplayName} para el cliente "${cliente?.nombre ?? 'este cliente'}" (sector: ${cliente?.sector ?? 'no especificado'}) y escribe una conclusión estratégica concisa.
 
 DATOS DE ${platformDisplayName.toUpperCase()}:
 - Presencia activa: ${platformData.is_active ? 'Sí' : 'No'}
@@ -101,9 +99,8 @@ Escribe una conclusión estratégica de 80-120 palabras que:
 
 Responde SOLO con el texto de la conclusión, sin títulos ni formato extra.`
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const anthropic = new Anthropic()
 
-  try {
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 512,

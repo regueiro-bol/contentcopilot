@@ -32,10 +32,11 @@ export interface PlatformData {
 }
 
 interface Props {
-  clientId    : string
-  platform    : string
-  initialData?: Partial<PlatformData>
-  onSaved?    : (data: PlatformData) => void
+  clientId     : string
+  platform     : string
+  initialData? : Partial<PlatformData>
+  defaultOpen? : boolean
+  onSaved?     : (data: PlatformData) => void
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -114,8 +115,8 @@ function ScoreSlider({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function AuditByPlatform({ clientId, platform, initialData, onSaved }: Props) {
-  const [expanded, setExpanded] = useState(!initialData?.strategic_conclusion)
+export default function AuditByPlatform({ clientId, platform, initialData, defaultOpen = false, onSaved }: Props) {
+  const [expanded, setExpanded] = useState(defaultOpen)
 
   const [data, setData] = useState<PlatformData>({
     client_id              : clientId,

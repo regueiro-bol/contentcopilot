@@ -9,7 +9,6 @@
  * Body: { clientId }
  */
 
-import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -18,8 +17,6 @@ import { guardarRegistroCoste, calcularCosteClaudeUSD } from '@/lib/costes'
 export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: { clientId: string }
   try { body = await request.json() } catch {
@@ -29,58 +26,57 @@ export async function POST(request: NextRequest) {
   const { clientId } = body
   if (!clientId) return NextResponse.json({ error: 'clientId requerido' }, { status: 400 })
 
-  const supabase = createAdminClient()
+  try {
+    const supabase = createAdminClient()
 
-  // Cargar datos del cliente
-  const { data: cliente } = await supabase
-    .from('clientes')
-    .select('nombre, sector, descripcion')
-    .eq('id', clientId)
-    .single()
+    // Cargar datos del cliente
+    const { data: cliente } = await supabase
+      .from('clientes')
+      .select('nombre, sector, descripcion')
+      .eq('id', clientId)
+      .single()
 
-  if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+    if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
 
-  // Cargar plataformas auditadas
-  const { data: platforms } = await supabase
-    .from('social_platforms')
-    .select('*')
-    .eq('client_id', clientId)
-    .order('platform')
+    // Cargar plataformas auditadas
+    const { data: platforms } = await supabase
+      .from('social_platforms')
+      .select('platform, followers, posts_per_week, avg_engagement, score_brand_consistency, score_editorial_quality, score_activity, score_community, strategic_conclusion, strategic_priority')
+      .eq('client_id', clientId)
+      .order('platform')
 
-  // Cargar benchmark
-  const { data: benchmark } = await supabase
-    .from('social_benchmark')
-    .select('*')
-    .eq('client_id', clientId)
-    .order('sort_order')
+    // Cargar benchmark
+    const { data: benchmark } = await supabase
+      .from('social_benchmark')
+      .select('name, platform, what_they_do_well')
+      .eq('client_id', clientId)
+      .order('sort_order')
 
-  if (!platforms || platforms.length === 0) {
-    return NextResponse.json({ error: 'No hay plataformas auditadas para este cliente' }, { status: 422 })
-  }
+    if (!platforms || platforms.length === 0) {
+      return NextResponse.json({ error: 'No hay plataformas auditadas para este cliente' }, { status: 422 })
+    }
 
-  // Construir resumen de plataformas para el prompt
-  const platformsSummary = platforms.map((p) => {
-    const scores = [p.score_brand_consistency, p.score_editorial_quality, p.score_activity, p.score_community].filter(Boolean)
-    const avg = scores.length > 0 ? (scores.reduce((a: number, b: number) => a + (b ?? 0), 0) / scores.length).toFixed(1) : 'N/A'
-    return `
+    // Construir resumen de plataformas para el prompt
+    const platformsSummary = platforms.map((p) => {
+      const scores = [p.score_brand_consistency, p.score_editorial_quality, p.score_activity, p.score_community].filter((v) => v != null) as number[]
+      const avg    = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : 'N/A'
+      return `
 PLATAFORMA: ${p.platform.toUpperCase()}
-- Activa: ${p.is_active ? 'Sí' : 'No'} | Seguidores: ${p.followers ?? 'N/D'} | Posts/semana: ${p.posts_per_week ?? 'N/D'}
+- Seguidores: ${p.followers ?? 'N/D'} | Posts/semana: ${p.posts_per_week ?? 'N/D'}
 - Engagement: ${p.avg_engagement ? `${p.avg_engagement}%` : 'N/D'} | Puntuación media: ${avg}/5
-- Formatos: ${(p.formats_used ?? []).join(', ') || 'N/D'}
-- Temas: ${p.main_topics ?? 'N/D'}
 - Conclusión estratégica: ${p.strategic_conclusion ?? '(sin conclusión)'}
 - Prioridad: ${p.strategic_priority ?? 'sin asignar'}`.trim()
-  }).join('\n\n')
+    }).join('\n\n')
 
-  const benchmarkSummary = (benchmark ?? []).length > 0
-    ? (benchmark ?? []).map((b) => `- ${b.name} (${b.platform}): ${b.what_they_do_well ?? 'sin descripción'}`).join('\n')
-    : '(Sin referentes de benchmark configurados)'
+    const benchmarkSummary = (benchmark ?? []).length > 0
+      ? (benchmark ?? []).map((b) => `- ${b.name} (${b.platform}): ${b.what_they_do_well ?? 'sin descripción'}`).join('\n')
+      : '(Sin referentes de benchmark configurados)'
 
-  const prompt = `Eres un estratega de social media experto. Analiza la auditoría completa de redes sociales del cliente y genera la síntesis de la Fase 1.
+    const prompt = `Eres un estratega de social media experto. Analiza la auditoría completa de redes sociales del cliente y genera la síntesis de la Fase 1.
 
 CLIENTE: ${cliente.nombre}
 SECTOR: ${cliente.sector ?? 'No especificado'}
-DESCRIPCIÓN: ${cliente.descripcion ?? 'No especificada'}
+DESCRIPCIÓN: ${(cliente as any).descripcion ?? 'No especificada'}
 
 ═══ AUDITORÍA POR PLATAFORMAS ═══
 ${platformsSummary}
@@ -101,9 +97,8 @@ REGLAS:
 - Tono profesional pero directo
 - Responde SOLO con el JSON, sin texto adicional`
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const anthropic = new Anthropic()
 
-  try {
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
       max_tokens: 1024,

@@ -9,6 +9,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import SocialCalendar from '@/components/social/SocialCalendar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -171,8 +172,8 @@ export default function SocialPageClient({ clientes }: Props) {
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="calendario">
-                <PlaceholderSprint sprint={6} titulo="Calendario social" descripcion="Visualización y gestión del calendario de publicaciones por plataforma." />
+              <TabsContent value="calendario" className="mt-4">
+                <SocialCalendar clientId={clienteId} />
               </TabsContent>
               <TabsContent value="piezas">
                 <PlaceholderSprint sprint={7} titulo="Producción de piezas" descripcion="Generación y aprobación de copys para cada publicación planificada." />

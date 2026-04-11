@@ -39,6 +39,7 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
   const [savedAt,    setSavedAt]    = useState<string | null>(null)
   const [showRegen,  setShowRegen]  = useState(false)
   const [checkItems, setCheckItems] = useState<boolean[]>(new Array(APPROVAL_CHECKLIST.length).fill(false))
+  const [genError,   setGenError]   = useState<string | null>(null)
 
   const allChecked    = checkItems.every(Boolean)
   const hasContent    = !!(data.platform_decisions?.trim() && data.channel_architecture?.trim())
@@ -99,13 +100,14 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
     if (!force && hasContent) { setShowRegen(true); return }
     setShowRegen(false)
     setGenerating(true)
+    setGenError(null)
     try {
       const res = await fetch('/api/social/generate-strategy', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({ clientId }),
       })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error ?? `Error ${res.status}`) }
       const result = await res.json() as {
         platformDecisions      : string
         channelArchitecture    : string
@@ -120,7 +122,9 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
       setData(newData)
       setSavedAt(null)
     } catch (err) {
-      console.error('[Phase2Strategy] Generate error:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[Phase2Strategy] Generate error:', msg)
+      setGenError(msg)
     } finally {
       setGenerating(false)
     }
@@ -181,6 +185,14 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
           Define qué hacer en cada red social, cómo se relacionan entre sí y qué diferencia el contenido en cada una.
         </p>
       </div>
+
+      {/* ── Error de generación ── */}
+      {genError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 flex items-center justify-between gap-2 text-xs text-red-700">
+          <span>Error al generar: {genError}</span>
+          <button onClick={() => setGenError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-medium">✕</button>
+        </div>
+      )}
 
       {/* ── Banner de contenido existente ── */}
       {hasContent && data.updated_at && !isApproved && (
@@ -310,10 +322,12 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
               )}
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={handleUndoApproval} disabled={approving}
-            className="text-xs text-gray-400 hover:text-red-500">
-            {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
-          </Button>
+          {process.env.NODE_ENV === 'development' && (
+            <Button variant="ghost" size="sm" onClick={handleUndoApproval} disabled={approving}
+              className="text-xs text-gray-400 hover:text-red-500">
+              {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Deshacer aprobación'}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
@@ -323,16 +337,17 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
           </div>
           <div className="space-y-2.5">
             {APPROVAL_CHECKLIST.map((item, idx) => (
-              <label key={idx} className="flex items-start gap-3 cursor-pointer group">
+              <div key={idx} role="checkbox" aria-checked={checkItems[idx]} tabIndex={0}
+                onClick={() => { const n = [...checkItems]; n[idx] = !n[idx]; setCheckItems(n) }}
+                onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); const n = [...checkItems]; n[idx] = !n[idx]; setCheckItems(n) } }}
+                className="flex items-start gap-3 cursor-pointer group select-none"
+              >
                 <div className={`mt-0.5 h-4 w-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors
                   ${checkItems[idx] ? 'bg-green-500 border-green-500' : 'border-gray-300 group-hover:border-green-400'}`}>
                   {checkItems[idx] && <Check className="h-2.5 w-2.5 text-white" />}
-                  <input type="checkbox" checked={checkItems[idx]}
-                    onChange={(e) => { const n = [...checkItems]; n[idx] = e.target.checked; setCheckItems(n) }}
-                    className="sr-only" />
                 </div>
                 <span className={`text-sm transition-colors ${checkItems[idx] ? 'text-gray-700 line-through decoration-gray-400' : 'text-gray-600'}`}>{item}</span>
-              </label>
+              </div>
             ))}
           </div>
           <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
