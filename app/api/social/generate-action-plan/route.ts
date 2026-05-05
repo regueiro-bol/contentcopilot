@@ -38,6 +38,16 @@ function truncate(text: string, max = 500): string {
   return text.length > max ? text.substring(0, max) + '…' : text
 }
 
+function extractBlock(text: string, label: string): string {
+  // Matches "BLOQUE N — anything" up to the next BLOQUE heading or end of string
+  const regex = new RegExp(`${label}[^\\n]*\\n([\\s\\S]*?)(?=BLOQUE \\d|$)`, 'i')
+  const match = text.match(regex)
+  if (match) return match[1].trim()
+  // Fallback: if no blocks found at all, put everything in roadmap
+  if (label === 'BLOQUE 1') return text.trim()
+  return ''
+}
+
 export async function POST(request: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
@@ -127,12 +137,16 @@ Modelo de coordinación entre equipo y cliente.
 
 Extensión: 200-250 palabras por bloque. Concreto y accionable.
 
-Responde SOLO con JSON sin markdown:
-{
-  "roadmap": "...",
-  "first90Days": "...",
-  "teamResources": "..."
-}`
+Usa exactamente estos encabezados (sin numeración extra):
+
+BLOQUE 1 — ROADMAP DE IMPLEMENTACIÓN
+[texto del roadmap]
+
+BLOQUE 2 — PRIMEROS 90 DÍAS
+[texto de los primeros 90 días]
+
+BLOQUE 3 — EQUIPO Y RECURSOS
+[texto del equipo y recursos]`
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -150,15 +164,14 @@ El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se 
       messages  : [{ role: 'user', content: userPrompt }],
     })
 
-    const rawText   = response.content[0].type === 'text' ? response.content[0].text.trim() : '{}'
-    // Use a non-greedy match to avoid capturing closing braces of nested strings
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('Claude no devolvió JSON válido')
+    const content = response.content[0]
+    if (content.type !== 'text') throw new Error('Respuesta inesperada de Claude')
+    const text = content.text.trim()
 
-    const result = JSON.parse(jsonMatch[0]) as {
-      roadmap      : string
-      first90Days  : string
-      teamResources: string
+    const result = {
+      roadmap      : extractBlock(text, 'BLOQUE 1'),
+      first90Days  : extractBlock(text, 'BLOQUE 2'),
+      teamResources: extractBlock(text, 'BLOQUE 3'),
     }
 
     guardarRegistroCoste({
