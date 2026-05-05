@@ -33,6 +33,11 @@ function jsonbToText(val: unknown): string {
   try { return JSON.stringify(val) } catch { return '' }
 }
 
+function truncate(text: string, max = 500): string {
+  if (!text) return ''
+  return text.length > max ? text.substring(0, max) + '…' : text
+}
+
 export async function POST(request: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
@@ -69,17 +74,17 @@ export async function POST(request: NextRequest) {
     const c = cliente as any
     const clienteContext = [
       c.sector              ? `Sector: ${c.sector}` : '',
-      c.descripcion         ? `Contexto: ${String(c.descripcion).substring(0, 300)}` : '',
-      c.identidad_corporativa ? `Identidad de marca: ${String(c.identidad_corporativa).substring(0, 300)}` : '',
+      c.descripcion         ? `Contexto: ${truncate(String(c.descripcion), 500)}` : '',
+      c.identidad_corporativa ? `Identidad de marca: ${truncate(String(c.identidad_corporativa), 500)}` : '',
     ].filter(Boolean).join('\n')
 
     const activePlatforms = (platforms ?? [])
       .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
       .map((p) => PLATFORM_LABELS[p.platform] ?? p.platform)
 
-    const cadenceText  = jsonbToText(architecture?.publishing_cadence).substring(0, 500)
-    const kpisText     = jsonbToText(kpis?.kpis_by_objective).substring(0, 500)
-    const strategyText = (strategy?.platform_decisions ?? '').substring(0, 400)
+    const cadenceText  = truncate(jsonbToText(architecture?.publishing_cadence))
+    const kpisText     = truncate(jsonbToText(kpis?.kpis_by_objective))
+    const strategyText = truncate(strategy?.platform_decisions ?? '')
 
     const userPrompt = `CLIENTE: ${c.nombre}${c.sector ? ` (sector: ${c.sector})` : ''}
 
@@ -133,7 +138,7 @@ Responde SOLO con JSON sin markdown:
 
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
-      max_tokens: 5120,
+      max_tokens: 1500,
       system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
 Cliente: ${c.nombre}
