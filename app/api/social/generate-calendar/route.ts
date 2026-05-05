@@ -244,7 +244,7 @@ Genera entre ${entryRange} entradas. Cubre todos los días del período con al m
     const callClaude = (extraInstruction = ''): Promise<Anthropic.Message> =>
       anthropic.messages.create({
         model     : 'claude-sonnet-4-5',
-        max_tokens: 4000,
+        max_tokens: 2000,
         system    : systemPrompt,
         messages  : [{
           role   : 'user',

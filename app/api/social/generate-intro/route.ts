@@ -91,7 +91,7 @@ Responde SOLO con JSON sin markdown:
 
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
-      max_tokens: 2048,
+      max_tokens: 1500,
       system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
 Cliente: ${cliente.nombre}
