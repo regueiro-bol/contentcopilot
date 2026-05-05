@@ -18,6 +18,18 @@ interface Props {
   onPhaseComplete?: () => void
 }
 
+// ─── Markdown cleanup ────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '').trim()
+}
+
+function stripData<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
+  ) as T
+}
+
 const APPROVAL_CHECKLIST = [
   'Los indicadores de éxito están organizados por objetivo estratégico',
   'La metodología de medición es realista con las herramientas disponibles',
@@ -45,7 +57,7 @@ export default function Phase5KPIs({ clientId, onPhaseComplete }: Props) {
       if (res.ok) {
         const d = await res.json() as KPIsData | null
         if (d) {
-          setData(d)
+          setData(stripData(d))
           if (d.phase_5_completed) setCheckItems(new Array(APPROVAL_CHECKLIST.length).fill(true))
         }
       }
@@ -101,9 +113,9 @@ export default function Phase5KPIs({ clientId, onPhaseComplete }: Props) {
       }
       setData((prev) => ({
         ...prev,
-        kpis_by_objective      : result.kpisByObjective,
-        measurement_methodology: result.measurementMethodology,
-        reporting_system       : result.reportingSystem,
+        kpis_by_objective      : stripMarkdown(result.kpisByObjective),
+        measurement_methodology: stripMarkdown(result.measurementMethodology),
+        reporting_system       : stripMarkdown(result.reportingSystem),
       }))
       setSavedAt(null)
     } catch (err) {

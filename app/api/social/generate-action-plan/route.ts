@@ -38,13 +38,22 @@ function truncate(text: string, max = 500): string {
   return text.length > max ? text.substring(0, max) + '…' : text
 }
 
+function cleanContent(text: string): string {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/#{1,6}\s/g, '')
+    .trim()
+}
+
 function extractBlock(text: string, label: string): string {
-  // Matches "BLOQUE N — anything" up to the next BLOQUE heading or end of string
+  // Strip ** so Claude's bold headers don't break the regex
+  const clean = cleanContent(text)
   const regex = new RegExp(`${label}[^\\n]*\\n([\\s\\S]*?)(?=BLOQUE \\d|$)`, 'i')
-  const match = text.match(regex)
+  const match = clean.match(regex)
   if (match) return match[1].trim()
   // Fallback: if no blocks found at all, put everything in roadmap
-  if (label === 'BLOQUE 1') return text.trim()
+  if (label === 'BLOQUE 1') return clean
   return ''
 }
 

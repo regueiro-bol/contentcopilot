@@ -22,6 +22,18 @@ interface Props {
 
 // ─── Checklist ────────────────────────────────────────────────────────────────
 
+// ─── Markdown cleanup ────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '').trim()
+}
+
+function stripData<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
+  ) as T
+}
+
 const APPROVAL_CHECKLIST = [
   'Las decisiones por plataforma son claras y tienen veredicto concreto',
   'La arquitectura de canales define cómo fluye el contenido entre plataformas',
@@ -54,7 +66,7 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
       if (res.ok) {
         const d = await res.json() as StrategyData | null
         if (d) {
-          setData(d)
+          setData(stripData(d))
           if (d.phase_2_completed) setCheckItems(new Array(APPROVAL_CHECKLIST.length).fill(true))
         }
       }
@@ -115,9 +127,9 @@ export default function Phase2Strategy({ clientId, onPhaseComplete }: Props) {
       }
       const newData: StrategyData = {
         ...data,
-        platform_decisions      : result.platformDecisions,
-        channel_architecture    : result.channelArchitecture,
-        editorial_differentiation: result.editorialDifferentiation,
+        platform_decisions      : stripMarkdown(result.platformDecisions),
+        channel_architecture    : stripMarkdown(result.channelArchitecture),
+        editorial_differentiation: stripMarkdown(result.editorialDifferentiation),
       }
       setData(newData)
       setSavedAt(null)
