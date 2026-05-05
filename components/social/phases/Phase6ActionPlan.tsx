@@ -18,6 +18,18 @@ interface Props {
   onPhaseComplete?: () => void
 }
 
+// ─── Markdown cleanup ────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '').trim()
+}
+
+function stripData<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
+  ) as T
+}
+
 const APPROVAL_CHECKLIST = [
   'El roadmap tiene los tres horizontes con hitos concretos',
   'Los primeros 90 días están detallados con acciones y responsables',
@@ -46,7 +58,7 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
       if (res.ok) {
         const d = await res.json() as ActionPlanData | null
         if (d) {
-          setData(d)
+          setData(stripData(d))
           if (d.phase_6_completed) setCheckItems(new Array(APPROVAL_CHECKLIST.length).fill(true))
         }
       }
@@ -107,9 +119,9 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
       }
       setData((prev) => ({
         ...prev,
-        roadmap       : result.roadmap,
-        first_90_days : result.first90Days,
-        team_resources: result.teamResources,
+        roadmap       : stripMarkdown(result.roadmap),
+        first_90_days : stripMarkdown(result.first90Days),
+        team_resources: stripMarkdown(result.teamResources),
       }))
       setSavedAt(null)
     } catch (err) {

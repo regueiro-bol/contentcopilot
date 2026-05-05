@@ -23,6 +23,18 @@ interface Props {
 
 // ─── Checklist ────────────────────────────────────────────────────────────────
 
+// ─── Markdown cleanup ────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '').trim()
+}
+
+function stripData<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
+  ) as T
+}
+
 const APPROVAL_CHECKLIST = [
   'El manual de voz tiene atributos concretos y ejemplos prácticos',
   'Las líneas rojas editoriales están definidas claramente',
@@ -54,7 +66,7 @@ export default function Phase4BrandVoice({ clientId, onPhaseComplete }: Props) {
       if (res.ok) {
         const d = await res.json() as BrandVoiceData | null
         if (d) {
-          setData(d)
+          setData(stripData(d))
           if (d.phase_4_completed) setCheckItems(new Array(APPROVAL_CHECKLIST.length).fill(true))
         }
       }
@@ -116,10 +128,10 @@ export default function Phase4BrandVoice({ clientId, onPhaseComplete }: Props) {
       }
       setData((prev) => ({
         ...prev,
-        voice_manual           : result.voiceManual,
-        register_by_platform   : result.registerByPlatform,
-        editorial_red_lines    : result.editorialRedLines,
-        consistency_guidelines : result.consistencyGuidelines,
+        voice_manual           : stripMarkdown(result.voiceManual),
+        register_by_platform   : stripMarkdown(result.registerByPlatform),
+        editorial_red_lines    : stripMarkdown(result.editorialRedLines),
+        consistency_guidelines : stripMarkdown(result.consistencyGuidelines),
       }))
       setSavedAt(null)
     } catch (err) {

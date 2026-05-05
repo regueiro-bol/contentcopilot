@@ -23,6 +23,18 @@ interface Props {
 
 // ─── Checklist ────────────────────────────────────────────────────────────────
 
+// ─── Markdown cleanup ────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '').trim()
+}
+
+function stripData<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
+  ) as T
+}
+
 const APPROVAL_CHECKLIST = [
   'Los pilares editoriales están definidos con territorio y ángulo único',
   'Los formatos están asignados a cada plataforma activa',
@@ -59,7 +71,7 @@ export default function Phase3Architecture({ clientId, onPhaseComplete }: Props)
       if (res.ok) {
         const d = await res.json() as ArchitectureData | null
         if (d) {
-          setData(d)
+          setData(stripData(d))
           if (d.phase_3_completed) setCheckItems(new Array(APPROVAL_CHECKLIST.length).fill(true))
         }
       }
@@ -121,10 +133,10 @@ export default function Phase3Architecture({ clientId, onPhaseComplete }: Props)
       }
       setData((prev) => ({
         ...prev,
-        editorial_pillars  : result.editorialPillars,
-        formats_by_platform: result.formatsByPlatform,
-        publishing_cadence : result.publishingCadence,
-        calendar_template  : result.calendarTemplate,
+        editorial_pillars  : stripMarkdown(result.editorialPillars),
+        formats_by_platform: stripMarkdown(result.formatsByPlatform),
+        publishing_cadence : stripMarkdown(result.publishingCadence),
+        calendar_template  : stripMarkdown(result.calendarTemplate),
       }))
       setSavedAt(null)
     } catch (err) {
