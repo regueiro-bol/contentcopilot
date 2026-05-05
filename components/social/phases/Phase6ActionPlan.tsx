@@ -29,6 +29,7 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
   const [loading,    setLoading]    = useState(true)
   const [saving,     setSaving]     = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [genError,   setGenError]   = useState<string | null>(null)
   const [approving,  setApproving]  = useState(false)
   const [savedAt,    setSavedAt]    = useState<string | null>(null)
   const [showRegen,  setShowRegen]  = useState(false)
@@ -87,13 +88,18 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
     if (!force && hasContent) { setShowRegen(true); return }
     setShowRegen(false)
     setGenerating(true)
+    setGenError(null)
     try {
       const res = await fetch('/api/social/generate-action-plan', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({ clientId }),
       })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
+      let errorMsg = `Error ${res.status}`
+      if (!res.ok) {
+        try { const e = await res.json(); errorMsg = e.error ?? errorMsg } catch { /* use default */ }
+        throw new Error(errorMsg)
+      }
       const result = await res.json() as {
         roadmap       : string
         first90Days   : string
@@ -107,7 +113,9 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
       }))
       setSavedAt(null)
     } catch (err) {
-      console.error('[Phase6ActionPlan] Generate error:', err)
+      const msg = err instanceof Error ? err.message : 'Error al generar el plan'
+      console.error('[Phase6ActionPlan] Generate error:', msg)
+      setGenError(msg)
     } finally {
       setGenerating(false)
     }
@@ -182,6 +190,16 @@ export default function Phase6ActionPlan({ clientId, onPhaseComplete }: Props) {
             }
           </Button>
           {hasContent && <span className="text-xs text-gray-400">Ya hay contenido generado</span>}
+        </div>
+      )}
+
+      {genError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 flex items-start gap-2 text-sm text-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">Error al generar el plan de acción</p>
+            <p className="text-xs mt-0.5 text-red-600">{genError}</p>
+          </div>
         </div>
       )}
 

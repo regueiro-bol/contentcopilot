@@ -29,7 +29,8 @@ function jsonbToText(val: unknown): string {
   if (typeof val === 'object' && val !== null && 'content' in val) {
     return String((val as { content: string }).content)
   }
-  return ''
+  // Fallback: stringify so AI still gets useful context
+  try { return JSON.stringify(val) } catch { return '' }
 }
 
 export async function POST(request: NextRequest) {
@@ -44,39 +45,43 @@ export async function POST(request: NextRequest) {
   const { clientId } = body
   if (!clientId) return NextResponse.json({ error: 'clientId requerido' }, { status: 400 })
 
-  const supabase = createAdminClient()
+  // ── Global try-catch wraps ALL logic (DB queries + prompt building + AI call) ──
+  try {
+    const supabase = createAdminClient()
 
-  const [
-    { data: cliente },
-    { data: platforms },
-    { data: strategy },
-    { data: architecture },
-    { data: kpis },
-  ] = await Promise.all([
-    supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
-    supabase.from('social_platforms').select('platform, strategic_priority').eq('client_id', clientId).order('platform'),
-    supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
-    supabase.from('social_content_architecture').select('publishing_cadence').eq('client_id', clientId).maybeSingle(),
-    supabase.from('social_kpis').select('kpis_by_objective').eq('client_id', clientId).maybeSingle(),
-  ])
+    const [
+      { data: cliente },
+      { data: platforms },
+      { data: strategy },
+      { data: architecture },
+      { data: kpis },
+    ] = await Promise.all([
+      supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
+      supabase.from('social_platforms').select('platform, strategic_priority').eq('client_id', clientId).order('platform'),
+      supabase.from('social_strategy').select('platform_decisions').eq('client_id', clientId).maybeSingle(),
+      supabase.from('social_content_architecture').select('publishing_cadence').eq('client_id', clientId).maybeSingle(),
+      supabase.from('social_kpis').select('kpis_by_objective').eq('client_id', clientId).maybeSingle(),
+    ])
 
-  if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+    if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
 
-  const clienteContext = [
-    cliente.sector             ? `Sector: ${cliente.sector}` : '',
-    (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
-    (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
-  ].filter(Boolean).join('\n')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = cliente as any
+    const clienteContext = [
+      c.sector              ? `Sector: ${c.sector}` : '',
+      c.descripcion         ? `Contexto: ${String(c.descripcion).substring(0, 300)}` : '',
+      c.identidad_corporativa ? `Identidad de marca: ${String(c.identidad_corporativa).substring(0, 300)}` : '',
+    ].filter(Boolean).join('\n')
 
-  const activePlatforms = (platforms ?? [])
-    .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
-    .map((p) => PLATFORM_LABELS[p.platform] ?? p.platform)
+    const activePlatforms = (platforms ?? [])
+      .filter((p) => p.strategic_priority === 'alta' || p.strategic_priority === 'mantener' || !p.strategic_priority)
+      .map((p) => PLATFORM_LABELS[p.platform] ?? p.platform)
 
-  const cadenceText     = jsonbToText(architecture?.publishing_cadence).substring(0, 300)
-  const kpisText        = jsonbToText(kpis?.kpis_by_objective).substring(0, 300)
-  const strategyText    = strategy?.platform_decisions?.substring(0, 300) ?? ''
+    const cadenceText  = jsonbToText(architecture?.publishing_cadence).substring(0, 500)
+    const kpisText     = jsonbToText(kpis?.kpis_by_objective).substring(0, 500)
+    const strategyText = (strategy?.platform_decisions ?? '').substring(0, 400)
 
-  const userPrompt = `CLIENTE: ${cliente.nombre}${cliente.sector ? ` (sector: ${cliente.sector})` : ''}
+    const userPrompt = `CLIENTE: ${c.nombre}${c.sector ? ` (sector: ${c.sector})` : ''}
 
 RESUMEN ESTRATÉGICO:
 Plataformas activas: ${activePlatforms.join(', ') || '(no definidas)'}
@@ -124,31 +129,31 @@ Responde SOLO con JSON sin markdown:
   "teamResources": "..."
 }`
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  try {
     const response = await anthropic.messages.create({
-      model : 'claude-sonnet-4-5',
+      model     : 'claude-sonnet-4-5',
       max_tokens: 5120,
-      system: `Eres un consultor senior de social media y estrategia de contenidos digitales.
+      system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
-Cliente: ${cliente.nombre}
+Cliente: ${c.nombre}
 ${clienteContext}
 
 Tu trabajo es traducir una estrategia completa en un plan de acción realista adaptado al sector, tamaño y contexto de este cliente: qué hace quién, cuándo y con qué recursos. Nunca uses enfoques genéricos.
 
 El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se cumplen que un plan de 200 que se abandona en el mes 2.`,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages  : [{ role: 'user', content: userPrompt }],
     })
 
     const rawText   = response.content[0].type === 'text' ? response.content[0].text.trim() : '{}'
+    // Use a non-greedy match to avoid capturing closing braces of nested strings
     const jsonMatch = rawText.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('Claude no devolvió JSON válido')
 
     const result = JSON.parse(jsonMatch[0]) as {
-      roadmap       : string
-      first90Days   : string
-      teamResources : string
+      roadmap      : string
+      first90Days  : string
+      teamResources: string
     }
 
     guardarRegistroCoste({
@@ -162,9 +167,10 @@ El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se 
     }).catch(console.error)
 
     return NextResponse.json(result)
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[social/generate-action-plan] Error:', msg)
+    console.error('[social/generate-action-plan] ERROR:', msg, err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
