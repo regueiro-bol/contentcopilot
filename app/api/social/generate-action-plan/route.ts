@@ -38,23 +38,29 @@ function truncate(text: string, max = 500): string {
   return text.length > max ? text.substring(0, max) + '…' : text
 }
 
-function cleanContent(text: string): string {
-  return text
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .replace(/#{1,6}\s/g, '')
-    .trim()
-}
+function extractBlock(text: string, blockNum: number): string {
+  const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '')
 
-function extractBlock(text: string, label: string): string {
-  // Strip ** so Claude's bold headers don't break the regex
-  const clean = cleanContent(text)
-  const regex = new RegExp(`${label}[^\\n]*\\n([\\s\\S]*?)(?=BLOQUE \\d|$)`, 'i')
-  const match = clean.match(regex)
-  if (match) return match[1].trim()
-  // Fallback: if no blocks found at all, put everything in roadmap
-  if (label === 'BLOQUE 1') return clean
-  return ''
+  // Intento 1: buscar por encabezado BLOQUE N (posición exacta, no regex)
+  const labels  = ['BLOQUE 1', 'BLOQUE 2', 'BLOQUE 3']
+  const current = labels[blockNum - 1]
+  const next    = labels[blockNum]
+
+  const startIdx = cleanText.indexOf(current)
+  if (startIdx !== -1) {
+    const contentStart = cleanText.indexOf('\n', startIdx) + 1
+    const endIdx       = next ? cleanText.indexOf(next, contentStart) : cleanText.length
+    return cleanText.substring(contentStart, endIdx !== -1 ? endIdx : cleanText.length).trim()
+  }
+
+  // Intento 2: separar por "---"
+  const sections = cleanText.split(/\n---+\n/)
+  if (sections.length >= blockNum) {
+    return sections[blockNum - 1].trim()
+  }
+
+  // Fallback: todo el contenido va al bloque 1
+  return blockNum === 1 ? cleanText.trim() : ''
 }
 
 export async function POST(request: NextRequest) {
@@ -115,47 +121,18 @@ KPIs principales: ${kpisText || '(no disponible)'}
 CONTEXTO:
 ${strategyText || '(no disponible)'}
 
-Genera el plan de acción en tres bloques:
+Genera el plan de acción dividido en exactamente tres secciones con estos encabezados exactos (sin asteriscos, sin markdown):
 
-BLOQUE 1 — ROADMAP DE IMPLEMENTACIÓN
-Tres horizontes con sus objetivos e hitos:
+BLOQUE 1 — ROADMAP
+Tres horizontes con objetivos e hitos. Horizonte 1 Fundacion dias 1-30: infraestructura y acciones por semana. Horizonte 2 Activacion dias 31-90: ejecucion y experimentos con datos reales. Horizonte 3 Consolidacion meses 4-12: hitos estrategicos del año y escalado.
 
-Horizonte 1 — Fundación (Días 1-30):
-Qué infraestructura construir antes de publicar nada.
-Acciones concretas por semana.
-Hito de validación al final del horizonte.
-
-Horizonte 2 — Activación (Días 31-90):
-Arranque de la ejecución y calibración con datos reales.
-Qué experimentos hacer y cómo medir si funcionan.
-Hito de validación al final.
-
-Horizonte 3 — Consolidación (Meses 4-12):
-Hitos estratégicos del año (eventos, lanzamientos, campañas).
-Cómo escalar lo que funciona.
-
-BLOQUE 2 — PRIMEROS 90 DÍAS EN DETALLE
-Semana a semana para el Horizonte 1.
-Bloque a bloque para el Horizonte 2.
-Para cada período: acciones concretas, responsable y entregable.
+BLOQUE 2 — PRIMEROS 90 DIAS
+Semana a semana para Horizonte 1, bloque a bloque para Horizonte 2. Para cada periodo: acciones concretas, responsable y entregable.
 
 BLOQUE 3 — EQUIPO Y RECURSOS
-Roles necesarios con dedicación mensual estimada.
-Stack tecnológico recomendado con coste orientativo.
-Modelo de coordinación entre equipo y cliente.
+Roles necesarios con dedicacion mensual estimada. Stack tecnologico con coste orientativo. Modelo de coordinacion entre equipo y cliente.
 
-Extensión: 200-250 palabras por bloque. Concreto y accionable.
-
-Usa exactamente estos encabezados (sin numeración extra):
-
-BLOQUE 1 — ROADMAP DE IMPLEMENTACIÓN
-[texto del roadmap]
-
-BLOQUE 2 — PRIMEROS 90 DÍAS
-[texto de los primeros 90 días]
-
-BLOQUE 3 — EQUIPO Y RECURSOS
-[texto del equipo y recursos]`
+IMPORTANTE: Usa estos encabezados exactamente como aparecen arriba. No uses --- como separador entre secciones. No uses asteriscos ni almohadillas en los encabezados. Escribe aproximadamente 200 palabras por bloque.`
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -178,9 +155,9 @@ El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se 
     const text = content.text.trim()
 
     const result = {
-      roadmap      : extractBlock(text, 'BLOQUE 1'),
-      first90Days  : extractBlock(text, 'BLOQUE 2'),
-      teamResources: extractBlock(text, 'BLOQUE 3'),
+      roadmap      : extractBlock(text, 1),
+      first90Days  : extractBlock(text, 2),
+      teamResources: extractBlock(text, 3),
     }
 
     guardarRegistroCoste({
