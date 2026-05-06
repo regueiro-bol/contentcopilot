@@ -28,7 +28,7 @@ Cuando generes contenido, hazlo directamente sin explicaciones previas a menos q
  *   agente          string?  — identificador del agente (default: 'claude_api')
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }

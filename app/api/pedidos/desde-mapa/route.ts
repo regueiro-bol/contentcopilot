@@ -189,7 +189,7 @@ function toSlug(text: string): string {
  * }
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }

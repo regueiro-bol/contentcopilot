@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const params      = request.nextUrl.searchParams
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: {

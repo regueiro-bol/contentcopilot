@@ -123,7 +123,7 @@ Sin comentarios intermedios, sin marcas de cambio.
  *   proyecto_id     string?  — Para registro de costes
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }

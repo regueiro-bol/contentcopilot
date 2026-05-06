@@ -169,7 +169,7 @@ async function generateAndUploadAudio(
 // ── handler ────────────────────────────────────────────────
 
 export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const id = ctx.params.id

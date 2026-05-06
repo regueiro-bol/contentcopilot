@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 // ─── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const { searchParams } = request.nextUrl
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
 // ─── POST (create) ────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: Record<string, unknown>
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
 // ─── PATCH (update) ───────────────────────────────────────────────────────────
 
 export async function PATCH(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: Record<string, unknown>
@@ -109,7 +109,7 @@ export async function PATCH(request: NextRequest) {
 // ─── DELETE ───────────────────────────────────────────────────────────────────
 
 export async function DELETE(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const id = request.nextUrl.searchParams.get('id')

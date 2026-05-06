@@ -16,7 +16,7 @@ const MAX_ACCOUNTS = 3
  * Redirige a /settings/google-accounts?connected=true o ?error=...
  */
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     redirect('/sign-in')
   }

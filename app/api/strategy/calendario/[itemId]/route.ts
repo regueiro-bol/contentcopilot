@@ -10,7 +10,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: { itemId: string } }
 ) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const supabase = createAdminClient()
@@ -71,7 +71,7 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: { itemId: string } }
 ) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const supabase = createAdminClient()

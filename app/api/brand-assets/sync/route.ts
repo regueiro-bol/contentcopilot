@@ -168,7 +168,7 @@ async function listFolderFiles(
 
 export async function POST(request: NextRequest) {
   // ── 1. Autenticación ───────────────────────────────────────────────────────
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }

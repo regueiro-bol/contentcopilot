@@ -8,7 +8,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
  * La ejecucion la dispara el frontend llamando a POST /ejecutar.
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }));
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
   const { clienteId, periodo } = await req.json();
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
  * Polling de progreso.
  */
 export async function GET(req: NextRequest) {
-  const { userId } = await auth();
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }));
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
  * Body: { scanId: string }
  */
 export async function PATCH(req: NextRequest) {
-  const { userId } = await auth();
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }));
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
   const { scanId } = await req.json();

@@ -17,7 +17,7 @@ export const maxDuration = 120;
  * Body: { scanId: string }
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }));
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
   const { scanId } = await req.json();
