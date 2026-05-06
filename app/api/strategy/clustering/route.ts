@@ -3,9 +3,10 @@ import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-export const maxDuration = 120
+export const maxDuration = 300
 
-const BATCH_SIZE = 50
+const BATCH_SIZE  = 50  // keywords por lote Claude
+const CONCURRENT  = 3   // lotes en paralelo por ronda
 
 // ─────────────────────────────────────────────────────────────
 // Tipos internos
@@ -66,15 +67,15 @@ const SEP = '\x00\x01\x02'
  * Body: { session_id: string }
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
-
   const supabase  = createAdminClient()
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   try {
+    // auth() inside try-catch: Clerk failures return JSON not plain-text
+    const { userId } = await auth()
+    if (!userId) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
     const { session_id } = await request.json() as { session_id: string }
     if (!session_id) {
       return NextResponse.json({ error: 'session_id es obligatorio' }, { status: 400 })
@@ -128,11 +129,12 @@ export async function POST(request: NextRequest) {
       batches.push(keywords.slice(i, i + BATCH_SIZE))
     }
 
-    // ── Procesar cada batch con Claude ───────────────────────
+    // ── Procesar batches en grupos paralelos ─────────────────
+    // 327 keywords = 7 lotes × ~20s secuencial = ~140s > maxDuration anterior.
+    // Con CONCURRENT=3: ceil(7/3) = 3 rondas × ~20s = ~60s → dentro del límite.
     const allResults: ClusterResult[] = []
 
-    for (let idx = 0; idx < batches.length; idx++) {
-      const batch = batches[idx]
+    const processBatch = async (batch: typeof keywords, idx: number): Promise<ClusterResult[]> => {
       console.log(`[Clustering] Batch ${idx + 1}/${batches.length} (${batch.length} keywords)`)
 
       const keywordsText = batch
@@ -141,64 +143,63 @@ export async function POST(request: NextRequest) {
         )
         .join('\n')
 
-      try {
-        const response = await anthropic.messages.create({
-          model     : 'claude-sonnet-4-5',
-          max_tokens: 4096,
-          system    : SYSTEM_PROMPT,
-          messages  : [{ role: 'user', content: buildUserPrompt(keywordsText, clientName) }],
-        })
+      const response = await anthropic.messages.create({
+        model     : 'claude-sonnet-4-5',
+        max_tokens: 1500,
+        system    : SYSTEM_PROMPT,
+        messages  : [{ role: 'user', content: buildUserPrompt(keywordsText, clientName) }],
+      })
 
-        const rawText =
-          response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'
+      const rawText   = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'
+      const stopReason = response.stop_reason
+      console.log(`[Clustering] Batch ${idx + 1} stop_reason: ${stopReason} | ${rawText.length} chars`)
+      if (stopReason === 'max_tokens') {
+        console.warn(`[Clustering] Batch ${idx + 1} — RESPUESTA TRUNCADA por max_tokens!`)
+      }
 
-        const stopReason = response.stop_reason
-        console.log(`[Clustering] Batch ${idx + 1} stop_reason: ${stopReason} | largo respuesta: ${rawText.length} chars`)
-        console.log(`[Clustering] Batch ${idx + 1} raw (primeros 500 chars):`, rawText.substring(0, 500))
-        if (stopReason === 'max_tokens') {
-          console.warn(`[Clustering] Batch ${idx + 1} — RESPUESTA TRUNCADA por max_tokens!`)
-        }
+      const match = rawText.match(/\[[\s\S]*\]/)
+      if (!match) {
+        console.warn(`[Clustering] Batch ${idx + 1} — no se encontró JSON array`)
+        return []
+      }
 
-        // Extraer array JSON aunque venga con texto extra
-        const match = rawText.match(/\[[\s\S]*\]/)
-        if (match) {
-          const parsed = JSON.parse(match[0]) as Record<string, unknown>[]
+      const parsed = JSON.parse(match[0]) as Record<string, unknown>[]
+      const valid: ClusterResult[] = parsed
+        .map((r) => ({
+          keyword     : String(r.keyword     ?? '').trim(),
+          cluster_name: String(r.cluster_name ?? '').trim(),
+          funnel_stage: String(r.funnel_stage ?? '').toLowerCase() as ClusterResult['funnel_stage'],
+          priority    : Number(r.priority) as ClusterResult['priority'],
+        }))
+        .filter(
+          (r) =>
+            r.keyword &&
+            r.cluster_name &&
+            ['tofu', 'mofu', 'bofu'].includes(r.funnel_stage) &&
+            [1, 2, 3].includes(r.priority),
+        )
 
-          // Normalizar tipos antes de filtrar:
-          // Claude a veces devuelve priority como string "1" o funnel_stage como "TOFU"
-          const valid: ClusterResult[] = parsed
-            .map((r) => ({
-              keyword     : String(r.keyword     ?? '').trim(),
-              cluster_name: String(r.cluster_name ?? '').trim(),
-              funnel_stage: String(r.funnel_stage ?? '').toLowerCase() as ClusterResult['funnel_stage'],
-              priority    : Number(r.priority) as ClusterResult['priority'],
-            }))
-            .filter(
-              (r) =>
-                r.keyword &&
-                r.cluster_name &&
-                ['tofu', 'mofu', 'bofu'].includes(r.funnel_stage) &&
-                [1, 2, 3].includes(r.priority),
-            )
+      console.log(`[Clustering] Batch ${idx + 1} — ${valid.length}/${parsed.length} válidos`)
+      return valid
+    }
 
-          console.log(`[Clustering] Batch ${idx + 1} — ${valid.length}/${parsed.length} válidos`)
-          if (parsed.length > 0) {
-            const priorityTypes = Array.from(new Set(parsed.map((r) => typeof r.priority)))
-            const funnelValues  = Array.from(new Set(parsed.map((r) => String(r.funnel_stage ?? ''))))
-            console.log(`[Clustering] Batch ${idx + 1} priority types:`, priorityTypes)
-            console.log(`[Clustering] Batch ${idx + 1} funnel values:`, funnelValues)
-            if (valid.length > 0) {
-              console.log(`[Clustering] Batch ${idx + 1} sample:`, JSON.stringify(valid[0]))
-            }
-          }
+    for (let i = 0; i < batches.length; i += CONCURRENT) {
+      const group      = batches.slice(i, i + CONCURRENT)
+      const groupNum   = Math.floor(i / CONCURRENT) + 1
+      const totalGroups = Math.ceil(batches.length / CONCURRENT)
+      console.log(`[Clustering] Ronda ${groupNum}/${totalGroups} — ${group.length} lotes en paralelo`)
 
-          allResults.push(...valid)
+      const settled = await Promise.allSettled(
+        group.map((batch, j) => processBatch(batch, i + j))
+      )
+
+      for (const result of settled) {
+        if (result.status === 'fulfilled') {
+          allResults.push(...result.value)
         } else {
-          console.warn(`[Clustering] Batch ${idx + 1} — no se encontró JSON array en la respuesta`)
+          console.error(`[Clustering] Lote falló:`, result.reason instanceof Error ? result.reason.message : result.reason)
+          // Continuamos — los demás lotes de la ronda ya están completos
         }
-      } catch (batchErr) {
-        console.error(`[Clustering] Error en batch ${idx + 1}:`, batchErr instanceof Error ? batchErr.message : batchErr)
-        // Continuamos con el siguiente batch
       }
     }
 
