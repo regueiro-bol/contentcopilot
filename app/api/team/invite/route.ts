@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   // ── Diagnóstico de entorno ──────────────────────────────────────────────
   const secretKey    = process.env.CLERK_SECRET_KEY
-  const baseUrl      = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://contentcopilot-ten.vercel.app').replace(/\/$/, '')
+  const baseUrl      = (process.env.NEXT_PUBLIC_APP_URL || 'https://contentcopilot-ten.vercel.app').trim().replace(/\/$/, '')
   const appUrl       = `${baseUrl}/sign-in`
   console.log('[invite] CLERK_SECRET_KEY present:', !!secretKey)
   console.log('[invite] CLERK_SECRET_KEY prefix:', secretKey?.slice(0, 8) ?? 'MISSING')
