@@ -54,7 +54,7 @@ const navItems: NavItem[] = [
   { titulo: 'Copiloto',           href: '/copiloto',                  icono: Sparkles,        permission: 'module:copiloto'         },
   { titulo: 'Costes',             href: '/costes',                    icono: Calculator,      permission: 'module:costes'           },
   { titulo: 'Agentes',            href: '/agentes',                   icono: Cpu,             permission: 'module:agentes'          },
-  { titulo: 'Ajustes',            href: '/ajustes/equipo',            icono: Settings,        permission: 'module:ajustes'          },
+  { titulo: 'Ajustes',            href: '/ajustes',                   icono: Settings,        permission: 'module:ajustes'          },
 ]
 
 // ── Skeleton de carga ─────────────────────────────────────────────────────────

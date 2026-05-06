@@ -13,7 +13,7 @@ const MAX_ACCOUNTS = 3
  * lo intercambia por tokens, obtiene el email del usuario y
  * guarda/actualiza la cuenta en google_accounts.
  *
- * Redirige a /settings/google-accounts?connected=true o ?error=...
+ * Redirige a /ajustes/conexiones?connected=true o ?error=...
  */
 export async function GET(request: NextRequest) {
   const { userId } = await auth().catch(() => ({ userId: null as string | null }))
@@ -27,12 +27,12 @@ export async function GET(request: NextRequest) {
   // El usuario canceló el flujo OAuth
   if (error) {
     console.warn('[GoogleCallback] Usuario canceló OAuth:', error)
-    redirect('/settings/google-accounts?error=cancelled')
+    redirect('/ajustes/conexiones?error=cancelled')
   }
 
   if (!code) {
     console.error('[GoogleCallback] No se recibió authorization code')
-    redirect('/settings/google-accounts?error=no_code')
+    redirect('/ajustes/conexiones?error=no_code')
   }
 
   const supabase = createAdminClient()
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
 
     if (!userInfo.email) {
       console.error('[GoogleCallback] No se pudo obtener el email del usuario')
-      redirect('/settings/google-accounts?error=no_email')
+      redirect('/ajustes/conexiones?error=no_email')
     }
 
     // 3. Verificar límite de 3 cuentas (solo si es cuenta nueva)
@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
 
       if ((count ?? 0) >= MAX_ACCOUNTS) {
         console.warn(`[GoogleCallback] Límite de ${MAX_ACCOUNTS} cuentas alcanzado`)
-        redirect('/settings/google-accounts?error=max_accounts')
+        redirect('/ajustes/conexiones?error=max_accounts')
       }
     }
 
@@ -93,14 +93,14 @@ export async function GET(request: NextRequest) {
 
     if (upsertError) {
       console.error('[GoogleCallback] Error guardando cuenta:', upsertError)
-      redirect('/settings/google-accounts?error=db_error')
+      redirect('/ajustes/conexiones?error=db_error')
     }
 
     console.log(`[GoogleCallback] Cuenta ${userInfo.email} guardada correctamente`)
-    redirect('/settings/google-accounts?connected=true')
+    redirect('/ajustes/conexiones?connected=true')
 
   } catch (err) {
     console.error('[GoogleCallback] Error inesperado:', err instanceof Error ? err.message : err)
-    redirect('/settings/google-accounts?error=unexpected')
+    redirect('/ajustes/conexiones?error=unexpected')
   }
 }
