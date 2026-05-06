@@ -19,18 +19,6 @@ const TOP_KW_PER_CLUSTER = 5
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-/** Genera N meses consecutivos a partir del mes siguiente al actual */
-function generateMonths(count: number): string[] {
-  const months: string[] = []
-  const now  = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-  for (let i = 0; i < count; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth() + i, 1)
-    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-  }
-  return months
-}
-
 /** Convierte texto a slug URL-safe en español */
 function toSlug(text: string): string {
   return text
@@ -53,7 +41,7 @@ interface ArticleItem {
   secondary_keywords : string[]
   cluster            : string
   funnel_stage       : 'tofu' | 'mofu' | 'bofu'
-  suggested_month    : string
+  fase_recomendada   : 'arranque' | 'consolidacion' | 'expansion'
   priority           : number
   volume             : number | null
   difficulty         : number | null
@@ -76,9 +64,8 @@ const SYSTEM_PROMPT = `Eres un experto en planificación editorial SEO para el m
 
 function buildMapPrompt(
   clientName  : string,
-  meses       : number,
   artMes      : number,
-  monthsList  : string[],
+  distribucion: { tofu: number; mofu: number; bofu: number },
   clustersWithAssignment: ClusterSummary[],
   batchIndex  : number,
   totalBatches: number,
@@ -96,12 +83,10 @@ function buildMapPrompt(
     2,
   )
 
-  return `Genera artículos para el mapa editorial SEO del cliente "${clientName}".
+  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".
 
-Configuración global:
-- Duración total: ${meses} meses
-- Ritmo: ${artMes} artículos/mes
-- Meses disponibles: ${JSON.stringify(monthsList)}
+Distribución objetivo del funnel: TOFU ${distribucion.tofu}% · MOFU ${distribucion.mofu}% · BOFU ${distribucion.bofu}%
+Ritmo estimado: ${artMes} artículos/mes
 
 Lote ${batchIndex + 1} de ${totalBatches}.
 Genera EXACTAMENTE ${articulosParaEsteBatch} artículos en total, distribuidos así:
@@ -120,19 +105,17 @@ Para cada artículo genera:
 - secondary_keywords: array de 2-4 keywords complementarias del mismo cluster
 - cluster: nombre exacto del cluster (igual al de los datos)
 - funnel_stage: "tofu" | "mofu" | "bofu" según el cluster
-- suggested_month: uno de los meses disponibles (formato YYYY-MM)
-- priority: 1 (publicar antes) | 2 (medio plazo) | 3 (últimos meses)
+- fase_recomendada: en qué fase del plan publicar este artículo:
+  * "arranque": artículos BOFU de alta prioridad y base de autoridad del nicho — publicar primero
+  * "consolidacion": artículos MOFU que amplían el territorio semántico — publicar en segunda ola
+  * "expansion": artículos TOFU de largo alcance y construcción de audiencia — publicar en tercera ola
+  Regla: BOFU → arranque | MOFU → consolidacion | TOFU → expansion (ajusta si la prioridad lo justifica)
+- priority: 1 (alta prioridad) | 2 (media) | 3 (baja)
 - volume: volumen mensual estimado de la main_keyword
 - difficulty: dificultad KD estimada (0-100)
 
-Estrategia temporal:
-- TOFU alto volumen → meses tempranos (base de tráfico)
-- MOFU → meses intermedios (consideración)
-- BOFU → meses finales (conversión)
-- Distribuye EXACTAMENTE ${artMes} artículos por mes
-
 Responde ÚNICAMENTE con un JSON array de ${articulosParaEsteBatch} objetos:
-[{"title":"...","slug":"...","main_keyword":"...","secondary_keywords":["..."],"cluster":"...","funnel_stage":"tofu","suggested_month":"${monthsList[0]}","priority":1,"volume":2400,"difficulty":42}]`
+[{"title":"...","slug":"...","main_keyword":"...","secondary_keywords":["..."],"cluster":"...","funnel_stage":"tofu","fase_recomendada":"expansion","priority":2,"volume":2400,"difficulty":42}]`
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -166,13 +149,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as {
       session_id: string
-      config    : { meses: number; articulos_por_mes: number }
+      config    : { meses: number; articulos_por_mes: number; distribucion?: { tofu: number; mofu: number; bofu: number } }
     }
 
     const { session_id, config } = body
-    const meses    = Math.max(1, Math.min(24, config?.meses ?? 6))
-    const artMes   = Math.max(2, Math.min(20, config?.articulos_por_mes ?? 6))
-    const totalMax = meses * artMes
+    const meses        = Math.max(1, Math.min(24, config?.meses ?? 6))
+    const artMes       = Math.max(2, Math.min(20, config?.articulos_por_mes ?? 6))
+    const totalMax     = meses * artMes
+    const distribucion = config?.distribucion ?? { tofu: 40, mofu: 35, bofu: 25 }
 
     if (!session_id) {
       return NextResponse.json({ error: 'session_id es obligatorio' }, { status: 400 })
@@ -248,7 +232,6 @@ export async function POST(request: NextRequest) {
       .sort((a, b) => (b.total_volume ?? 0) - (a.total_volume ?? 0))
       .map(({ total_volume: _, ...rest }) => rest) // eliminar campo auxiliar
 
-    const monthsList    = generateMonths(meses)
     const totalClusters = allClusterSummaries.length
 
     // ── Asignar artículos a cada cluster ─────────────────────
@@ -352,9 +335,8 @@ export async function POST(request: NextRequest) {
             role   : 'user',
             content: buildMapPrompt(
               cliente.nombre,
-              meses,
               artMes,
-              monthsList,
+              distribucion,
               batch,
               batchIdx,
               clusterBatches.length,
@@ -378,9 +360,10 @@ export async function POST(request: NextRequest) {
           continue
         }
 
+        const FASES_VALIDAS = ['arranque', 'consolidacion', 'expansion'] as const
         const parsed = JSON.parse(match[0]) as ArticleItem[]
         const articles = parsed
-          .filter((a) => a.title && a.main_keyword && a.cluster && a.funnel_stage && a.suggested_month)
+          .filter((a) => a.title && a.main_keyword && a.cluster && a.funnel_stage)
           .map((a) => ({
             ...a,
             slug              : toSlug(a.slug || a.title),
@@ -388,6 +371,9 @@ export async function POST(request: NextRequest) {
             volume            : typeof a.volume === 'number' ? a.volume : null,
             difficulty        : typeof a.difficulty === 'number' ? a.difficulty : null,
             priority          : typeof a.priority === 'number' ? a.priority : 2,
+            fase_recomendada  : FASES_VALIDAS.includes(a.fase_recomendada as typeof FASES_VALIDAS[number])
+              ? a.fase_recomendada
+              : (a.funnel_stage === 'bofu' ? 'arranque' : a.funnel_stage === 'mofu' ? 'consolidacion' : 'expansion'),
           }))
           .slice(0, articulosParaBatch) // No exceder lo pedido
 
@@ -425,7 +411,8 @@ export async function POST(request: NextRequest) {
             volume            : vol,
             difficulty        : diff,
             priority          : a.priority,
-            suggested_month   : monthsList.includes(a.suggested_month) ? a.suggested_month : monthsList[0],
+            suggested_month   : null,
+            fase              : a.fase_recomendada ?? 'sin_fase',
             sort_order        : sortOrder++,
             status            : 'planned',
           }
@@ -484,15 +471,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // ── Resumen por mes ─────────────────────────────────────
+    // ── Resumen por fase ────────────────────────────────────
     const { data: insertedItems } = await supabase
       .from('content_map_items')
-      .select('suggested_month')
+      .select('fase')
       .eq('map_id', map.id)
 
-    const porMes = monthsList.map((mes) => ({
-      mes      : mes,
-      articulos: (insertedItems ?? []).filter((i) => i.suggested_month === mes).length,
+    const porFase = (['arranque', 'consolidacion', 'expansion', 'sin_fase'] as const).map((fase) => ({
+      fase,
+      articulos: (insertedItems ?? []).filter((i) => i.fase === fase).length,
     }))
 
     console.log(`[GenerateMap] Mapa ${map.id} completado — ${totalItemsInsertados} artículos en ${clusterBatches.length} batches`)
@@ -501,7 +488,7 @@ export async function POST(request: NextRequest) {
       ok            : true,
       map_id        : map.id,
       total_articles: totalItemsInsertados,
-      por_mes       : porMes,
+      por_fase      : porFase,
     })
 
   } catch (e) {

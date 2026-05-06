@@ -20,6 +20,7 @@ export interface MapItem {
   difficulty        : number | null
   priority          : number
   suggested_month   : string | null
+  fase              : 'sin_fase' | 'arranque' | 'consolidacion' | 'expansion' | null
   status            : string
   contenido_id      : string | null
   sort_order        : number
@@ -64,8 +65,8 @@ export default async function MapaPage({ params }: PageProps) {
   // ── Cargar artículos del mapa (si existe) ──────────────────
   // Intentamos con los campos Sprint 2; si la migración 029 no está aplicada,
   // reintentamos solo con los campos base para no romper la carga de la página.
-  const SELECT_FULL = 'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order, content_status, existing_url, similarity_score, tipo_articulo, p1_volumen, p2_oportunidad, p3_actualizacion, p4_manual, prioridad_final, validacion, motivo_rechazo, fecha_validacion, fecha_calendario, redactor_asignado'
-  const SELECT_BASE = 'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, status, contenido_id, sort_order, content_status, existing_url, similarity_score'
+  const SELECT_FULL = 'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, fase, status, contenido_id, sort_order, content_status, existing_url, similarity_score, tipo_articulo, p1_volumen, p2_oportunidad, p3_actualizacion, p4_manual, prioridad_final, validacion, motivo_rechazo, fecha_validacion, fecha_calendario, redactor_asignado, assignee_name'
+  const SELECT_BASE = 'id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, priority, suggested_month, fase, status, contenido_id, sort_order, content_status, existing_url, similarity_score'
 
   let items: MapItem[] = []
   if (map) {
@@ -82,7 +83,7 @@ export default async function MapaPage({ params }: PageProps) {
         .select(SELECT_BASE)
         .eq('map_id', map.id)
         .order('sort_order', { ascending: true })
-      rawItems = fallbackItems
+      rawItems = fallbackItems as typeof rawItems
     }
 
     items = (rawItems ?? []).map((i) => ({
@@ -97,6 +98,7 @@ export default async function MapaPage({ params }: PageProps) {
       difficulty        : i.difficulty != null ? Number(i.difficulty) : null,
       priority          : Number(i.priority ?? 2),
       suggested_month   : (i.suggested_month as string | null) ?? null,
+      fase              : (i.fase as 'sin_fase' | 'arranque' | 'consolidacion' | 'expansion' | null) ?? null,
       status            : String(i.status ?? 'planned'),
       contenido_id      : (i.contenido_id as string | null) ?? null,
       sort_order        : Number(i.sort_order ?? 0),
@@ -113,7 +115,7 @@ export default async function MapaPage({ params }: PageProps) {
       motivo_rechazo    : (i.motivo_rechazo as string | null) ?? null,
       fecha_validacion  : (i.fecha_validacion as string | null) ?? null,
       fecha_calendario  : (i.fecha_calendario as string | null) ?? null,
-      redactor_asignado : (i.redactor_asignado as string | null) ?? null,
+      redactor_asignado : (i.redactor_asignado as string | null) ?? (i.assignee_name as string | null) ?? null,
     }))
   }
 

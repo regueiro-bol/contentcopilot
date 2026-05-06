@@ -50,7 +50,7 @@ const navItems = [
     icono: TrendingUp,
   },
   {
-    titulo: 'Almacén',
+    titulo: 'Banco de Contenidos',
     href: '/strategy/almacen',
     icono: Archive,
   },

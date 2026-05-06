@@ -3,15 +3,20 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import {
-  Archive,
   Search,
   Loader2,
   ExternalLink,
-  Calendar,
   AlertCircle,
   ChevronDown,
   RefreshCw,
   X,
+  Rocket,
+  BarChart2,
+  Globe,
+  User,
+  CheckSquare,
+  Square,
+  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -24,7 +29,7 @@ interface Cliente {
   nombre: string
 }
 
-interface AlmacenItem {
+interface BancoItem {
   id               : string
   map_id           : string
   client_id        : string
@@ -37,8 +42,10 @@ interface AlmacenItem {
   prioridad_final  : number | null
   validacion       : string | null
   status           : string
-  fecha_calendario : string | null
+  fase             : 'arranque' | 'consolidacion' | 'expansion' | 'sin_fase' | null
   contenido_id     : string | null
+  assignee_name    : string | null
+  redactor_asignado: string | null
   notas            : string | null
   estado_almacen   : string
   sesion_nombre    : string
@@ -48,23 +55,34 @@ interface Props {
   clientes: Cliente[]
 }
 
+// ─── Config de fases ──────────────────────────────────────────────────────────
+
+const FASE_CONFIG = {
+  arranque     : { label: 'Arranque',      bg: 'bg-red-100',    text: 'text-red-700',    icon: Rocket    },
+  consolidacion: { label: 'Consolidación', bg: 'bg-amber-100',  text: 'text-amber-700',  icon: BarChart2 },
+  expansion    : { label: 'Expansión',     bg: 'bg-green-100',  text: 'text-green-700',  icon: Globe     },
+  sin_fase     : { label: 'Sin fase',      bg: 'bg-gray-100',   text: 'text-gray-500',   icon: Archive   },
+} as const
+
 // ─── Constantes de estado ─────────────────────────────────────────────────────
 
 const ESTADOS: { value: string; label: string; color: string }[] = [
-  { value: 'propuesto',              label: 'Propuesto',              color: 'bg-gray-100 text-gray-600'     },
-  { value: 'en_revision',            label: 'En revisión',            color: 'bg-amber-100 text-amber-700'   },
-  { value: 'aprobado',               label: 'Aprobado',               color: 'bg-green-100 text-green-700'   },
-  { value: 'rechazado',              label: 'Rechazado',              color: 'bg-red-100 text-red-700'       },
-  { value: 'en_calendario',          label: 'En calendario',          color: 'bg-blue-100 text-blue-700'     },
-  { value: 'en_redaccion',           label: 'En redacción',           color: 'bg-violet-100 text-violet-700' },
-  { value: 'revision_editorial',     label: 'Revisión editorial',     color: 'bg-orange-100 text-orange-700' },
-  { value: 'publicado',              label: 'Publicado',              color: 'bg-emerald-100 text-emerald-700'},
-  { value: 'actualizacion_pendiente',label: 'Actualiz. pendiente',    color: 'bg-rose-100 text-rose-700'     },
+  { value: 'propuesto',               label: 'Propuesto',             color: 'bg-gray-100 text-gray-600'      },
+  { value: 'en_revision',             label: 'En revisión',           color: 'bg-amber-100 text-amber-700'    },
+  { value: 'aprobado',                label: 'Aprobado',              color: 'bg-green-100 text-green-700'    },
+  { value: 'rechazado',               label: 'Rechazado',             color: 'bg-red-100 text-red-700'        },
+  { value: 'en_calendario',           label: 'En calendario',         color: 'bg-blue-100 text-blue-700'      },
+  { value: 'en_redaccion',            label: 'En redacción',          color: 'bg-violet-100 text-violet-700'  },
+  { value: 'revision_editorial',      label: 'Rev. editorial',        color: 'bg-orange-100 text-orange-700'  },
+  { value: 'publicado',               label: 'Publicado',             color: 'bg-emerald-100 text-emerald-700'},
+  { value: 'actualizacion_pendiente', label: 'Actualiz. pendiente',   color: 'bg-rose-100 text-rose-700'      },
 ]
 
 function estadoStyle(estado: string) {
   return ESTADOS.find((e) => e.value === estado) ?? { label: estado, color: 'bg-gray-100 text-gray-500' }
 }
+
+// ─── Badges ───────────────────────────────────────────────────────────────────
 
 function EstadoBadge({ estado }: { estado: string }) {
   const { label, color } = estadoStyle(estado)
@@ -101,14 +119,24 @@ function FunnelBadge({ stage }: { stage: string | null }) {
   )
 }
 
+function FaseBadge({ fase }: { fase: string | null }) {
+  const key = (fase ?? 'sin_fase') as keyof typeof FASE_CONFIG
+  const cfg = FASE_CONFIG[key] ?? FASE_CONFIG.sin_fase
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${cfg.bg} ${cfg.text}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function AlmacenClient({ clientes }: Props) {
+export default function BancoClient({ clientes }: Props) {
   // Selección de cliente
   const [clienteId, setClienteId]       = useState<string>(clientes[0]?.id ?? '')
 
   // Items y paginación
-  const [items, setItems]               = useState<AlmacenItem[]>([])
+  const [items, setItems]               = useState<BancoItem[]>([])
   const [total, setTotal]               = useState(0)
   const [page, setPage]                 = useState(1)
   const [cargando, setCargando]         = useState(false)
@@ -118,18 +146,22 @@ export default function AlmacenClient({ clientes }: Props) {
   const [filtroEstado, setFiltroEstado]         = useState('')
   const [filtroTipo, setFiltroTipo]             = useState('')
   const [filtroFunnel, setFiltroFunnel]         = useState('')
+  const [filtroFase, setFiltroFase]             = useState('')
   const [filtroPrioridad, setFiltroPrioridad]   = useState('')
   const [filtroCluster, setFiltroCluster]       = useState('')
   const [busqueda, setBusqueda]                 = useState('')
   const [busquedaInput, setBusquedaInput]       = useState('')
 
-  // Acciones por item
-  const [asignandoFecha, setAsignandoFecha]     = useState<string | null>(null)
-  const [fechaInput, setFechaInput]             = useState('')
-  const [guardandoId, setGuardandoId]           = useState<string | null>(null)
-  const [localOverrides, setLocalOverrides]     = useState<Record<string, Partial<AlmacenItem>>>({})
+  // Selección múltiple
+  const [seleccionados, setSeleccionados]       = useState<Set<string>>(new Set())
+  const [accionMasiva, setAccionMasiva]         = useState<string | null>(null)
+  const [procesandoMasiva, setProcesandoMasiva] = useState(false)
 
-  // ── Clusters únicos del cliente (para el select dinámico) ──
+  // Overrides optimistas
+  const [localOverrides, setLocalOverrides]     = useState<Record<string, Partial<BancoItem>>>({})
+  const [guardandoId, setGuardandoId]           = useState<string | null>(null)
+
+  // ── Clusters únicos del cliente ──────────────────────────
   const clustersUnicos = useMemo(() => {
     const set = new Set(items.map((i) => i.cluster).filter(Boolean) as string[])
     return Array.from(set).sort()
@@ -147,6 +179,7 @@ export default function AlmacenClient({ clientes }: Props) {
     if (filtroEstado)    params.set('estado', filtroEstado)
     if (filtroTipo)      params.set('tipo_articulo', filtroTipo)
     if (filtroFunnel)    params.set('funnel_stage', filtroFunnel)
+    if (filtroFase)      params.set('fase', filtroFase)
     if (filtroPrioridad) params.set('prioridad_final', filtroPrioridad)
     if (filtroCluster)   params.set('cluster', filtroCluster)
     if (busqueda)        params.set('q', busqueda)
@@ -154,7 +187,7 @@ export default function AlmacenClient({ clientes }: Props) {
     try {
       const res  = await fetch(`/api/strategy/almacen?${params}`)
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Error cargando almacén')
+      if (!res.ok) throw new Error(data.error ?? 'Error cargando banco de contenidos')
 
       if (resetPage || currentPage === 1) {
         setItems(data.items)
@@ -167,72 +200,82 @@ export default function AlmacenClient({ clientes }: Props) {
     } finally {
       setCargando(false)
     }
-  }, [clienteId, page, filtroEstado, filtroTipo, filtroFunnel, filtroPrioridad, filtroCluster, busqueda])
+  }, [clienteId, page, filtroEstado, filtroTipo, filtroFunnel, filtroFase, filtroPrioridad, filtroCluster, busqueda])
 
-  // Recargar cuando cambia cliente o filtros (reset a página 1)
-  useEffect(() => { cargarItems(true) }, [clienteId, filtroEstado, filtroTipo, filtroFunnel, filtroPrioridad, filtroCluster, busqueda]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { cargarItems(true) }, [clienteId, filtroEstado, filtroTipo, filtroFunnel, filtroFase, filtroPrioridad, filtroCluster, busqueda]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cargar más páginas
   const cargarMas = () => {
     setPage((p) => p + 1)
     cargarItems(false)
   }
 
-  // ── Asignar fecha_calendario ───────────────────────────────
-  async function handleAsignarFecha(item: AlmacenItem) {
-    if (!fechaInput) return
-    setGuardandoId(item.id)
-    // Optimistic
-    setLocalOverrides((prev) => ({
-      ...prev,
-      [item.id]: {
-        fecha_calendario: fechaInput,
-        estado_almacen  : item.validacion === 'aprobado' ? 'en_calendario' : item.estado_almacen,
-      },
-    }))
-    setAsignandoFecha(null)
-    setFechaInput('')
+  // ── Cambiar fase ───────────────────────────────────────────
+  async function handleCambiarFase(itemId: string, nuevaFase: string) {
+    setGuardandoId(itemId)
+    setLocalOverrides((prev) => ({ ...prev, [itemId]: { fase: nuevaFase as BancoItem['fase'] } }))
     try {
-      const res = await fetch(`/api/strategy/almacen/${item.id}`, {
+      await fetch(`/api/strategy/almacen/${itemId}`, {
         method : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ fecha_calendario: fechaInput }),
+        body   : JSON.stringify({ fase: nuevaFase }),
       })
-      if (!res.ok) throw new Error('Error guardando fecha')
-      const data = await res.json()
-      // Si se creó pedido, actualizar contenido_id
-      if (data.pedido_id) {
-        setLocalOverrides((prev) => ({
-          ...prev,
-          [item.id]: {
-            ...prev[item.id],
-            contenido_id  : data.pedido_id,
-            estado_almacen: 'en_calendario',
-          },
-        }))
-      }
     } catch {
-      setLocalOverrides((prev) => { const n = { ...prev }; delete n[item.id]; return n })
+      setLocalOverrides((prev) => { const n = { ...prev }; delete n[itemId]; return n })
     } finally {
       setGuardandoId(null)
     }
   }
 
-  // ── Cambiar estado manualmente ─────────────────────────────
-  async function handleCambiarEstado(item: AlmacenItem, nuevoStatus: string) {
-    setGuardandoId(item.id)
-    setLocalOverrides((prev) => ({ ...prev, [item.id]: { status: nuevoStatus } }))
+  // ── Selección múltiple ─────────────────────────────────────
+  const toggleSeleccion = (id: string) => {
+    setSeleccionados((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSeleccionTodos = () => {
+    if (seleccionados.size === itemsMerged.length) {
+      setSeleccionados(new Set())
+    } else {
+      setSeleccionados(new Set(itemsMerged.map((i) => i.id)))
+    }
+  }
+
+  // ── Acción masiva: cambiar fase ────────────────────────────
+  async function aplicarCambioFaseMasivo(nuevaFase: string) {
+    if (seleccionados.size === 0) return
+    setProcesandoMasiva(true)
+    const ids = Array.from(seleccionados)
+    // Optimistic
+    setLocalOverrides((prev) => {
+      const next = { ...prev }
+      for (const id of ids) next[id] = { ...next[id], fase: nuevaFase as BancoItem['fase'] }
+      return next
+    })
     try {
-      const res = await fetch(`/api/strategy/almacen/${item.id}`, {
-        method : 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ status: nuevoStatus }),
-      })
-      if (!res.ok) throw new Error('Error actualizando estado')
+      await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/strategy/almacen/${id}`, {
+            method : 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({ fase: nuevaFase }),
+          }),
+        ),
+      )
+      setSeleccionados(new Set())
+      setAccionMasiva(null)
     } catch {
-      setLocalOverrides((prev) => { const n = { ...prev }; delete n[item.id]; return n })
+      // Revertir
+      setLocalOverrides((prev) => {
+        const next = { ...prev }
+        for (const id of ids) delete next[id]
+        return next
+      })
     } finally {
-      setGuardandoId(null)
+      setProcesandoMasiva(false)
     }
   }
 
@@ -243,18 +286,16 @@ export default function AlmacenClient({ clientes }: Props) {
   )
 
   // ── KPIs ───────────────────────────────────────────────────
-  // Calculados sobre todos los items del cliente (no solo la página actual)
-  // Para KPIs fieles necesitamos items sin filtro — los derivamos de itemsMerged (aproximación de la página)
   const kpis = useMemo(() => ({
-    total          : total,
-    aprobados      : itemsMerged.filter((i) => i.estado_almacen === 'aprobado').length,
-    en_calendario  : itemsMerged.filter((i) => i.estado_almacen === 'en_calendario').length,
-    en_redaccion   : itemsMerged.filter((i) => i.estado_almacen === 'en_redaccion').length,
-    publicados     : itemsMerged.filter((i) => i.estado_almacen === 'publicado').length,
-    pend_actualizac: itemsMerged.filter((i) => i.estado_almacen === 'actualizacion_pendiente').length,
+    total         : total,
+    pendientes    : itemsMerged.filter((i) => ['propuesto', 'en_revision'].includes(i.estado_almacen)).length,
+    en_produccion : itemsMerged.filter((i) => ['en_redaccion', 'en_calendario', 'revision_editorial'].includes(i.estado_almacen)).length,
+    publicados    : itemsMerged.filter((i) => i.estado_almacen === 'publicado').length,
   }), [itemsMerged, total])
 
   const clienteNombre = clientes.find((c) => c.id === clienteId)?.nombre ?? '—'
+  const hayFiltros    = !!(filtroEstado || filtroTipo || filtroFunnel || filtroFase || filtroPrioridad || filtroCluster || busqueda)
+  const todosSeleccionados = seleccionados.size > 0 && seleccionados.size === itemsMerged.length
 
   return (
     <div className="space-y-5">
@@ -264,8 +305,8 @@ export default function AlmacenClient({ clientes }: Props) {
         <div className="flex items-center gap-3">
           <Archive className="h-6 w-6 text-indigo-600 shrink-0" />
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Almacén de Contenidos</h1>
-            <p className="text-sm text-gray-500">Estrategia editorial permanente por cliente</p>
+            <h1 className="text-xl font-bold text-gray-900">Banco de Contenidos</h1>
+            <p className="text-sm text-gray-500">Estrategia editorial por cliente · {clienteNombre}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -273,7 +314,7 @@ export default function AlmacenClient({ clientes }: Props) {
           <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
             <select
               value={clienteId}
-              onChange={(e) => { setClienteId(e.target.value); setFiltroCluster('') }}
+              onChange={(e) => { setClienteId(e.target.value); setFiltroCluster(''); setSeleccionados(new Set()) }}
               className="text-sm text-gray-700 font-medium bg-transparent outline-none cursor-pointer"
             >
               {clientes.map((c) => (
@@ -292,18 +333,26 @@ export default function AlmacenClient({ clientes }: Props) {
             <RefreshCw className={cn('h-3.5 w-3.5', cargando && 'animate-spin')} />
             Actualizar
           </Button>
+          {/* Planificar trimestre — Sprint 13B */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled
+            className="gap-1.5 text-gray-400 border-dashed"
+            title="Disponible en Sprint 13B"
+          >
+            Planificar trimestre
+          </Button>
         </div>
       </div>
 
       {/* ── KPIs ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: 'Total',             value: kpis.total,           color: 'text-gray-700'    },
-          { label: 'Aprobados',         value: kpis.aprobados,       color: 'text-green-700'   },
-          { label: 'En calendario',     value: kpis.en_calendario,   color: 'text-blue-700'    },
-          { label: 'En redacción',      value: kpis.en_redaccion,    color: 'text-violet-700'  },
-          { label: 'Publicados',        value: kpis.publicados,      color: 'text-emerald-700' },
-          { label: 'Pend. actualiz.',   value: kpis.pend_actualizac, color: 'text-rose-700'    },
+          { label: 'Total artículos',  value: kpis.total,         color: 'text-gray-700'    },
+          { label: 'Pendientes',       value: kpis.pendientes,    color: 'text-amber-700'   },
+          { label: 'En producción',    value: kpis.en_produccion, color: 'text-violet-700'  },
+          { label: 'Publicados',       value: kpis.publicados,    color: 'text-emerald-700' },
         ].map(({ label, value, color }) => (
           <Card key={label}>
             <CardContent className="p-2.5">
@@ -335,6 +384,31 @@ export default function AlmacenClient({ clientes }: Props) {
           )}
         </div>
 
+        {/* Fase */}
+        <select
+          value={filtroFase}
+          onChange={(e) => setFiltroFase(e.target.value)}
+          className="text-xs text-gray-600 border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none cursor-pointer"
+        >
+          <option value="">Fase: todas</option>
+          <option value="arranque">Arranque</option>
+          <option value="consolidacion">Consolidación</option>
+          <option value="expansion">Expansión</option>
+          <option value="sin_fase">Sin fase</option>
+        </select>
+
+        {/* Funnel */}
+        <select
+          value={filtroFunnel}
+          onChange={(e) => setFiltroFunnel(e.target.value)}
+          className="text-xs text-gray-600 border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none cursor-pointer"
+        >
+          <option value="">Funnel: todos</option>
+          <option value="tofu">TOFU</option>
+          <option value="mofu">MOFU</option>
+          <option value="bofu">BOFU</option>
+        </select>
+
         {/* Estado */}
         <select
           value={filtroEstado}
@@ -355,18 +429,6 @@ export default function AlmacenClient({ clientes }: Props) {
           <option value="nuevo">Nuevo</option>
           <option value="mejora">Mejora</option>
           <option value="actualizacion">Actualización</option>
-        </select>
-
-        {/* Funnel */}
-        <select
-          value={filtroFunnel}
-          onChange={(e) => setFiltroFunnel(e.target.value)}
-          className="text-xs text-gray-600 border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none cursor-pointer"
-        >
-          <option value="">Funnel: todos</option>
-          <option value="tofu">TOFU</option>
-          <option value="mofu">MOFU</option>
-          <option value="bofu">BOFU</option>
         </select>
 
         {/* Prioridad */}
@@ -394,12 +456,13 @@ export default function AlmacenClient({ clientes }: Props) {
         )}
 
         {/* Limpiar filtros */}
-        {(filtroEstado || filtroTipo || filtroFunnel || filtroPrioridad || filtroCluster || busqueda) && (
+        {hayFiltros && (
           <button
             type="button"
             onClick={() => {
               setFiltroEstado(''); setFiltroTipo(''); setFiltroFunnel('')
-              setFiltroPrioridad(''); setFiltroCluster(''); setBusqueda(''); setBusquedaInput('')
+              setFiltroFase(''); setFiltroPrioridad(''); setFiltroCluster('')
+              setBusqueda(''); setBusquedaInput('')
             }}
             className="text-xs text-red-600 hover:text-red-800 font-medium"
           >
@@ -420,14 +483,14 @@ export default function AlmacenClient({ clientes }: Props) {
       {cargando && items.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm">Cargando almacén de {clienteNombre}...</span>
+          <span className="text-sm">Cargando banco de {clienteNombre}...</span>
         </div>
       ) : itemsMerged.length === 0 && !cargando ? (
         <div className="flex flex-col items-center justify-center py-16 text-gray-400">
           <Archive className="h-10 w-10 mb-3 opacity-30" />
-          <p className="text-sm font-medium">Sin artículos en el almacén</p>
+          <p className="text-sm font-medium">Sin artículos en el banco</p>
           <p className="text-xs mt-1">
-            {filtroEstado || filtroTipo || filtroFunnel || filtroPrioridad || filtroCluster || busqueda
+            {hayFiltros
               ? 'Prueba a cambiar los filtros'
               : 'Genera y valida un mapa de contenidos para este cliente'}
           </p>
@@ -439,135 +502,148 @@ export default function AlmacenClient({ clientes }: Props) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Título</th>
+                    {/* Checkbox seleccionar todos */}
+                    <th className="px-3 py-2.5 w-8">
+                      <button
+                        type="button"
+                        onClick={toggleSeleccionTodos}
+                        className="text-gray-400 hover:text-gray-600"
+                        title={todosSeleccionados ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                      >
+                        {todosSeleccionados
+                          ? <CheckSquare className="h-4 w-4 text-indigo-600" />
+                          : <Square className="h-4 w-4" />
+                        }
+                      </button>
+                    </th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500">Título</th>
                     <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 hidden lg:table-cell">Keyword</th>
                     <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Cluster</th>
+                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500">Fase</th>
                     <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500">Funnel</th>
                     <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Tipo</th>
                     <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Prior.</th>
                     <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
-                    <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 hidden md:table-cell">Fecha</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Asignado a</th>
                     <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {itemsMerged.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50/60 transition-colors">
+                  {itemsMerged.map((item) => {
+                    const seleccionado = seleccionados.has(item.id)
+                    const asignado     = item.assignee_name ?? item.redactor_asignado
 
-                      {/* Título */}
-                      <td className="px-4 py-3 max-w-[260px]">
-                        <p className="font-medium text-gray-900 leading-snug line-clamp-2 text-xs">{item.title}</p>
-                        {item.slug && (
-                          <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5">/{item.slug}</p>
+                    return (
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          'hover:bg-gray-50/60 transition-colors',
+                          seleccionado && 'bg-indigo-50/40',
                         )}
-                      </td>
+                      >
+                        {/* Checkbox */}
+                        <td className="px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleSeleccion(item.id)}
+                            className="text-gray-400 hover:text-indigo-600"
+                          >
+                            {seleccionado
+                              ? <CheckSquare className="h-4 w-4 text-indigo-600" />
+                              : <Square className="h-4 w-4" />
+                            }
+                          </button>
+                        </td>
 
-                      {/* Keyword */}
-                      <td className="px-3 py-3 hidden lg:table-cell">
-                        <span className="text-xs text-gray-600">{item.main_keyword}</span>
-                      </td>
+                        {/* Título */}
+                        <td className="px-3 py-3 max-w-[240px]">
+                          <p className="font-medium text-gray-900 leading-snug line-clamp-2 text-xs">{item.title}</p>
+                          {item.slug && (
+                            <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5">/{item.slug}</p>
+                          )}
+                        </td>
 
-                      {/* Cluster */}
-                      <td className="px-3 py-3 hidden md:table-cell">
-                        <span className="text-xs text-gray-500 line-clamp-1">{item.cluster ?? '—'}</span>
-                      </td>
+                        {/* Keyword */}
+                        <td className="px-3 py-3 hidden lg:table-cell">
+                          <span className="text-xs text-gray-600">{item.main_keyword}</span>
+                        </td>
 
-                      {/* Funnel */}
-                      <td className="px-3 py-3 text-center">
-                        <FunnelBadge stage={item.funnel_stage} />
-                      </td>
+                        {/* Cluster */}
+                        <td className="px-3 py-3 hidden md:table-cell">
+                          <span className="text-xs text-gray-500 line-clamp-1">{item.cluster ?? '—'}</span>
+                        </td>
 
-                      {/* Tipo */}
-                      <td className="px-3 py-3 text-center hidden sm:table-cell">
-                        <TipoBadge tipo={item.tipo_articulo} />
-                      </td>
+                        {/* Fase */}
+                        <td className="px-3 py-3 text-center">
+                          {guardandoId === item.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 mx-auto" />
+                          ) : (
+                            <div className="flex items-center justify-center gap-1">
+                              <FaseBadge fase={item.fase} />
+                              <select
+                                value={item.fase ?? 'sin_fase'}
+                                onChange={(e) => handleCambiarFase(item.id, e.target.value)}
+                                className="text-[10px] text-gray-400 bg-transparent outline-none cursor-pointer"
+                                title="Cambiar fase"
+                              >
+                                <option value="arranque">Arranque</option>
+                                <option value="consolidacion">Consolidación</option>
+                                <option value="expansion">Expansión</option>
+                                <option value="sin_fase">Sin fase</option>
+                              </select>
+                            </div>
+                          )}
+                        </td>
 
-                      {/* Prioridad */}
-                      <td className="px-3 py-3 text-center hidden sm:table-cell">
-                        <PrioridadBadge p={item.prioridad_final} />
-                      </td>
+                        {/* Funnel */}
+                        <td className="px-3 py-3 text-center">
+                          <FunnelBadge stage={item.funnel_stage} />
+                        </td>
 
-                      {/* Estado */}
-                      <td className="px-3 py-3 text-center">
-                        <EstadoBadge estado={item.estado_almacen} />
-                      </td>
+                        {/* Tipo */}
+                        <td className="px-3 py-3 text-center hidden sm:table-cell">
+                          <TipoBadge tipo={item.tipo_articulo} />
+                        </td>
 
-                      {/* Fecha calendario */}
-                      <td className="px-3 py-3 text-center hidden md:table-cell">
-                        {asignandoFecha === item.id ? (
-                          <div className="flex items-center gap-1 justify-center">
-                            <input
-                              type="date"
-                              value={fechaInput}
-                              onChange={(e) => setFechaInput(e.target.value)}
-                              className="text-[11px] border border-blue-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-400"
-                              autoFocus
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleAsignarFecha(item)}
-                              disabled={!fechaInput || guardandoId === item.id}
-                              className="text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                        {/* Prioridad */}
+                        <td className="px-3 py-3 text-center hidden sm:table-cell">
+                          <PrioridadBadge p={item.prioridad_final} />
+                        </td>
+
+                        {/* Estado */}
+                        <td className="px-3 py-3 text-center">
+                          <EstadoBadge estado={item.estado_almacen} />
+                        </td>
+
+                        {/* Asignado a */}
+                        <td className="px-3 py-3 hidden md:table-cell">
+                          {asignado ? (
+                            <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                              <User className="h-3 w-3 text-gray-400" />
+                              {asignado}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-gray-300">Sin asignar</span>
+                          )}
+                        </td>
+
+                        {/* Acción */}
+                        <td className="px-3 py-3 text-center">
+                          {item.contenido_id ? (
+                            <Link
+                              href={`/contenidos/${item.contenido_id}`}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
                             >
-                              {guardandoId === item.id
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                : <Calendar className="h-3.5 w-3.5" />
-                              }
-                            </button>
-                            <button type="button" onClick={() => setAsignandoFecha(null)}>
-                              <X className="h-3 w-3 text-gray-400" />
-                            </button>
-                          </div>
-                        ) : item.fecha_calendario ? (
-                          <button
-                            type="button"
-                            onClick={() => { setAsignandoFecha(item.id); setFechaInput(item.fecha_calendario ?? '') }}
-                            className="text-[11px] text-blue-700 bg-blue-50 rounded px-2 py-0.5 hover:bg-blue-100 tabular-nums"
-                          >
-                            {new Date(item.fecha_calendario + 'T00:00:00').toLocaleDateString('es-ES', {
-                              day: '2-digit', month: 'short', year: 'numeric',
-                            })}
-                          </button>
-                        ) : (
-                          <span className="text-gray-300 text-xs">—</span>
-                        )}
-                      </td>
-
-                      {/* Acción */}
-                      <td className="px-3 py-3 text-center">
-                        {guardandoId === item.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 mx-auto" />
-                        ) : item.contenido_id ? (
-                          <Link
-                            href={`/contenidos/${item.contenido_id}`}
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            Ver pedido
-                          </Link>
-                        ) : item.estado_almacen === 'aprobado' ? (
-                          <button
-                            type="button"
-                            onClick={() => { setAsignandoFecha(item.id); setFechaInput('') }}
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1.5 rounded-lg transition-colors"
-                          >
-                            <Calendar className="h-3 w-3" />
-                            Asignar fecha
-                          </button>
-                        ) : item.estado_almacen === 'publicado' ? (
-                          <button
-                            type="button"
-                            onClick={() => handleCambiarEstado(item, 'update_needed')}
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-1.5 rounded-lg transition-colors"
-                          >
-                            Marcar actualiz.
-                          </button>
-                        ) : (
-                          <span className="text-gray-300 text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                              <ExternalLink className="h-3 w-3" />
+                              Ver pedido
+                            </Link>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -577,6 +653,9 @@ export default function AlmacenClient({ clientes }: Props) {
           <div className="flex items-center justify-between text-xs text-gray-500 px-1">
             <span>
               Mostrando {itemsMerged.length} de {total} artículos
+              {seleccionados.size > 0 && (
+                <span className="ml-2 font-semibold text-indigo-600">· {seleccionados.size} seleccionados</span>
+              )}
             </span>
             {total > itemsMerged.length && (
               <Button
@@ -592,6 +671,67 @@ export default function AlmacenClient({ clientes }: Props) {
             )}
           </div>
         </>
+      )}
+
+      {/* ── Barra de acciones masivas ────────────────────────── */}
+      {seleccionados.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+          <div className="flex items-center gap-3 bg-gray-900 text-white rounded-2xl px-5 py-3 shadow-xl">
+            <span className="text-sm font-semibold">
+              {seleccionados.size} artículo{seleccionados.size !== 1 ? 's' : ''} seleccionado{seleccionados.size !== 1 ? 's' : ''}
+            </span>
+
+            {/* Cambiar fase masivo */}
+            {accionMasiva === 'fase' ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-300">Mover a fase:</span>
+                {(['arranque', 'consolidacion', 'expansion'] as const).map((f) => {
+                  const cfg = FASE_CONFIG[f]
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      disabled={procesandoMasiva}
+                      onClick={() => aplicarCambioFaseMasivo(f)}
+                      className={cn(
+                        'text-xs font-semibold rounded-lg px-2.5 py-1.5 transition-colors',
+                        cfg.bg, cfg.text,
+                        procesandoMasiva && 'opacity-50 cursor-not-allowed',
+                      )}
+                    >
+                      {procesandoMasiva ? <Loader2 className="h-3 w-3 animate-spin" /> : cfg.label}
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  onClick={() => setAccionMasiva(null)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setAccionMasiva('fase')}
+                  className="text-xs bg-white/10 hover:bg-white/20 rounded-lg px-3 py-1.5 font-medium transition-colors"
+                >
+                  Cambiar fase ▾
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeleccionados(new Set())}
+                  className="text-gray-400 hover:text-white"
+                  title="Cancelar selección"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

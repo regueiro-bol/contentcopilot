@@ -10,17 +10,19 @@ import {
   AlertCircle,
   ExternalLink,
   Layers,
-  ChevronLeft,
   ChevronDown,
   ChevronRight,
   TrendingUp,
-  Calendar,
   Plus,
   Search,
   Check,
   X,
   Minus,
   Filter,
+  Rocket,
+  BarChart2,
+  Globe,
+  User,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -85,6 +87,25 @@ const FUNNEL_STYLE = {
   tofu: { bg: 'bg-green-100',  text: 'text-green-700',  border: 'border-green-200', label: 'TOFU'  },
   mofu: { bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-200', label: 'MOFU'  },
   bofu: { bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-200',   label: 'BOFU'  },
+}
+
+const FASE_CONFIG = {
+  arranque    : { label: 'Arranque',     bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-200',    headerBg: 'bg-red-50',    icon: Rocket,   desc: 'BOFU de alta prioridad — publicar primero'   },
+  consolidacion: { label: 'Consolidación', bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-200',  headerBg: 'bg-amber-50',  icon: BarChart2,desc: 'MOFU que amplía el territorio semántico'       },
+  expansion   : { label: 'Expansión',    bg: 'bg-green-100',  text: 'text-green-700',  border: 'border-green-200',  headerBg: 'bg-green-50',  icon: Globe,    desc: 'TOFU de largo alcance — construcción de audiencia' },
+  sin_fase    : { label: 'Sin fase',     bg: 'bg-gray-100',   text: 'text-gray-500',   border: 'border-gray-200',   headerBg: 'bg-gray-50',   icon: Map,      desc: 'Artículos pendientes de clasificar'           },
+} as const
+
+const FASE_ORDER = ['arranque', 'consolidacion', 'expansion', 'sin_fase'] as const
+
+function FaseBadge({ fase }: { fase: string | null }) {
+  const key = (fase ?? 'sin_fase') as keyof typeof FASE_CONFIG
+  const cfg = FASE_CONFIG[key] ?? FASE_CONFIG.sin_fase
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${cfg.bg} ${cfg.text}`}>
+      {cfg.label}
+    </span>
+  )
 }
 
 const PRIORITY_STYLE: Record<number, { label: string; cls: string }> = {
@@ -213,9 +234,9 @@ function formatMonth(ym: string): string {
 // ─────────────────────────────────────────────────────────────
 
 function exportarCSV(items: MapItem[]) {
-  const HEADERS = ['Mes', 'Título', 'Keyword principal', 'Cluster', 'Funnel', 'Volumen', 'Dificultad', 'Prioridad', 'Slug']
+  const HEADERS = ['Fase', 'Título', 'Keyword principal', 'Cluster', 'Funnel', 'Volumen', 'Dificultad', 'Prioridad', 'Asignado a', 'Slug']
   const rows = items.map((i) => [
-    i.suggested_month ?? '',
+    FASE_CONFIG[(i.fase ?? 'sin_fase') as keyof typeof FASE_CONFIG]?.label ?? (i.suggested_month ?? ''),
     i.title,
     i.main_keyword,
     i.cluster ?? '',
@@ -223,6 +244,7 @@ function exportarCSV(items: MapItem[]) {
     i.volume ?? '',
     i.difficulty ?? '',
     i.priority === 1 ? 'Alta' : i.priority === 3 ? 'Baja' : 'Media',
+    i.redactor_asignado ?? '',
     i.slug,
   ])
   const csv = [HEADERS, ...rows]
@@ -403,8 +425,8 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
     }
   }
 
-  // ── Estado: colapso de secciones de mes ───────────────────
-  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set<string>())
+  // ── Estado: colapso de secciones de fase ──────────────────
+  const [collapsedFases, setCollapsedFases] = useState<Set<string>>(new Set<string>())
 
   // ── Items con overrides optimistas aplicados ──────────────
   const itemsMerged: MapItem[] = useMemo(
@@ -425,15 +447,19 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
     })
   }, [itemsMerged, filtroTipo, filtroValidacion, filtroPrioridad, filtroPedido, pedidosCreados])
 
-  // ── Agrupar por mes ────────────────────────────────────────
-  const monthGroups: [string, MapItem[]][] = useMemo(() => {
+  // ── Agrupar por fase ───────────────────────────────────────
+  const faseGroups: [string, MapItem[]][] = useMemo(() => {
     const groupMap: Record<string, MapItem[]> = {}
     for (const item of filteredItems) {
-      const key = item.suggested_month ?? 'Sin mes'
+      const key = item.fase ?? (item.suggested_month ? 'sin_fase' : 'sin_fase')
       if (!groupMap[key]) groupMap[key] = []
       groupMap[key].push(item)
     }
-    return Object.entries(groupMap).sort(([a], [b]) => a.localeCompare(b))
+    return Object.entries(groupMap).sort(([a], [b]) => {
+      const ai = FASE_ORDER.indexOf(a as typeof FASE_ORDER[number])
+      const bi = FASE_ORDER.indexOf(b as typeof FASE_ORDER[number])
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+    })
   }, [filteredItems])
 
   // ── Gap summary derivado de los datos (persistente) ───────
@@ -537,11 +563,11 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
     }
   }
 
-  function toggleMonth(mes: string) {
-    setCollapsedMonths((prev) => {
+  function toggleFase(fase: string) {
+    setCollapsedFases((prev) => {
       const next = new Set(prev)
-      if (next.has(mes)) next.delete(mes)
-      else next.add(mes)
+      if (next.has(fase)) next.delete(fase)
+      else next.add(fase)
       return next
     })
   }
@@ -1027,42 +1053,47 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
         </Card>
       )}
 
-      {/* Artículos agrupados por mes */}
-      {monthGroups.length > 0 && (
+      {/* Artículos agrupados por fase */}
+      {faseGroups.length > 0 && (
         <div className="space-y-4">
-          {monthGroups.map(([mes, monthItems]: [string, MapItem[]]) => {
-            const collapsed = collapsedMonths.has(mes)
+          {faseGroups.map(([fase, faseItems]: [string, MapItem[]]) => {
+            const collapsed = collapsedFases.has(fase)
+            const faseCfg   = FASE_CONFIG[(fase as keyof typeof FASE_CONFIG)] ?? FASE_CONFIG.sin_fase
+            const FaseIcon  = faseCfg.icon
             return (
-              <div key={mes} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                {/* Header del mes */}
+              <div key={fase} className={`rounded-xl border ${faseCfg.border} bg-white overflow-hidden`}>
+                {/* Header de fase */}
                 <button
                   type="button"
-                  onClick={() => toggleMonth(mes)}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                  onClick={() => toggleFase(fase)}
+                  className={`w-full flex items-center justify-between px-4 py-3 ${faseCfg.headerBg} hover:opacity-90 transition-colors`}
                 >
                   <div className="flex items-center gap-3">
-                    <Calendar className="h-4 w-4 text-gray-400 shrink-0" />
-                    <span className="text-sm font-semibold text-gray-800">
-                      {mes === 'Sin mes' ? 'Sin mes asignado' : formatMonth(mes)}
+                    <FaseIcon className={`h-4 w-4 shrink-0 ${faseCfg.text}`} />
+                    <span className={`text-sm font-semibold ${faseCfg.text}`}>
+                      {faseCfg.label}
                     </span>
                     <span className="text-xs text-gray-500">
-                      {monthItems.length} artículo{monthItems.length !== 1 ? 's' : ''}
+                      {faseItems.length} artículo{faseItems.length !== 1 ? 's' : ''}
+                    </span>
+                    <span className={`hidden sm:inline text-[10px] ${faseCfg.text} opacity-70`}>
+                      {faseCfg.desc}
                     </span>
                     {/* Mini funnel stats */}
                     <div className="hidden sm:flex items-center gap-1.5">
-                      {monthItems.filter((i: MapItem) => i.funnel_stage === 'tofu').length > 0 && (
+                      {faseItems.filter((i: MapItem) => i.funnel_stage === 'tofu').length > 0 && (
                         <span className="text-[10px] font-semibold text-green-600 bg-green-50 rounded px-1.5 py-0.5">
-                          {monthItems.filter((i: MapItem) => i.funnel_stage === 'tofu').length} TOFU
+                          {faseItems.filter((i: MapItem) => i.funnel_stage === 'tofu').length} TOFU
                         </span>
                       )}
-                      {monthItems.filter((i: MapItem) => i.funnel_stage === 'mofu').length > 0 && (
+                      {faseItems.filter((i: MapItem) => i.funnel_stage === 'mofu').length > 0 && (
                         <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
-                          {monthItems.filter((i: MapItem) => i.funnel_stage === 'mofu').length} MOFU
+                          {faseItems.filter((i: MapItem) => i.funnel_stage === 'mofu').length} MOFU
                         </span>
                       )}
-                      {monthItems.filter((i: MapItem) => i.funnel_stage === 'bofu').length > 0 && (
+                      {faseItems.filter((i: MapItem) => i.funnel_stage === 'bofu').length > 0 && (
                         <span className="text-[10px] font-semibold text-red-600 bg-red-50 rounded px-1.5 py-0.5">
-                          {monthItems.filter((i: MapItem) => i.funnel_stage === 'bofu').length} BOFU
+                          {faseItems.filter((i: MapItem) => i.funnel_stage === 'bofu').length} BOFU
                         </span>
                       )}
                     </div>
@@ -1088,12 +1119,13 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Dificultad</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Prioridad</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Tipo</th>
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden lg:table-cell">Asignado a</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden md:table-cell">Validación</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">Acción</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {monthItems.map((item: MapItem, idx: number) => (
+                        {faseItems.map((item: MapItem, idx: number) => (
                           <tr key={item.id} className="hover:bg-gray-50/60 transition-colors">
                             <td className="px-4 py-3 text-xs text-gray-400 tabular-nums">{idx + 1}</td>
                             <td className="px-3 py-3 max-w-[280px]">
@@ -1146,6 +1178,16 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                             </td>
                             <td className="px-3 py-3 text-center hidden sm:table-cell">
                               <TipoArticuloBadge tipo={item.tipo_articulo} />
+                            </td>
+                            <td className="px-3 py-3 hidden lg:table-cell">
+                              {item.redactor_asignado ? (
+                                <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                                  <User className="h-3 w-3 text-gray-400" />
+                                  {item.redactor_asignado}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-gray-300">Sin asignar</span>
+                              )}
                             </td>
                             <td className="px-3 py-3 text-center hidden md:table-cell">
                               {rechazoPendienteId === item.id ? (

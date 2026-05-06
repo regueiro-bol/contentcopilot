@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import AlmacenClient from './almacen-client'
+import BancoClient from './almacen-client'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +20,7 @@ export default async function AlmacenPage() {
 
   return (
     <div className="space-y-4 max-w-7xl">
-      <AlmacenClient clientes={clientes} />
+      <BancoClient clientes={clientes} />
     </div>
   )
 }
