@@ -11,7 +11,7 @@ import { getAuthUrl } from '@/lib/google-api'
  *   - hint: email para pre-seleccionar la cuenta Google
  */
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     redirect('/sign-in')
   }

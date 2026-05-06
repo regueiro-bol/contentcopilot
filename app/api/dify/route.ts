@@ -56,7 +56,7 @@ function resolverApiKey(appId?: string): string {
  *   { answer, respuesta, conversacion_id, mensaje_id, metadatos }
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }
@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
  * Obtiene el historial de conversaciones de un agente
  */
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }

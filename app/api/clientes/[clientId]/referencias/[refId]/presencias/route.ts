@@ -11,7 +11,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: { clientId: string; refId: string } },
 ) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: Record<string, unknown>
@@ -60,7 +60,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: { clientId: string; refId: string } },
 ) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const presenciaId = request.nextUrl.searchParams.get('id')

@@ -19,7 +19,7 @@ function firstOfMonth(input: string): string {
 // ─── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const { searchParams } = request.nextUrl
@@ -80,7 +80,7 @@ interface MetricsPayload {
 }
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: MetricsPayload

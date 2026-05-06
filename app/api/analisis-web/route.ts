@@ -343,7 +343,7 @@ Reglas:
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: {
@@ -503,7 +503,7 @@ export async function POST(request: NextRequest) {
 // ─── GET handler ──────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const clienteId = new URL(request.url).searchParams.get('cliente_id')

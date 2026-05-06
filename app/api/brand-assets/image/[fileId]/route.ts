@@ -31,7 +31,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: { fileId: string } },
 ) {
-  const { userId } = await auth()
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
   if (!userId) {
     return new NextResponse('No autorizado', { status: 401 })
   }
