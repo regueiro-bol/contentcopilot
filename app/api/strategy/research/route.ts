@@ -20,6 +20,40 @@ import {
 
 export const maxDuration = 120
 
+// ─── Normalización de seeds ───────────────────────────────────────────────────
+// DataForSEO keyword_ideas espera keywords cortas (1-5 palabras).
+// Seeds del formulario pueden ser frases largas tipo
+// "Testimonios y casos reales de familias que han usado vuestros servicios"
+// que provocan timeouts de 50s+ y errores 500.
+// Esta función las convierte en keywords accionables.
+
+const STOPWORDS = new Set([
+  'para', 'como', 'con', 'una', 'uno', 'unos', 'unas', 'los', 'las', 'del',
+  'que', 'por', 'sus', 'nuestros', 'nuestras', 'vuestros', 'vuestras', 'han',
+  'sido', 'esta', 'este', 'estos', 'estas', 'son', 'ser', 'hay', 'tiene',
+  'tienen', 'todo', 'todos', 'todas', 'sobre', 'entre', 'desde', 'hasta',
+  'cuando', 'donde', 'quien', 'cual', 'cuyo', 'cuya', 'muy', 'mas', 'pero',
+  'sin', 'cada', 'otro', 'otros', 'otra', 'otras',
+])
+
+function normalizeSeed(seed: string): string {
+  const words = seed
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar tildes para filtro
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !STOPWORDS.has(w))
+    .slice(0, 4)
+
+  // Reconstruir con la forma original (con tildes) usando las mismas posiciones
+  const originalWords = seed.toLowerCase().replace(/[^\w\sáéíóúñü]/g, ' ').split(/\s+/)
+  const originalFiltered = originalWords
+    .filter((w) => w.length > 3 && !STOPWORDS.has(w.normalize('NFD').replace(/[\u0300-\u036f]/g, '')))
+    .slice(0, 4)
+
+  return originalFiltered.join(' ').trim()
+}
+
 /**
  * POST /api/strategy/research
  *
@@ -79,14 +113,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Se necesita al menos una keyword semilla' }, { status: 400 })
     }
 
+    // Seeds originales → normalizar → deduplicar → limitar
     const seedsLimpios: string[] = seeds
       .map((s: string) => s.trim())
       .filter((s: string) => s.length > 0)
-      .slice(0, 200) // límite DataForSEO
+      .map(normalizeSeed)
+      .filter((s) => s.length > 3)
+      .filter((s, i, arr) => arr.indexOf(s) === i) // deduplicar
+      .slice(0, 50) // límite razonable para DataForSEO
 
     console.log('[Research] Seeds recibidos:', JSON.stringify(seeds))
     console.log('[Research] Cliente:', cliente_id)
-    console.log('[Research] Seeds limpios:', JSON.stringify(seedsLimpios))
+    console.log('[Research] Seeds normalizados:', JSON.stringify(seedsLimpios))
 
     // ── 1. Crear sesión ────────────────────────────────────────────────────
     console.log(`[Research] Creando sesión para cliente ${cliente_id} con ${seedsLimpios.length} seeds`)
@@ -148,24 +186,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── 2. Keyword Ideas (con reintentos) ──────────────────────────────────
-    console.log('[Research] Llamando a keyword_ideas...')
+    // ── 2. Keyword Ideas en lotes paralelos ───────────────────────────────
+    // DataForSEO keyword_ideas tarda 50s+ con 27 seeds. Dividimos en lotes
+    // de máx. 10 seeds y los lanzamos en paralelo para reducir latencia.
+    const BATCH_SIZE = 10
+    console.log(`[Research] Llamando a keyword_ideas en lotes de ${BATCH_SIZE}...`)
     let ideas: KeywordIdeaItem[] = []
     try {
-      ideas = await callWithRetry(() => getKeywordIdeas(seedsLimpios))
-      console.log(`[Research] keyword_ideas OK — ${ideas.length} resultados`)
+      const batches: string[][] = []
+      for (let i = 0; i < seedsLimpios.length; i += BATCH_SIZE) {
+        batches.push(seedsLimpios.slice(i, i + BATCH_SIZE))
+      }
+      console.log(`[Research] ${batches.length} lote(s) para ${seedsLimpios.length} seeds`)
+
+      const batchResults = await Promise.all(
+        batches.map((batch) => callWithRetry(() => getKeywordIdeas(batch)))
+      )
+
+      // Combinar y deduplicar por keyword
+      const seen = new Set<string>()
+      for (const batch of batchResults) {
+        for (const item of batch) {
+          const key = item.keyword.toLowerCase().trim()
+          if (!seen.has(key)) { seen.add(key); ideas.push(item) }
+        }
+      }
+
+      console.log(`[Research] keyword_ideas OK — ${ideas.length} resultados de ${batches.length} lote(s)`)
       guardarRegistroCoste({
         cliente_id    : cliente_id,
         proyecto_id   : sessionId,
         tipo_operacion: 'dataforseo_keywords',
         agente        : 'strategy-research',
-        unidades      : 1,
-        coste_usd     : PRECIOS.dataforseo_ideas,
-        metadatos     : { session_id: sessionId, seeds_count: seedsLimpios.length, results_count: ideas.length },
+        unidades      : batches.length, // un crédito por lote
+        coste_usd     : PRECIOS.dataforseo_ideas * batches.length,
+        metadatos     : { session_id: sessionId, seeds_count: seedsLimpios.length, batches: batches.length, results_count: ideas.length },
       }).catch(console.error)
     } catch (e) {
-      console.error('[Research] keyword_ideas falló tras reintentos — usando solo search_volume:', e instanceof DataForSEOError ? e.message : e)
-      // FIX 2: fallback a search_volume — ideas queda vacío, continuamos
+      console.error('[Research] keyword_ideas falló — usando solo search_volume:', e instanceof DataForSEOError ? e.message : e)
+      // Fallback: ideas queda vacío, continuamos con search_volume
     }
 
     // ── 3. Search Volume para seeds originales ─────────────────────────────
