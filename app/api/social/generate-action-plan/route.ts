@@ -154,6 +154,13 @@ El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se 
     if (content.type !== 'text') throw new Error('Respuesta inesperada de Claude')
     const text = content.text.trim()
 
+    console.log('=== RESPUESTA CLAUDE COMPLETA ===')
+    console.log(text)
+    console.log('=== FIN RESPUESTA ===')
+    console.log('BLOQUE 1:', extractBlock(text, 1).substring(0, 100))
+    console.log('BLOQUE 2:', extractBlock(text, 2).substring(0, 100))
+    console.log('BLOQUE 3:', extractBlock(text, 3).substring(0, 100))
+
     const result = {
       roadmap      : extractBlock(text, 1),
       first90Days  : extractBlock(text, 2),
