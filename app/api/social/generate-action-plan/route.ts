@@ -132,13 +132,13 @@ Semana a semana para Horizonte 1, bloque a bloque para Horizonte 2. Para cada pe
 BLOQUE 3 — EQUIPO Y RECURSOS
 Roles necesarios con dedicacion mensual estimada. Stack tecnologico con coste orientativo. Modelo de coordinacion entre equipo y cliente.
 
-IMPORTANTE: Usa estos encabezados exactamente como aparecen arriba. No uses --- como separador entre secciones. No uses asteriscos ni almohadillas en los encabezados. Escribe aproximadamente 200 palabras por bloque.`
+IMPORTANTE: Usa estos encabezados exactamente como aparecen arriba. No uses --- como separador entre secciones. No uses asteriscos ni almohadillas en los encabezados. Cada bloque maximo 300 palabras. Se concreto y accionable. Prioriza acciones especificas sobre descripciones generales.`
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
-      max_tokens: 1500,
+      max_tokens: 2500,
       system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
 Cliente: ${c.nombre}
@@ -153,13 +153,6 @@ El plan debe ser ambicioso pero ejecutable. Mejor un plan de 80 acciones que se 
     const content = response.content[0]
     if (content.type !== 'text') throw new Error('Respuesta inesperada de Claude')
     const text = content.text.trim()
-
-    console.log('=== RESPUESTA CLAUDE COMPLETA ===')
-    console.log(text)
-    console.log('=== FIN RESPUESTA ===')
-    console.log('BLOQUE 1:', extractBlock(text, 1).substring(0, 100))
-    console.log('BLOQUE 2:', extractBlock(text, 2).substring(0, 100))
-    console.log('BLOQUE 3:', extractBlock(text, 3).substring(0, 100))
 
     const result = {
       roadmap      : extractBlock(text, 1),
