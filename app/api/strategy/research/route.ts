@@ -43,16 +43,18 @@ export const maxDuration = 120
  * Response: { session_id: string, total_keywords: number, status: string }
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
-
+  // supabase declared outside try so the catch block can mark sessions as error
   const supabase = createAdminClient()
-
   let sessionId: string | null = null
 
   try {
+    // auth() inside try-catch: if Clerk throws (JWKS fetch failure, expired JWT, etc.)
+    // the error is caught and returned as JSON instead of Next.js plain-text "An error occurred"
+    const { userId } = await auth()
+    if (!userId) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+
     const body = await request.json()
     const {
       nombre        = '',
