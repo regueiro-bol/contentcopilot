@@ -79,6 +79,10 @@ export async function POST(request: NextRequest) {
       .filter((s: string) => s.length > 0)
       .slice(0, 200) // límite DataForSEO
 
+    console.log('[Research] Seeds recibidos:', JSON.stringify(seeds))
+    console.log('[Research] Cliente:', cliente_id)
+    console.log('[Research] Seeds limpios:', JSON.stringify(seedsLimpios))
+
     // ── 1. Crear sesión ────────────────────────────────────────────────────
     console.log(`[Research] Creando sesión para cliente ${cliente_id} con ${seedsLimpios.length} seeds`)
 

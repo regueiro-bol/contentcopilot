@@ -166,6 +166,9 @@ async function post<T>(
   endpoint : string,
   payload  : unknown[],
 ): Promise<DataForSEOResponse<T>> {
+  console.log('[DataForSEO] endpoint:', endpoint)
+  console.log('[DataForSEO] request body:', JSON.stringify(payload))
+
   const res = await fetch(`${BASE_URL}${endpoint}`, {
     method : 'POST',
     headers: {
@@ -175,11 +178,15 @@ async function post<T>(
     body: JSON.stringify(payload),
   })
 
+  console.log('[DataForSEO] response status:', res.status)
+
   if (!res.ok) {
     throw new DataForSEOError(res.status, `HTTP ${res.status}: ${res.statusText}`)
   }
 
   const data = await res.json() as DataForSEOResponse<T>
+
+  console.log('[DataForSEO] response body:', JSON.stringify(data).substring(0, 2000))
 
   if (data.status_code !== 20000) {
     throw new DataForSEOError(data.status_code, data.status_message, data.tasks_error)
