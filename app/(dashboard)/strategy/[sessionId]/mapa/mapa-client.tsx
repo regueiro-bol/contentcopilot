@@ -54,6 +54,29 @@ interface Props {
   items   : MapItem[]
 }
 
+interface SuggestResponse {
+  suggested: {
+    meses            : 3 | 6 | 9 | 12
+    articulos_por_mes: number
+    distribucion     : { tofu: number; mofu: number; bofu: number }
+  }
+  context: {
+    total_keywords    : number
+    total_clusters    : number
+    distribucion_actual: { tofu: number; mofu: number; bofu: number }
+    top_clusters      : Array<{ nombre: string; keywords: number; funnel: string; volume: number }>
+    cobertura_estimada: number
+  }
+  razonamiento: string
+}
+
+const FOCUS_PRESETS = {
+  balanced: { tofu: 40, mofu: 35, bofu: 25 },
+  tofu    : { tofu: 60, mofu: 25, bofu: 15 },
+  mofu    : { tofu: 25, mofu: 55, bofu: 20 },
+  bofu    : { tofu: 20, mofu: 30, bofu: 50 },
+} as const
+
 // ─────────────────────────────────────────────────────────────
 // Helpers de UI
 // ─────────────────────────────────────────────────────────────
@@ -224,11 +247,14 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   const router = useRouter()
 
   // ── Estado: generar nuevo mapa ─────────────────────────────
-  const [mostrarConfig, setMostrarConfig]   = useState(false)
-  const [meses, setMeses]                   = useState<3 | 6 | 9 | 12>(6)
-  const [artMes, setArtMes]                 = useState<4 | 6 | 8 | 10>(6)
-  const [generando, setGenerando]           = useState(false)
-  const [errorGen, setErrorGen]             = useState<string | null>(null)
+  const [mostrarConfig, setMostrarConfig]         = useState(false)
+  const [meses, setMeses]                         = useState<3 | 6 | 9 | 12>(6)
+  const [artMes, setArtMes]                       = useState(6)
+  const [distribucion, setDistribucion]           = useState({ tofu: 40, mofu: 35, bofu: 25 })
+  const [sugerencia, setSugerencia]               = useState<SuggestResponse | null>(null)
+  const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
+  const [generando, setGenerando]                 = useState(false)
+  const [errorGen, setErrorGen]                   = useState<string | null>(null)
 
   // ── Estado: crear pedidos desde mapa ───────────────────────
   // Tracks: map_item_id → contenido_id (cuando se crea exitosamente)
@@ -429,6 +455,56 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   const totalValidados     = itemsMerged.filter((i) => (i.validacion ?? 'propuesto') !== 'propuesto').length
   const totalConPedido     = itemsMerged.filter((i) => !!(pedidosCreados[i.id] ?? i.contenido_id)).length
 
+  // ── Acción: sugerir configuración ────────────────────────
+  async function fetchSugerencia() {
+    setCargandoSugerencia(true)
+    setSugerencia(null)
+    try {
+      const res = await fetch('/api/strategy/suggest-map-config', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ session_id: session.id }),
+      })
+      if (!res.ok) return
+      const data = await res.json() as SuggestResponse
+      setSugerencia(data)
+      // Auto-aplicar sugerencia
+      setMeses(data.suggested.meses)
+      setArtMes(data.suggested.articulos_por_mes)
+      setDistribucion(data.suggested.distribucion)
+    } catch (e) {
+      console.error('[SuggestConfig]', e)
+    } finally {
+      setCargandoSugerencia(false)
+    }
+  }
+
+  function aplicarSugerencia() {
+    if (!sugerencia) return
+    setMeses(sugerencia.suggested.meses)
+    setArtMes(sugerencia.suggested.articulos_por_mes)
+    setDistribucion(sugerencia.suggested.distribucion)
+  }
+
+  function handleDistChange(stage: 'tofu' | 'mofu' | 'bofu', rawValue: number) {
+    const newVal = Math.max(10, Math.min(80, rawValue))
+    const others = (['tofu', 'mofu', 'bofu'] as const).filter((s) => s !== stage)
+    const remaining    = 100 - newVal
+    const prevOtherSum = distribucion[others[0]] + distribucion[others[1]]
+    let new0 = prevOtherSum > 0
+      ? Math.max(10, Math.round((distribucion[others[0]] / prevOtherSum) * remaining))
+      : Math.max(10, Math.round(remaining / 2))
+    let new1 = remaining - new0
+    if (new1 < 10) { new1 = 10; new0 = remaining - new1 }
+    if (new0 < 10) return // no satisfacible, ignorar
+    setDistribucion((prev) => ({
+      ...prev,
+      [stage]    : newVal,
+      [others[0]]: new0,
+      [others[1]]: new1,
+    }))
+  }
+
   // ── Acción: generar mapa ───────────────────────────────────
   async function handleGenerarMapa() {
     setGenerando(true)
@@ -439,7 +515,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
           session_id: session.id,
-          config    : { meses, articulos_por_mes: artMes },
+          config    : { meses, articulos_por_mes: artMes, distribucion },
         }),
       })
       const data = await res.json()
@@ -575,7 +651,11 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setMostrarConfig(!mostrarConfig)}
+            onClick={() => {
+              const opening = !mostrarConfig
+              setMostrarConfig(opening)
+              if (opening) fetchSugerencia()
+            }}
             className="gap-2 text-violet-700 border-violet-200 hover:bg-violet-50"
           >
             <Map className="h-4 w-4" />
@@ -672,6 +752,8 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
       {mostrarConfig && (
         <Card className="border-violet-200 bg-violet-50/40">
           <CardContent className="p-5 space-y-4">
+
+            {/* Header */}
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                 <Map className="h-4 w-4 text-violet-600" />
@@ -686,6 +768,60 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               </button>
             </div>
 
+            {/* Análisis IA */}
+            {cargandoSugerencia && (
+              <div className="flex items-center gap-2 rounded-lg bg-violet-100 border border-violet-200 px-3 py-2.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-600 shrink-0" />
+                <span className="text-xs text-violet-700">Analizando tus keywords y clusters…</span>
+              </div>
+            )}
+
+            {sugerencia && !cargandoSugerencia && (
+              <div className="rounded-lg border border-violet-200 bg-white p-3 space-y-3">
+                {/* Stats de contexto */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-gray-50 px-2 py-2">
+                    <p className="text-base font-bold text-gray-900 tabular-nums">{sugerencia.context.total_clusters}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">clusters</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-50 px-2 py-2">
+                    <p className="text-base font-bold text-gray-900 tabular-nums">{sugerencia.context.total_keywords}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">keywords</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-50 px-2 py-2">
+                    <p className="text-base font-bold text-violet-700 tabular-nums">{sugerencia.context.cobertura_estimada}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">art. estimados</p>
+                  </div>
+                </div>
+
+                {/* Distribución actual del funnel */}
+                <div className="flex items-center gap-2">
+                  {([['tofu', 'bg-green-400'], ['mofu', 'bg-amber-400'], ['bofu', 'bg-red-400']] as const).map(([stage, color]) => (
+                    <div key={stage} className="flex items-center gap-1">
+                      <span className={`inline-block h-2 w-2 rounded-full ${color}`} />
+                      <span className="text-[10px] text-gray-500 uppercase font-medium">{stage}</span>
+                      <span className="text-[10px] font-bold text-gray-700">{sugerencia.context.distribucion_actual[stage]}%</span>
+                    </div>
+                  ))}
+                  <span className="text-[10px] text-gray-400 ml-auto">distribución actual</span>
+                </div>
+
+                {/* Recomendación */}
+                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2.5 space-y-2">
+                  <p className="text-[11px] font-semibold text-violet-700">✨ Sugerencia IA</p>
+                  <p className="text-[11px] text-violet-600 leading-relaxed">{sugerencia.razonamiento}</p>
+                  <button
+                    type="button"
+                    onClick={aplicarSugerencia}
+                    className="text-[11px] font-semibold text-violet-700 underline hover:text-violet-900 transition-colors"
+                  >
+                    Restaurar sugerencia →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Duración + Artículos / mes */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <p className="text-xs font-semibold text-gray-600">Duración del plan</p>
@@ -707,36 +843,116 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                   ))}
                 </div>
               </div>
+
               <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-gray-600">Artículos por mes</p>
-                <div className="flex gap-1.5">
-                  {([4, 6, 8, 10] as const).map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setArtMes(n)}
-                      className={cn(
-                        'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                        artMes === n
-                          ? 'bg-violet-600 text-white border-violet-600'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400',
-                      )}
-                    >
-                      {n}
-                    </button>
-                  ))}
+                <p className="text-xs font-semibold text-gray-600">
+                  Artículos / mes
+                  <span className="ml-1.5 font-bold text-violet-700">{artMes}</span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setArtMes((v) => Math.max(2, v - 1))}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:border-violet-400 hover:text-violet-600 text-xs font-bold transition-colors"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="range"
+                    min={2}
+                    max={15}
+                    step={1}
+                    value={artMes}
+                    onChange={(e) => setArtMes(Number(e.target.value))}
+                    className="flex-1 h-1.5 appearance-none rounded-full bg-gray-200 accent-violet-600 cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setArtMes((v) => Math.min(15, v + 1))}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:border-violet-400 hover:text-violet-600 text-xs font-bold transition-colors"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
             </div>
 
+            {/* Distribución por embudo */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-600">Distribución por embudo</p>
+                {/* Presets rápidos */}
+                <div className="flex gap-1">
+                  {(Object.entries(FOCUS_PRESETS) as [keyof typeof FOCUS_PRESETS, { tofu: number; mofu: number; bofu: number }][]).map(([key, preset]) => {
+                    const isActive =
+                      distribucion.tofu === preset.tofu &&
+                      distribucion.mofu === preset.mofu &&
+                      distribucion.bofu === preset.bofu
+                    const labels = { balanced: 'Equil.', tofu: '↑TOFU', mofu: '↑MOFU', bofu: '↑BOFU' }
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setDistribucion(preset)}
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[10px] font-semibold border transition-colors',
+                          isActive
+                            ? 'bg-violet-600 text-white border-violet-600'
+                            : 'bg-white text-gray-500 border-gray-200 hover:border-violet-400 hover:text-violet-600',
+                        )}
+                      >
+                        {labels[key]}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Sliders TOFU / MOFU / BOFU */}
+              {([
+                ['tofu', 'TOFU', 'text-green-700',  'accent-green-500' ],
+                ['mofu', 'MOFU', 'text-amber-700',  'accent-amber-500' ],
+                ['bofu', 'BOFU', 'text-red-700',    'accent-red-500'   ],
+              ] as const).map(([stage, label, textCls, accentCls]) => (
+                <div key={stage} className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold w-9 shrink-0 ${textCls}`}>{label}</span>
+                  <input
+                    type="range"
+                    min={10}
+                    max={80}
+                    step={5}
+                    value={distribucion[stage]}
+                    onChange={(e) => handleDistChange(stage, Number(e.target.value))}
+                    className={`flex-1 h-1.5 appearance-none rounded-full bg-gray-200 cursor-pointer ${accentCls}`}
+                  />
+                  <span className="text-[10px] font-bold text-gray-700 w-7 text-right tabular-nums shrink-0">
+                    {distribucion[stage]}%
+                  </span>
+                </div>
+              ))}
+
+              <p className="text-[10px] text-gray-400 text-right">
+                Suma: <span className={cn('font-bold', (distribucion.tofu + distribucion.mofu + distribucion.bofu) === 100 ? 'text-gray-500' : 'text-red-500')}>
+                  {distribucion.tofu + distribucion.mofu + distribucion.bofu}%
+                </span>
+              </p>
+            </div>
+
+            {/* Resumen del plan */}
             <p className="text-xs text-violet-700 font-medium bg-violet-100 rounded-lg px-3 py-2">
-              Plan: {meses} meses × {artMes} art/mes = hasta <strong>{meses * artMes} artículos</strong>
+              Plan: {meses} meses × {artMes} art/mes ={' '}
+              <strong>hasta {meses * artMes} artículos</strong>
+              {sugerencia && (
+                <span className="ml-1.5 text-violet-500 font-normal">
+                  ({((meses * artMes) / sugerencia.context.total_clusters).toFixed(1)} art/cluster)
+                </span>
+              )}
             </p>
 
             {generando && (
               <div className="flex items-center gap-2 text-sm text-violet-700">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Generando mapa con Claude... (30-60 segundos)
+                Generando mapa con Claude… (30-60 segundos)
               </div>
             )}
             {errorGen && (
@@ -753,7 +969,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               size="sm"
             >
               {generando
-                ? <><Loader2 className="h-4 w-4 animate-spin" />Generando...</>
+                ? <><Loader2 className="h-4 w-4 animate-spin" />Generando…</>
                 : <><TrendingUp className="h-4 w-4" />Generar mapa</>
               }
             </Button>
