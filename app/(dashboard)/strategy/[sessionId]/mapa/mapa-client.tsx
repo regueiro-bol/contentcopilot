@@ -251,8 +251,9 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   const [meses, setMeses]                         = useState<3 | 6 | 9 | 12>(6)
   const [artMes, setArtMes]                       = useState(6)
   const [distribucion, setDistribucion]           = useState({ tofu: 40, mofu: 35, bofu: 25 })
-  const [sugerencia, setSugerencia]               = useState<SuggestResponse | null>(null)
+  const [sugerencia, setSugerencia]                 = useState<SuggestResponse | null>(null)
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
+  const [errorSugerencia, setErrorSugerencia]       = useState(false)
   const [generando, setGenerando]                 = useState(false)
   const [errorGen, setErrorGen]                   = useState<string | null>(null)
 
@@ -459,13 +460,19 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   async function fetchSugerencia() {
     setCargandoSugerencia(true)
     setSugerencia(null)
+    setErrorSugerencia(false)
     try {
       const res = await fetch('/api/strategy/suggest-map-config', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({ session_id: session.id }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '(no body)')
+        console.error(`[SuggestConfig] HTTP ${res.status}:`, errBody)
+        setErrorSugerencia(true)
+        return
+      }
       const data = await res.json() as SuggestResponse
       setSugerencia(data)
       // Auto-aplicar sugerencia
@@ -474,6 +481,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
       setDistribucion(data.suggested.distribucion)
     } catch (e) {
       console.error('[SuggestConfig]', e)
+      setErrorSugerencia(true)
     } finally {
       setCargandoSugerencia(false)
     }
@@ -776,6 +784,19 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               </div>
             )}
 
+            {errorSugerencia && !cargandoSugerencia && (
+              <div className="flex items-center justify-between rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                <span className="text-xs text-amber-700">No se pudo cargar la sugerencia IA.</span>
+                <button
+                  type="button"
+                  onClick={fetchSugerencia}
+                  className="text-xs font-semibold text-amber-700 underline hover:text-amber-900"
+                >
+                  Reintentar
+                </button>
+              </div>
+            )}
+
             {sugerencia && !cargandoSugerencia && (
               <div className="rounded-lg border border-violet-200 bg-white p-3 space-y-3">
                 {/* Stats de contexto */}
@@ -995,7 +1016,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               </Button>
               <Button
                 size="sm"
-                onClick={() => setMostrarConfig(true)}
+                onClick={() => { setMostrarConfig(true); fetchSugerencia() }}
                 className="gap-2 bg-violet-600 hover:bg-violet-700"
               >
                 <Map className="h-4 w-4" />
