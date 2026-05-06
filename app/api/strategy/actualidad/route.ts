@@ -18,21 +18,28 @@ export const maxDuration = 60
 // ─────────────────────────────────────────────────────────────
 
 function buildSectorKeywords(sector: string | null, descripcion: string | null): string[] {
-  const parts: string[] = []
-  if (sector) parts.push(sector)
+  const genericSectors = ['otro', 'otros']
+
+  if (sector && !genericSectors.includes(sector.toLowerCase().trim())) {
+    // Sector específico: usarlo directamente como keyword de Google Trends.
+    // No añadir sufijos ("tendencias", "novedades") ni palabras del cliente —
+    // producen queries sin sentido para Trends (ej: "Otro tendencias").
+    return [sector]
+  }
+
+  // Sector genérico ("Otros") o nulo: extraer 1-2 palabras sustantivas
+  // de la descripción del cliente (sin el nombre propio del negocio).
   if (descripcion) {
-    // Extraer primeras 3-4 palabras clave de la descripcion
-    const words = descripcion.split(/\s+/).filter((w) => w.length > 3).slice(0, 4)
-    parts.push(...words)
+    const stopwords = new Set(['para', 'con', 'una', 'unos', 'unas', 'los', 'las', 'del', 'que', 'por', 'sus'])
+    const words = descripcion
+      .split(/\s+/)
+      .map((w) => w.replace(/[^a-záéíóúñA-ZÁÉÍÓÚÑ]/g, ''))
+      .filter((w) => w.length > 4 && !stopwords.has(w.toLowerCase()))
+      .slice(0, 2)
+    if (words.length > 0) return words
   }
-  // Generar 3-5 combinaciones
-  const keywords = [sector ?? 'formacion'].slice(0, 1)
-  if (sector) {
-    keywords.push(`${sector} tendencias`)
-    keywords.push(`${sector} novedades`)
-  }
-  if (parts.length > 1) keywords.push(parts.slice(0, 3).join(' '))
-  return keywords.filter(Boolean).slice(0, 5)
+
+  return ['marketing digital']
 }
 
 export async function POST(request: NextRequest) {
