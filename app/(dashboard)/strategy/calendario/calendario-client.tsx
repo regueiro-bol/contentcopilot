@@ -14,6 +14,7 @@ import {
   Archive,
   Zap,
   Pencil,
+  ArrowUpRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -50,6 +51,16 @@ const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 const DIAS  = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom']
 
+// mes es 1-based → trimestre 1-4
+function mesAQuarter(mes: number): number { return Math.ceil(mes / 3) }
+
+const QUARTER_MESES: Record<number, string> = {
+  1: 'Ene–Mar',
+  2: 'Abr–Jun',
+  3: 'Jul–Sep',
+  4: 'Oct–Dic',
+}
+
 const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
   planificado : { label: 'Planificado',   cls: 'bg-gray-100 text-gray-600'     },
   en_redaccion: { label: 'En redacción',  cls: 'bg-violet-100 text-violet-700' },
@@ -72,9 +83,13 @@ const FUNNEL_STYLE: Record<string, string> = {
 }
 
 function FuenteIcon({ fuente }: { fuente: string }) {
-  if (fuente === 'almacen')    return <Archive className="h-2.5 w-2.5 shrink-0" title="Almacén" />
-  if (fuente === 'actualidad') return <Zap     className="h-2.5 w-2.5 shrink-0" title="Actualidad" />
-  return <Pencil className="h-2.5 w-2.5 shrink-0" title="Manual" />
+  if (fuente === 'almacen')    return (
+    <span className="inline-flex items-center gap-0.5 rounded-full bg-indigo-100 text-indigo-600 px-1.5 py-0 text-[8px] font-bold shrink-0">
+      <Archive className="h-2 w-2" />Banco
+    </span>
+  )
+  if (fuente === 'actualidad') return <Zap    className="h-2.5 w-2.5 shrink-0 text-amber-500" aria-label="Actualidad" />
+  return <Pencil className="h-2.5 w-2.5 shrink-0 text-gray-400" aria-label="Manual" />
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -328,6 +343,14 @@ export default function CalendarioClient({ clientes }: Props) {
           >
             {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
+          <Link
+            href="/strategy/almacen"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 rounded-lg px-3 py-1.5 transition-colors"
+          >
+            <Archive className="h-3.5 w-3.5" />
+            Banco
+            <ArrowUpRight className="h-3 w-3" />
+          </Link>
           <Button size="sm" onClick={() => setModalOpen(true)} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
             Añadir artículo
@@ -342,9 +365,14 @@ export default function CalendarioClient({ clientes }: Props) {
           <button type="button" onClick={mesAnterior} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
             <ChevronLeft className="h-4 w-4 text-gray-600" />
           </button>
-          <h2 className="text-base font-semibold text-gray-900 min-w-[140px] text-center">
-            {MESES[mes - 1]} {anio}
-          </h2>
+          <div className="min-w-[160px] text-center">
+            <h2 className="text-base font-semibold text-gray-900">
+              {MESES[mes - 1]} {anio}
+            </h2>
+            <p className="text-[10px] text-indigo-500 font-semibold -mt-0.5">
+              Q{mesAQuarter(mes)} · {QUARTER_MESES[mesAQuarter(mes)]}
+            </p>
+          </div>
           <button type="button" onClick={mesSiguiente} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
             <ChevronRight className="h-4 w-4 text-gray-600" />
           </button>

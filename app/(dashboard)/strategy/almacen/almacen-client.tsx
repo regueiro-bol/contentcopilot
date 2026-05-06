@@ -17,6 +17,9 @@ import {
   CheckSquare,
   Square,
   Archive,
+  CalendarDays,
+  CalendarCheck2,
+  ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -49,6 +52,27 @@ interface BancoItem {
   notas            : string | null
   estado_almacen   : string
   sesion_nombre    : string
+}
+
+interface SuggestedItem {
+  id            : string
+  title         : string
+  main_keyword  : string
+  cluster       : string | null
+  funnel_stage  : string | null
+  fase          : string | null
+  prioridad_final: number | null
+  volume        : number | null
+  tipo_articulo : string | null
+  assignee_name : string | null
+  month_number  : number   // 1-3 dentro del trimestre
+  scheduled_date: string   // YYYY-MM-DD
+}
+
+interface QuarterSummary {
+  month_number: number
+  label       : string
+  count       : number
 }
 
 interface Props {
@@ -129,6 +153,31 @@ function FaseBadge({ fase }: { fase: string | null }) {
   )
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getDefaultQuarter(): 1 | 2 | 3 | 4 {
+  const m = new Date().getMonth() + 1  // 1-12
+  if (m <= 3)  return 2
+  if (m <= 6)  return 3
+  if (m <= 9)  return 4
+  return 1
+}
+
+function getDefaultYear(): number {
+  const m = new Date().getMonth() + 1
+  return m >= 10 ? new Date().getFullYear() + 1 : new Date().getFullYear()
+}
+
+const QUARTER_LABELS: Record<number, string> = {
+  1: 'Q1 (Ene–Mar)',
+  2: 'Q2 (Abr–Jun)',
+  3: 'Q3 (Jul–Sep)',
+  4: 'Q4 (Oct–Dic)',
+}
+
+const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                  'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function BancoClient({ clientes }: Props) {
@@ -160,6 +209,86 @@ export default function BancoClient({ clientes }: Props) {
   // Overrides optimistas
   const [localOverrides, setLocalOverrides]     = useState<Record<string, Partial<BancoItem>>>({})
   const [guardandoId, setGuardandoId]           = useState<string | null>(null)
+
+  // Planificador trimestral
+  const [planModal, setPlanModal]               = useState(false)
+  const [planQuarter, setPlanQuarter]           = useState<1|2|3|4>(getDefaultQuarter())
+  const [planYear, setPlanYear]                 = useState(getDefaultYear())
+  const [planArtMes, setPlanArtMes]             = useState(6)
+  const [planStep, setPlanStep]                 = useState<'config'|'review'|'done'>('config')
+  const [planItems, setPlanItems]               = useState<SuggestedItem[]>([])
+  const [planMonths, setPlanMonths]             = useState<QuarterSummary[]>([])
+  const [planAvailable, setPlanAvailable]       = useState(0)
+  const [planLoading, setPlanLoading]           = useState(false)
+  const [planError, setPlanError]               = useState<string|null>(null)
+  const [planSaving, setPlanSaving]             = useState(false)
+  const [planDone, setPlanDone]                 = useState<{quarter:string;created:number;start:string;end:string}|null>(null)
+
+  // ── Planificador trimestral: obtener sugerencia ──────────
+  async function fetchPlanSuggestion() {
+    if (!clienteId) return
+    setPlanLoading(true)
+    setPlanError(null)
+    try {
+      const res  = await fetch('/api/strategy/suggest-quarterly', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          clientId        : clienteId,
+          quarter         : planQuarter,
+          year            : planYear,
+          articlesPerMonth: planArtMes,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error obteniendo sugerencia')
+      setPlanItems(data.items)
+      setPlanMonths(data.months)
+      setPlanAvailable(data.total_available)
+      setPlanStep('review')
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : 'Error desconocido')
+    } finally {
+      setPlanLoading(false)
+    }
+  }
+
+  // ── Planificador trimestral: guardar plan ─────────────────
+  async function savePlan() {
+    if (!clienteId || planItems.length === 0) return
+    setPlanSaving(true)
+    setPlanError(null)
+    try {
+      const res  = await fetch('/api/strategy/create-quarterly-plan', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          clientId        : clienteId,
+          quarter         : planQuarter,
+          year            : planYear,
+          articlesPerMonth: planArtMes,
+          items           : planItems,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error guardando plan')
+      setPlanDone({ quarter: data.quarter, created: data.created, start: data.start_date, end: data.end_date })
+      setPlanStep('done')
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : 'Error desconocido')
+    } finally {
+      setPlanSaving(false)
+    }
+  }
+
+  function openPlanModal() {
+    setPlanStep('config')
+    setPlanItems([])
+    setPlanMonths([])
+    setPlanError(null)
+    setPlanDone(null)
+    setPlanModal(true)
+  }
 
   // ── Clusters únicos del cliente ──────────────────────────
   const clustersUnicos = useMemo(() => {
@@ -333,14 +462,13 @@ export default function BancoClient({ clientes }: Props) {
             <RefreshCw className={cn('h-3.5 w-3.5', cargando && 'animate-spin')} />
             Actualizar
           </Button>
-          {/* Planificar trimestre — Sprint 13B */}
           <Button
             variant="outline"
             size="sm"
-            disabled
-            className="gap-1.5 text-gray-400 border-dashed"
-            title="Disponible en Sprint 13B"
+            onClick={() => openPlanModal()}
+            className="gap-1.5 text-indigo-600 border-indigo-200 hover:bg-indigo-50"
           >
+            <CalendarDays className="h-3.5 w-3.5" />
             Planificar trimestre
           </Button>
         </div>
@@ -671,6 +799,228 @@ export default function BancoClient({ clientes }: Props) {
             )}
           </div>
         </>
+      )}
+
+      {/* ── Modal planificador trimestral ───────────────────── */}
+      {planModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setPlanModal(false) }}
+        >
+          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <CalendarCheck2 className="h-5 w-5 text-indigo-600" />
+                <h2 className="text-base font-bold text-gray-900">Planificar trimestre</h2>
+                {planStep !== 'config' && (
+                  <span className="text-xs text-gray-400">— {QUARTER_LABELS[planQuarter]} {planYear}</span>
+                )}
+              </div>
+              <button type="button" onClick={() => setPlanModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* ── Step 1: config ─────────────────────────────── */}
+            {planStep === 'config' && (
+              <div className="p-6 space-y-5">
+                <p className="text-sm text-gray-500">
+                  Selecciona el trimestre, el año y cuántos artículos publicar por mes.
+                  La IA elegirá los mejores artículos del banco y los distribuirá por semanas.
+                </p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Trimestre */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1.5">Trimestre</label>
+                    <select
+                      value={planQuarter}
+                      onChange={(e) => setPlanQuarter(Number(e.target.value) as 1|2|3|4)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none"
+                    >
+                      {([1,2,3,4] as const).map((q) => (
+                        <option key={q} value={q}>{QUARTER_LABELS[q]}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Año */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1.5">Año</label>
+                    <select
+                      value={planYear}
+                      onChange={(e) => setPlanYear(Number(e.target.value))}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none"
+                    >
+                      {[new Date().getFullYear(), new Date().getFullYear() + 1].map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Artículos por mes */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                    Artículos por mes: <span className="text-indigo-600 font-bold">{planArtMes}</span>
+                    <span className="ml-2 text-gray-400 font-normal">({planArtMes * 3} en total)</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={2}
+                    max={16}
+                    step={1}
+                    value={planArtMes}
+                    onChange={(e) => setPlanArtMes(Number(e.target.value))}
+                    className="w-full accent-indigo-600"
+                  />
+                  <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                    <span>2/mes</span>
+                    <span>16/mes</span>
+                  </div>
+                </div>
+
+                {planError && (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {planError}
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    onClick={fetchPlanSuggestion}
+                    disabled={planLoading || !clienteId}
+                    className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+                  >
+                    {planLoading
+                      ? <><Loader2 className="h-4 w-4 animate-spin" /> Calculando...</>
+                      : <>Ver sugerencia <ChevronRight className="h-4 w-4" /></>
+                    }
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 2: review ─────────────────────────────── */}
+            {planStep === 'review' && (
+              <div className="flex flex-col max-h-[70vh]">
+                {/* Resumen por mes */}
+                <div className="px-6 pt-5 pb-3 flex items-center gap-3 border-b border-gray-100">
+                  {planMonths.map((m) => (
+                    <div key={m.month_number} className="flex-1 text-center bg-indigo-50 rounded-xl py-2">
+                      <p className="text-xs text-indigo-400 font-semibold">{m.label}</p>
+                      <p className="text-xl font-bold text-indigo-700 tabular-nums">{m.count}</p>
+                      <p className="text-[10px] text-indigo-400">artículos</p>
+                    </div>
+                  ))}
+                  <div className="text-center px-3">
+                    <p className="text-[10px] text-gray-400">Disponibles</p>
+                    <p className="text-base font-bold text-gray-600 tabular-nums">{planAvailable}</p>
+                  </div>
+                </div>
+
+                {/* Lista de artículos agrupados por mes */}
+                <div className="overflow-y-auto flex-1 divide-y divide-gray-50">
+                  {planMonths.map((m) => {
+                    const monthItems = planItems.filter((i) => i.month_number === m.month_number)
+                    return (
+                      <div key={m.month_number}>
+                        <div className="px-6 py-2 bg-gray-50 flex items-center gap-2">
+                          <span className="text-xs font-bold text-gray-700">{m.label}</span>
+                          <span className="text-[10px] text-gray-400">{m.count} artículos</span>
+                        </div>
+                        {monthItems.map((item) => (
+                          <div key={item.id} className="flex items-center gap-3 px-6 py-2.5 hover:bg-gray-50/70">
+                            <FaseBadge fase={item.fase} />
+                            <p className="flex-1 text-xs text-gray-800 font-medium leading-snug line-clamp-1">{item.title}</p>
+                            <span className="text-[10px] text-gray-400 shrink-0">{item.main_keyword}</span>
+                            <input
+                              type="date"
+                              value={item.scheduled_date}
+                              onChange={(e) => {
+                                const newDate = e.target.value
+                                setPlanItems((prev) =>
+                                  prev.map((pi) => pi.id === item.id ? { ...pi, scheduled_date: newDate } : pi)
+                                )
+                              }}
+                              className="text-[10px] border border-gray-200 rounded px-1.5 py-0.5 text-gray-600 outline-none shrink-0"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setPlanStep('config'); setPlanError(null) }}
+                    className="text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    ← Volver
+                  </button>
+
+                  {planError && (
+                    <div className="flex-1 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-600">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      {planError}
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={savePlan}
+                    disabled={planSaving || planItems.length === 0}
+                    className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+                  >
+                    {planSaving
+                      ? <><Loader2 className="h-4 w-4 animate-spin" /> Guardando...</>
+                      : <><CalendarCheck2 className="h-4 w-4" /> Confirmar plan</>
+                    }
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 3: done ───────────────────────────────── */}
+            {planStep === 'done' && planDone && (
+              <div className="p-8 flex flex-col items-center text-center gap-4">
+                <div className="h-14 w-14 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <CalendarCheck2 className="h-7 w-7 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">¡Plan creado!</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {planDone.created} artículos programados para <strong>{planDone.quarter}</strong>
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Del {planDone.start} al {planDone.end}
+                  </p>
+                </div>
+                <div className="flex gap-3 mt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPlanModal(false)}
+                  >
+                    Cerrar
+                  </Button>
+                  <Link href="/strategy/calendario">
+                    <Button size="sm" className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
+                      <CalendarDays className="h-4 w-4" />
+                      Ver calendario
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
       )}
 
       {/* ── Barra de acciones masivas ────────────────────────── */}
