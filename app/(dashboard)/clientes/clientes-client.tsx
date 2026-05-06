@@ -23,9 +23,28 @@ import { crearCliente } from './actions'
 type ClienteConCount = Cliente & { num_proyectos: number }
 
 const SECTORES = [
-  'Tecnología', 'Tecnología SaaS', 'Moda y Retail', 'Salud', 'Educación', 'Turismo',
-  'Alimentación', 'Finanzas', 'Banca y Finanzas', 'Inmobiliaria', 'Energía',
-  'Healthtech / IA', 'Moda / Lifestyle', 'Otro',
+  'Alimentación y Restauración',
+  'Animales y Mascotas',
+  'Arte y Cultura',
+  'Automoción',
+  'Banca y Finanzas',
+  'Construcción y Reformas',
+  'Deporte y Fitness',
+  'Educación y Formación',
+  'Energía',
+  'Healthtech e IA Médica',
+  'Hostelería y Turismo',
+  'Industria y Manufactura',
+  'Inmobiliaria',
+  'Medios de Comunicación',
+  'Moda y Belleza',
+  'ONG y Tercer Sector',
+  'Retail y Comercio',
+  'Salud y Bienestar',
+  'Servicios Profesionales',
+  'Tecnología y Software',
+  'Veterinaria y Salud Animal',
+  'Otros',
 ]
 
 // ---------------------------------------------------------------------------
