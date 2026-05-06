@@ -24,9 +24,9 @@ function stripMarkdown(text: string): string {
   return text.replace(/\*\*/g, '').replace(/\*/g, '').replace(/#{1,6}\s/g, '').trim()
 }
 
-function stripData<T extends Record<string, unknown>>(obj: T): T {
+function stripData<T extends object>(obj: T): T {
   return Object.fromEntries(
-    Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
+    Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, typeof v === 'string' ? stripMarkdown(v) : v])
   ) as T
 }
 

@@ -118,8 +118,8 @@ export async function POST(request: NextRequest) {
       .map((s: string) => s.trim())
       .filter((s: string) => s.length > 0)
       .map(normalizeSeed)
-      .filter((s) => s.length > 3)
-      .filter((s, i, arr) => arr.indexOf(s) === i) // deduplicar
+      .filter((s: string) => s.length > 3)
+      .filter((s: string, i: number, arr: string[]) => arr.indexOf(s) === i) // deduplicar
       .slice(0, 50) // límite razonable para DataForSEO
 
     console.log('[Research] Seeds recibidos:', JSON.stringify(seeds))
@@ -168,11 +168,13 @@ export async function POST(request: NextRequest) {
     console.log(`[Research] Sesión creada: ${sessionId}`)
 
     // ── Helper: reintento automático ante errores 500 ─────────────────────
-    async function callWithRetry<T>(
+    // Declarado como const para evitar "Function declarations not allowed
+    // inside blocks in strict mode" (TS1252).
+    const callWithRetry = async <T>(
       fn      : () => Promise<T>,
       retries = 2,
       delay   = 2000,
-    ): Promise<T> {
+    ): Promise<T> => {
       try {
         return await fn()
       } catch (error) {
@@ -189,13 +191,13 @@ export async function POST(request: NextRequest) {
     // ── 2. Keyword Ideas en lotes paralelos ───────────────────────────────
     // DataForSEO keyword_ideas tarda 50s+ con 27 seeds. Dividimos en lotes
     // de máx. 10 seeds y los lanzamos en paralelo para reducir latencia.
-    const BATCH_SIZE = 10
-    console.log(`[Research] Llamando a keyword_ideas en lotes de ${BATCH_SIZE}...`)
+    const KEYWORD_BATCH_SIZE = 10
+    console.log(`[Research] Llamando a keyword_ideas en lotes de ${KEYWORD_BATCH_SIZE}...`)
     let ideas: KeywordIdeaItem[] = []
     try {
       const batches: string[][] = []
-      for (let i = 0; i < seedsLimpios.length; i += BATCH_SIZE) {
-        batches.push(seedsLimpios.slice(i, i + BATCH_SIZE))
+      for (let i = 0; i < seedsLimpios.length; i += KEYWORD_BATCH_SIZE) {
+        batches.push(seedsLimpios.slice(i, i + KEYWORD_BATCH_SIZE))
       }
       console.log(`[Research] ${batches.length} lote(s) para ${seedsLimpios.length} seeds`)
 
