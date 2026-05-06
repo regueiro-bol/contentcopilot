@@ -6,6 +6,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { PermissionGuard } from '@/components/PermissionGuard'
 import SocialPageClient from './social-page-client'
 
 export const dynamic = 'force-dynamic'
@@ -22,5 +23,9 @@ export default async function SocialPage() {
     .eq('activo', true)
     .order('nombre')
 
-  return <SocialPageClient clientes={clientes ?? []} />
+  return (
+    <PermissionGuard permission="module:social_media">
+      <SocialPageClient clientes={clientes ?? []} />
+    </PermissionGuard>
+  )
 }

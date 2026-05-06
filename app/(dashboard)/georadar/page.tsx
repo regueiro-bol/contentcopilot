@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { PermissionGuard } from '@/components/PermissionGuard';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -50,6 +51,7 @@ export default async function GeoRadarPage() {
   const sinConfigurar = clientesConEstado.filter(c => !c.config);
 
   return (
+    <PermissionGuard permission="module:georadar">
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-3 mb-6">
         <div className="p-2 bg-violet-100 rounded-lg">
@@ -146,5 +148,6 @@ export default async function GeoRadarPage() {
         </div>
       )}
     </div>
+    </PermissionGuard>
   );
 }

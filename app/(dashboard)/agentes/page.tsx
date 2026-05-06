@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
+import { PermissionGuard } from '@/components/PermissionGuard'
 import {
   FileText, PenTool, CheckSquare, User, BookOpen, Mic,
   Feather, Zap, Map, MessageSquare, X, Send, Loader2,
@@ -543,6 +544,7 @@ export default function AgentesPage() {
   ]
 
   return (
+    <PermissionGuard permission="module:agentes">
     <div className="space-y-7 max-w-6xl">
       {/* Cabecera */}
       <div className="flex items-start justify-between gap-4">
@@ -607,5 +609,6 @@ export default function AgentesPage() {
         />
       )}
     </div>
+    </PermissionGuard>
   )
 }

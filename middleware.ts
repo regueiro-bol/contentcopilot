@@ -11,9 +11,19 @@ const isProtectedRoute = createRouteMatcher([
   '/proyectos(.*)',
   '/copiloto(.*)',
   '/agentes(.*)',
+  '/strategy(.*)',
+  '/costes(.*)',
+  '/social(.*)',
+  '/design(.*)',
+  '/georadar(.*)',
+  '/ajustes(.*)',
+  '/contenidos(.*)',
+  '/inspiracion(.*)',
   '/api/claude(.*)',
   '/api/dify(.*)',
   '/api/pedidos(.*)',
+  '/api/team(.*)',
+  '/api/auth/my-permissions(.*)',
 ])
 
 /**

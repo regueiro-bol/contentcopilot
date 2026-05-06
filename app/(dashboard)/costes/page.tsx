@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { PermissionGuard } from '@/components/PermissionGuard'
 import CostesDashboard from './costes-dashboard'
 
 // ─── Tipos de datos pasados al cliente ───────────────────────────────────────
@@ -300,5 +301,9 @@ export default async function CostesPage({
     totalPaginas,
   }
 
-  return <CostesDashboard data={data} />
+  return (
+    <PermissionGuard permission="module:costes">
+      <CostesDashboard data={data} />
+    </PermissionGuard>
+  )
 }
