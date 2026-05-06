@@ -43,6 +43,9 @@ export const maxDuration = 120
  * Response: { session_id: string, total_keywords: number, status: string }
  */
 export async function POST(request: NextRequest) {
+  console.log('=== RESEARCH ROUTE HIT ===')
+  console.log('Headers:', Object.fromEntries(request.headers))
+
   // supabase declared outside try so the catch block can mark sessions as error
   const supabase = createAdminClient()
   let sessionId: string | null = null

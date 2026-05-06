@@ -278,7 +278,21 @@ export default function NuevaEstrategiaClient({
         }),
       })
 
-      const data = await res.json()
+      // Safe JSON parse — if the server returns non-JSON (Vercel timeout HTML,
+      // infrastructure error, etc.) avoid a misleading SyntaxError and show a
+      // clear message instead.
+      let data: { error?: string; session_id?: string; total_keywords?: number } = {}
+      const rawText = await res.text()
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        console.error('[Research] Respuesta no-JSON del servidor:', rawText.substring(0, 500))
+        throw new Error(
+          res.status === 504
+            ? 'La investigación tardó demasiado (timeout). Inténtalo de nuevo.'
+            : `Error del servidor (${res.status}). Inténtalo de nuevo.`
+        )
+      }
 
       if (!res.ok) {
         throw new Error(data.error ?? 'Error en la investigación')
