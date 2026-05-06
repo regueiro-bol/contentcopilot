@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { auth, clerkClient } from '@clerk/nextjs/server'
+import { auth, createClerkClient } from '@clerk/nextjs/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Enriquecer con datos de Clerk
-  const clerk = await clerkClient()
+  const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
   const members = await Promise.all(
     (roles ?? []).map(async (row) => {
       try {

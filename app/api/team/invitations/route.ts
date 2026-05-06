@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { auth, clerkClient } from '@clerk/nextjs/server'
+import { auth, createClerkClient } from '@clerk/nextjs/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
@@ -54,10 +54,10 @@ export async function DELETE(req: NextRequest) {
 
   if (inv?.clerk_invitation_id) {
     try {
-      const clerk = await clerkClient()
+      const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
       await clerk.invitations.revokeInvitation(inv.clerk_invitation_id)
-    } catch {
-      // Ignorar errores de Clerk (ya puede haber expirado)
+    } catch (e) {
+      console.warn('[invitations] No se pudo revocar en Clerk:', e instanceof Error ? e.message : e)
     }
   }
 
