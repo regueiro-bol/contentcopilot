@@ -124,13 +124,31 @@ export async function POST(request: NextRequest) {
     sessionId = session.id
     console.log(`[Research] Sesión creada: ${sessionId}`)
 
-    // ── 2. Keyword Ideas ───────────────────────────────────────────────────
+    // ── Helper: reintento automático ante errores 500 ─────────────────────
+    async function callWithRetry<T>(
+      fn      : () => Promise<T>,
+      retries = 2,
+      delay   = 2000,
+    ): Promise<T> {
+      try {
+        return await fn()
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        if (retries > 0 && msg.includes('500')) {
+          console.warn(`[Research] DataForSEO 500 — reintentando en ${delay}ms (quedan ${retries})`)
+          await new Promise((r) => setTimeout(r, delay))
+          return callWithRetry(fn, retries - 1, delay)
+        }
+        throw error
+      }
+    }
+
+    // ── 2. Keyword Ideas (con reintentos) ──────────────────────────────────
     console.log('[Research] Llamando a keyword_ideas...')
     let ideas: KeywordIdeaItem[] = []
     try {
-      ideas = await getKeywordIdeas(seedsLimpios)
+      ideas = await callWithRetry(() => getKeywordIdeas(seedsLimpios))
       console.log(`[Research] keyword_ideas OK — ${ideas.length} resultados`)
-      // Registrar coste DataForSEO keyword_ideas (fire-and-forget)
       guardarRegistroCoste({
         cliente_id    : cliente_id,
         proyecto_id   : sessionId,
@@ -141,8 +159,8 @@ export async function POST(request: NextRequest) {
         metadatos     : { session_id: sessionId, seeds_count: seedsLimpios.length, results_count: ideas.length },
       }).catch(console.error)
     } catch (e) {
-      console.error('[Research] Error en keyword_ideas:', e instanceof DataForSEOError ? e.message : e)
-      // Continuamos aunque falle — intentamos con search_volume
+      console.error('[Research] keyword_ideas falló tras reintentos — usando solo search_volume:', e instanceof DataForSEOError ? e.message : e)
+      // FIX 2: fallback a search_volume — ideas queda vacío, continuamos
     }
 
     // ── 3. Search Volume para seeds originales ─────────────────────────────
@@ -151,7 +169,6 @@ export async function POST(request: NextRequest) {
     try {
       volumes = await getSearchVolume(seedsLimpios)
       console.log(`[Research] search_volume OK — ${volumes.length} resultados`)
-      // Registrar coste DataForSEO search_volume (fire-and-forget)
       guardarRegistroCoste({
         cliente_id    : cliente_id,
         proyecto_id   : sessionId,
@@ -173,7 +190,7 @@ export async function POST(request: NextRequest) {
         .update({ status: 'error' })
         .eq('id', sessionId)
       return NextResponse.json(
-        { error: 'No se obtuvieron resultados de DataForSEO. Verifica las credenciales y los seeds.' },
+        { error: 'DataForSEO no está disponible en este momento. Inténtalo de nuevo en unos minutos.' },
         { status: 502 },
       )
     }
