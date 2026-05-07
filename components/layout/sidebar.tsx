@@ -21,6 +21,7 @@ import {
   CalendarDays,
   Share2,
   Palette,
+  Map,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -44,6 +45,7 @@ const navItems: NavItem[] = [
   { titulo: 'Clientes',           href: '/clientes',                  icono: Users,           permission: 'module:clientes'         },
   { titulo: 'Inspiracion',        href: '/inspiracion',               icono: Lightbulb,       permission: 'module:inspiracion'      },
   { titulo: 'Estrategia',         href: '/strategy',                  icono: TrendingUp,      permission: 'module:estrategia'       },
+  { titulo: 'Mapa',               href: '/mapa',                      icono: Map,             permission: 'module:mapa'             },
   { titulo: 'Banco de Contenidos',href: '/strategy/almacen',          icono: Archive,         permission: 'module:banco_contenidos' },
   { titulo: 'Calendario',         href: '/strategy/calendario',       icono: CalendarDays,    permission: 'module:calendario'       },
   { titulo: 'Social Media',       href: '/social',                    icono: Share2,          permission: 'module:social_media'     },

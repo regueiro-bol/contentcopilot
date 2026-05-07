@@ -155,18 +155,46 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json() as {
-      session_id: string
-      config    : { meses: number; articulos_por_mes: number; distribucion?: { tofu: number; mofu: number; bofu: number } }
+      session_id?      : string
+      client_id?       : string
+      total_articles?  : number
+      exclude_keywords?: string[]
+      config?          : { meses: number; articulos_por_mes: number; distribucion?: { tofu: number; mofu: number; bofu: number } }
     }
 
-    const { session_id, config } = body
+    let { session_id } = body
+    const { client_id: bodyClientId, total_articles, exclude_keywords } = body
+    const config       = body.config
     const meses        = Math.max(1, Math.min(24, config?.meses ?? 6))
     const artMes       = Math.max(2, Math.min(20, config?.articulos_por_mes ?? 6))
-    const totalMax     = meses * artMes
+    const totalMax     = total_articles
+      ? Math.max(1, Math.min(200, total_articles))
+      : meses * artMes
     const distribucion = config?.distribucion ?? { tofu: 40, mofu: 35, bofu: 25 }
 
+    // Si no viene session_id pero sí client_id → buscar la sesión más reciente completada
+    if (!session_id && bodyClientId) {
+      const { data: latestSession } = await supabase
+        .from('keyword_research_sessions')
+        .select('id')
+        .eq('client_id', bodyClientId)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (latestSession) {
+        session_id = latestSession.id
+      } else {
+        return NextResponse.json(
+          { error: 'No hay sesiones de keywords completadas para este cliente. Genera el mapa desde Estrategia.' },
+          { status: 404 },
+        )
+      }
+    }
+
     if (!session_id) {
-      return NextResponse.json({ error: 'session_id es obligatorio' }, { status: 400 })
+      return NextResponse.json({ error: 'session_id o client_id es obligatorio' }, { status: 400 })
     }
 
     // ── Cargar sesión + cliente ──────────────────────────────
@@ -214,9 +242,23 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ── Excluir keywords ya en el mapa (para "solicitar más") ──
+    const filteredKeywords = (exclude_keywords && exclude_keywords.length > 0)
+      ? keywords.filter((kw) => !exclude_keywords.some(
+          (ek) => ek.toLowerCase().trim() === String(kw.keyword).toLowerCase().trim(),
+        ))
+      : keywords
+
+    if (filteredKeywords.length === 0) {
+      return NextResponse.json(
+        { error: 'Todas las keywords ya están en el mapa. No hay nuevas keywords para generar.' },
+        { status: 400 },
+      )
+    }
+
     // ── Agrupar por cluster ──────────────────────────────────
-    const clusterGroups = new Map<string, typeof keywords>()
-    for (const kw of keywords) {
+    const clusterGroups = new Map<string, typeof filteredKeywords>()
+    for (const kw of filteredKeywords) {
       const name = kw.cluster_name as string
       if (!clusterGroups.has(name)) clusterGroups.set(name, [])
       clusterGroups.get(name)!.push(kw)

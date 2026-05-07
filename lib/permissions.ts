@@ -9,6 +9,7 @@ export const PERMISSIONS = {
   'module:clientes'        : ['admin', 'seo', 'redactor', 'consultor'],
   'module:inspiracion'     : ['admin', 'seo', 'consultor'],
   'module:estrategia'      : ['admin', 'seo', 'consultor'],
+  'module:mapa'            : ['admin', 'seo', 'consultor'],
   'module:banco_contenidos': ['admin', 'seo', 'redactor'],
   'module:calendario'      : ['admin', 'seo', 'redactor'],
   'module:contenidos'      : ['admin', 'seo', 'redactor'],

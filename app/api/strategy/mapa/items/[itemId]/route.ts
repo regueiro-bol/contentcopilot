@@ -38,6 +38,8 @@ export async function PATCH(
     p3_actualizacion? : boolean
     fecha_calendario? : string | null
     redactor_asignado?: string | null
+    validacion?       : string | null
+    motivo_rechazo?   : string | null
   }
   try {
     body = await request.json()
@@ -67,6 +69,11 @@ export async function PATCH(
   if ('p3_actualizacion' in body)  updatePayload.p3_actualizacion  = body.p3_actualizacion
   if ('fecha_calendario' in body)  updatePayload.fecha_calendario  = body.fecha_calendario
   if ('redactor_asignado' in body) updatePayload.redactor_asignado = body.redactor_asignado
+  if ('validacion' in body) {
+    updatePayload.validacion      = body.validacion
+    updatePayload.fecha_validacion = new Date().toISOString()
+  }
+  if ('motivo_rechazo' in body)    updatePayload.motivo_rechazo    = body.motivo_rechazo
 
   const { data: updated, error: updateError } = await supabase
     .from('content_map_items')
