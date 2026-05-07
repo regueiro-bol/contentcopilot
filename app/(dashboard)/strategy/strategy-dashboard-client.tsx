@@ -727,10 +727,17 @@ export default function StrategyDashboardClient({
             {!upcomingLoading && upcoming.length === 0 && (
               <div className="text-center py-6">
                 <p className="text-sm text-gray-400">No hay artículos programados esta semana.</p>
-                <Link href={`/strategy/almacen?cliente=${clienteId}`}
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800">
-                  Planificar trimestre <ChevronRight className="h-3 w-3" />
-                </Link>
+                <p className="text-xs text-gray-400 mt-0.5">Añade fechas desde el banco de contenidos.</p>
+                <div className="flex justify-center gap-3 mt-3">
+                  <Link href={`/strategy/calendario?cliente=${clienteId}`}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800">
+                    Ver calendario →
+                  </Link>
+                  <Link href={`/strategy/almacen?cliente=${clienteId}`}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800">
+                    Ir al banco de contenidos →
+                  </Link>
+                </div>
               </div>
             )}
             {!upcomingLoading && upcoming.length > 0 && (
