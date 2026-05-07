@@ -1,17 +1,18 @@
-import { createAdminClient } from '@/lib/supabase/admin'
-import BancoClient from './almacen-client'
+import { createAdminClient }  from '@/lib/supabase/admin'
+import { getAllowedClientIds } from '@/lib/server/allowed-clients'
+import BancoClient             from './almacen-client'
 
 export const dynamic = 'force-dynamic'
 
 export default async function AlmacenPage() {
   const supabase = createAdminClient()
+  const allowed  = await getAllowedClientIds()
 
-  // Clientes activos con al menos un content_map_item
-  const { data: clientesRaw } = await supabase
-    .from('clientes')
-    .select('id, nombre')
-    .eq('activo', true)
-    .order('nombre', { ascending: true })
+  // Clientes activos (filtrados por asignación si no es admin)
+  let q = supabase.from('clientes').select('id, nombre').eq('activo', true)
+  if (allowed !== null) q = q.in('id', allowed.length > 0 ? allowed : ['__none__'])
+
+  const { data: clientesRaw } = await q.order('nombre', { ascending: true })
 
   const clientes = (clientesRaw ?? []).map((c) => ({
     id    : String(c.id),

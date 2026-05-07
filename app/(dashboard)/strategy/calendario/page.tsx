@@ -1,16 +1,17 @@
-import { createAdminClient } from '@/lib/supabase/admin'
-import CalendarioClient from './calendario-client'
+import { createAdminClient }  from '@/lib/supabase/admin'
+import { getAllowedClientIds } from '@/lib/server/allowed-clients'
+import CalendarioClient        from './calendario-client'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CalendarioPage() {
   const supabase = createAdminClient()
+  const allowed  = await getAllowedClientIds()
 
-  const { data: clientesRaw } = await supabase
-    .from('clientes')
-    .select('id, nombre')
-    .eq('activo', true)
-    .order('nombre', { ascending: true })
+  let q = supabase.from('clientes').select('id, nombre').eq('activo', true)
+  if (allowed !== null) q = q.in('id', allowed.length > 0 ? allowed : ['__none__'])
+
+  const { data: clientesRaw } = await q.order('nombre', { ascending: true })
 
   const clientes = (clientesRaw ?? []).map((c) => ({
     id    : String(c.id),

@@ -24,6 +24,7 @@ const isProtectedRoute = createRouteMatcher([
   '/api/pedidos(.*)',
   '/api/team(.*)',
   '/api/auth/my-permissions(.*)',
+  '/api/auth/my-clients(.*)',
 ])
 
 /**

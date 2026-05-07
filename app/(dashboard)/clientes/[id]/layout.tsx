@@ -1,7 +1,8 @@
-import { createAdminClient } from '@/lib/supabase/admin'
-import { notFound } from 'next/navigation'
-import Link from 'next/link'
-import { ChevronRight } from 'lucide-react'
+import { createAdminClient }  from '@/lib/supabase/admin'
+import { getAllowedClientIds } from '@/lib/server/allowed-clients'
+import { notFound }            from 'next/navigation'
+import Link                    from 'next/link'
+import { ChevronRight }        from 'lucide-react'
 
 export default async function ClienteLayout({
   children,
@@ -11,6 +12,10 @@ export default async function ClienteLayout({
   params: { id: string }
 }) {
   const supabase = createAdminClient()
+
+  // Verificar acceso al cliente (no-admin solo ve los asignados)
+  const allowed = await getAllowedClientIds()
+  if (allowed !== null && !allowed.includes(params.id)) notFound()
 
   const { data: cliente, error } = await supabase
     .from('clientes')

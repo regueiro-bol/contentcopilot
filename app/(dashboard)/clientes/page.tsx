@@ -1,17 +1,21 @@
-import { createAdminClient } from '@/lib/supabase/admin'
-import ClientesPageClient from './clientes-client'
-import type { Cliente } from '@/types'
+import { createAdminClient }  from '@/lib/supabase/admin'
+import { getAllowedClientIds } from '@/lib/server/allowed-clients'
+import ClientesPageClient      from './clientes-client'
+import type { Cliente }        from '@/types'
+
+export const dynamic = 'force-dynamic'
 
 export default async function ClientesPage() {
   console.log('Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
   console.log('Service role key present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
 
   const supabase = createAdminClient()
+  const allowed  = await getAllowedClientIds()
 
-  const { data, error } = await supabase
-    .from('clientes')
-    .select('*, proyectos(count)')
-    .order('nombre')
+  let q = supabase.from('clientes').select('*, proyectos(count)')
+  if (allowed !== null) q = q.in('id', allowed.length > 0 ? allowed : ['__none__'])
+
+  const { data, error } = await q.order('nombre')
 
   console.log('Supabase response:', JSON.stringify(data))
   console.log('Supabase error:', JSON.stringify(error))

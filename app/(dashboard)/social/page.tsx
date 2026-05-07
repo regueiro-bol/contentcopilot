@@ -6,6 +6,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getAllowedClientIds } from '@/lib/server/allowed-clients'
 import { PermissionGuard } from '@/components/PermissionGuard'
 import SocialPageClient from './social-page-client'
 
@@ -16,12 +17,15 @@ export default async function SocialPage() {
   if (!userId) redirect('/sign-in')
 
   const supabase = createAdminClient()
+  const allowed  = await getAllowedClientIds()
 
-  const { data: clientes } = await supabase
+  let q = supabase
     .from('clientes')
     .select('id, nombre, sector')
     .eq('activo', true)
-    .order('nombre')
+  if (allowed !== null) q = q.in('id', allowed.length > 0 ? allowed : ['__none__'])
+
+  const { data: clientes } = await q.order('nombre')
 
   return (
     <PermissionGuard permission="module:social_media">

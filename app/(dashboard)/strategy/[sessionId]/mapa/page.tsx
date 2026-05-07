@@ -1,8 +1,9 @@
-import { notFound } from 'next/navigation'
-import Link from 'next/link'
-import { ChevronLeft } from 'lucide-react'
-import { createAdminClient } from '@/lib/supabase/admin'
-import MapaClient from './mapa-client'
+import { notFound }            from 'next/navigation'
+import Link                    from 'next/link'
+import { ChevronLeft }         from 'lucide-react'
+import { createAdminClient }   from '@/lib/supabase/admin'
+import { getAllowedClientIds }  from '@/lib/server/allowed-clients'
+import MapaClient              from './mapa-client'
 
 interface PageProps {
   params: { sessionId: string }
@@ -61,6 +62,12 @@ export default async function MapaPage({ params }: PageProps) {
     .order('created_at', { ascending: false })
     .limit(1)
     .single()
+
+  // ── Verificar acceso al cliente del mapa ──────────────────
+  if (map?.client_id) {
+    const allowed = await getAllowedClientIds()
+    if (allowed !== null && !allowed.includes(String(map.client_id))) notFound()
+  }
 
   // ── Cargar artículos del mapa (si existe) ──────────────────
   // Intentamos con los campos Sprint 2; si la migración 029 no está aplicada,

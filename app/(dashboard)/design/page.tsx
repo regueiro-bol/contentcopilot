@@ -1,16 +1,19 @@
-import { Suspense }        from 'react'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { PermissionGuard } from '@/components/PermissionGuard'
-import DesignPageClient      from './design-page-client'
+import { Suspense }           from 'react'
+import { createAdminClient }   from '@/lib/supabase/admin'
+import { getAllowedClientIds }  from '@/lib/server/allowed-clients'
+import { PermissionGuard }     from '@/components/PermissionGuard'
+import DesignPageClient         from './design-page-client'
 
 export const dynamic = 'force-dynamic'
 
 export default async function DesignPage() {
   const supabase = createAdminClient()
-  const { data: clientes } = await supabase
-    .from('clientes')
-    .select('id, nombre')
-    .order('nombre', { ascending: true })
+  const allowed  = await getAllowedClientIds()
+
+  let q = supabase.from('clientes').select('id, nombre')
+  if (allowed !== null) q = q.in('id', allowed.length > 0 ? allowed : ['__none__'])
+
+  const { data: clientes } = await q.order('nombre', { ascending: true })
 
   return (
     <PermissionGuard permission="module:panel_diseno">
