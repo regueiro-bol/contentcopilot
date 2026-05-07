@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { buildClientContext } from '@/lib/context/client-context'
+import { contextToPrompt } from '@/lib/context/context-to-prompt'
 
 export const maxDuration = 120
 
@@ -70,6 +72,7 @@ function buildMapPrompt(
   batchIndex  : number,
   totalBatches: number,
   articulosParaEsteBatch: number,
+  clientContextStr?: string,
 ): string {
   // Generar instrucción explícita por cluster
   const assignmentLines = clustersWithAssignment
@@ -83,7 +86,11 @@ function buildMapPrompt(
     2,
   )
 
-  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".
+  const contextBlock = clientContextStr
+    ? `\n\nCONTEXTO DEL CLIENTE:\n${clientContextStr}\n`
+    : ''
+
+  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".${contextBlock}
 
 Distribución objetivo del funnel: TOFU ${distribucion.tofu}% · MOFU ${distribucion.mofu}% · BOFU ${distribucion.bofu}%
 Ritmo estimado: ${artMes} artículos/mes
@@ -182,6 +189,14 @@ export async function POST(request: NextRequest) {
     if (!cliente) {
       return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
     }
+
+    // ── Build client context for prompt enrichment ───────────
+    const clientCtx = await buildClientContext(supabase, session.client_id, {
+      includeMapItems   : false,  // mapa aún no existe
+      includeInspiracion: true,
+      includeBrand      : true,
+    })
+    const clientContextStr = clientCtx ? contextToPrompt(clientCtx) : undefined
 
     // ── Cargar keywords clusterizadas ────────────────────────
     const { data: keywords, error: kwError } = await supabase
@@ -341,6 +356,7 @@ export async function POST(request: NextRequest) {
               batchIdx,
               clusterBatches.length,
               articulosParaBatch,
+              clientContextStr,
             ),
           }],
         })

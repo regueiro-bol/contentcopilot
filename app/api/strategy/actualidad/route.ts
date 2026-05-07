@@ -10,6 +10,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getTrendingKeywords } from '@/lib/dataforseo'
+import { buildClientContext } from '@/lib/context/client-context'
+import { contextToPrompt } from '@/lib/context/context-to-prompt'
 
 export const maxDuration = 60
 
@@ -56,14 +58,21 @@ export async function POST(request: NextRequest) {
 
   const supabase = createAdminClient()
 
-  // Cargar cliente
-  const { data: cliente } = await supabase
-    .from('clientes')
-    .select('id, nombre, sector, descripcion')
-    .eq('id', client_id)
-    .single()
+  // Cargar cliente con contexto completo
+  const clientCtx = await buildClientContext(supabase, client_id, {
+    includeMapItems   : false,
+    includeInspiracion: false,
+    includeBrand      : true,
+  })
 
-  if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+  if (!clientCtx) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+
+  // Alias para código legado que usa cliente.nombre/sector/descripcion
+  const cliente = {
+    nombre    : clientCtx.client.name,
+    sector    : clientCtx.client.sector,
+    descripcion: clientCtx.client.descripcion,
+  }
 
   // Verificar frescura
   if (!force) {
@@ -117,11 +126,11 @@ export async function POST(request: NextRequest) {
     return d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
   })
 
+  const clientContextStr = contextToPrompt(clientCtx)
+
   const prompt = `Eres un estratega de contenidos experto en el mercado espanol.
 
-CLIENTE: ${cliente.nombre}
-SECTOR: ${cliente.sector ?? 'No especificado'}
-DESCRIPCION: ${cliente.descripcion ?? 'No especificada'}
+${clientContextStr}
 MES ACTUAL: ${mesActual}
 PROXIMOS 3 MESES: ${meses3.join(', ')}
 

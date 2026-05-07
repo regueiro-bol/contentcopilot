@@ -10,6 +10,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { guardarRegistroCoste, calcularCosteClaudeUSD } from '@/lib/costes'
+import { buildClientContext } from '@/lib/context/client-context'
+import { contextToPrompt } from '@/lib/context/context-to-prompt'
 
 export const maxDuration = 60
 
@@ -34,20 +36,22 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = createAdminClient()
 
-    // Leer datos necesarios en paralelo
-    const [{ data: cliente }, { data: platforms }, { data: synthesis }] = await Promise.all([
-      supabase.from('clientes').select('nombre, sector, descripcion, identidad_corporativa').eq('id', clientId).single(),
-      supabase.from('social_platforms').select('platform, followers, posts_per_week, avg_engagement, score_brand_consistency, score_editorial_quality, score_activity, score_community, strategic_priority, strategic_conclusion').eq('client_id', clientId).order('platform'),
-      supabase.from('social_audit_synthesis').select('main_strengths, main_weaknesses').eq('client_id', clientId).maybeSingle(),
+    // Leer datos necesarios en paralelo (social data + client context)
+    const [[{ data: platforms }, { data: synthesis }], clientCtx] = await Promise.all([
+      Promise.all([
+        supabase.from('social_platforms').select('platform, followers, posts_per_week, avg_engagement, score_brand_consistency, score_editorial_quality, score_activity, score_community, strategic_priority, strategic_conclusion').eq('client_id', clientId).order('platform'),
+        supabase.from('social_audit_synthesis').select('main_strengths, main_weaknesses').eq('client_id', clientId).maybeSingle(),
+      ]),
+      buildClientContext(supabase, clientId, {
+        includeMapItems   : false,
+        includeInspiracion: false,
+        includeBrand      : true,
+      }),
     ])
 
-    if (!cliente) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+    if (!clientCtx) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
 
-    const clienteContext = [
-      cliente.sector             ? `Sector: ${cliente.sector}` : '',
-      (cliente as any).descripcion          ? `Contexto: ${String((cliente as any).descripcion).substring(0, 300)}` : '',
-      (cliente as any).identidad_corporativa ? `Identidad de marca: ${String((cliente as any).identidad_corporativa).substring(0, 300)}` : '',
-    ].filter(Boolean).join('\n')
+    const clienteContext = contextToPrompt(clientCtx)
 
     // Construir resumen de plataformas
     const platformsSummary = (platforms ?? []).map((p) => {
@@ -61,7 +65,7 @@ export async function POST(request: NextRequest) {
   Prioridad asignada: ${p.strategic_priority ?? 'sin asignar'}`
     }).join('\n\n')
 
-    const userPrompt = `CLIENTE: ${cliente.nombre}${cliente.sector ? ` (sector: ${cliente.sector})` : ''}
+    const userPrompt = `CLIENTE: ${clientCtx.client.name}${clientCtx.client.sector ? ` (sector: ${clientCtx.client.sector})` : ''}
 
 IMPORTANTE: Usa siempre los nombres propios de las plataformas (LinkedIn, Instagram, TikTok, Twitter/X, Facebook, YouTube) — nunca abreviaciones ni términos genéricos. Cuando menciones acciones o métricas, cita la plataforma por su nombre propio.
 
@@ -106,7 +110,6 @@ Responde SOLO con JSON sin markdown:
       max_tokens: 1500,
       system    : `Eres un consultor senior de social media y estrategia de contenidos digitales.
 
-Cliente: ${cliente.nombre}
 ${clienteContext}
 
 Tu trabajo es tomar los resultados de una auditoría de redes sociales y convertirlos en decisiones estratégicas claras y accionables, adaptadas específicamente al sector, audiencia y contexto de este cliente. Nunca uses enfoques genéricos.

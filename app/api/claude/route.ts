@@ -7,6 +7,9 @@ import {
   guardarRegistroCoste,
   type TipoOperacion,
 } from '@/lib/costes'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { buildClientContext } from '@/lib/context/client-context'
+import { contextToPrompt } from '@/lib/context/context-to-prompt'
 
 const MODELO_CLAUDE = 'claude-sonnet-4-5'
 
@@ -48,6 +51,7 @@ export async function POST(request: NextRequest) {
       sistema,
       max_tokens,
       proyecto_id,
+      client_id,
       // Trazabilidad de costes
       contenido_id,
       tipo_operacion,
@@ -84,6 +88,19 @@ export async function POST(request: NextRequest) {
         if (contextoRAG) {
           systemPrompt = `${baseSystem}\n\n${contextoRAG}`
         }
+      }
+    }
+
+    // ── Inyección contexto cliente ────────────────────────────────────────────
+    if (typeof client_id === 'string' && client_id.trim()) {
+      const supabase   = createAdminClient()
+      const clientCtx  = await buildClientContext(supabase, client_id.trim(), {
+        includeMapItems   : true,
+        includeInspiracion: true,
+        includeBrand      : true,
+      })
+      if (clientCtx) {
+        systemPrompt = `${systemPrompt}\n\n${contextToPrompt(clientCtx)}`
       }
     }
 
