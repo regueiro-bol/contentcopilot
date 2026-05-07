@@ -19,18 +19,27 @@ export default async function StrategyPage() {
     sector: (c.sector as string | null) ?? null,
   }))
 
-  // Sesiones — últimas 20, con keywords > 0 prioritarias
+  // Sesiones activas — últimas 20 no archivadas
   const { data: sesionesRaw } = await supabase
     .from('vista_strategy_sessions')
-    .select('id, client_id, client_nombre, nombre, status, created_at, total_keywords, num_clusters')
+    .select('id, client_id, client_nombre, nombre, status, created_at, total_keywords, num_clusters, archived')
+    .neq('archived', true)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  // Sesiones archivadas
+  const { data: sesionesArchivadasRaw } = await supabase
+    .from('vista_strategy_sessions')
+    .select('id, client_id, client_nombre, nombre, status, created_at, total_keywords, num_clusters, archived')
+    .eq('archived', true)
     .order('created_at', { ascending: false })
     .limit(20)
 
   // Filtrar solo las del usuario si tiene restricción de clientes
   const clienteIds = new Set(clientes.map((c) => c.id))
-  const sesiones = (sesionesRaw ?? [])
-    .filter((s) => allowed === null || clienteIds.has(String(s.client_id ?? '')))
-    .map((s) => ({
+
+  function mapSesion(s: typeof sesionesRaw extends (infer T)[] | null ? T : never) {
+    return {
       id            : String(s.id),
       client_id     : String(s.client_id ?? ''),
       client_nombre : String(s.client_nombre ?? '—'),
@@ -39,7 +48,17 @@ export default async function StrategyPage() {
       created_at    : String(s.created_at),
       total_keywords: Number(s.total_keywords ?? 0),
       num_clusters  : Number(s.num_clusters  ?? 0),
-    }))
+      archived      : Boolean(s.archived),
+    }
+  }
+
+  const sesiones = (sesionesRaw ?? [])
+    .filter((s) => allowed === null || clienteIds.has(String(s.client_id ?? '')))
+    .map(mapSesion)
+
+  const sesionesArchivadas = (sesionesArchivadasRaw ?? [])
+    .filter((s) => allowed === null || clienteIds.has(String(s.client_id ?? '')))
+    .map(mapSesion)
 
   // KPIs globales
   const [
@@ -78,6 +97,7 @@ export default async function StrategyPage() {
     <StrategyDashboardClient
       clientes={clientes}
       sesiones={sesiones}
+      sesionesArchivadas={sesionesArchivadas}
       totalSesiones={totalSesiones ?? 0}
       totalKeywords={totalKeywords ?? 0}
       totalMapas={totalMapas ?? 0}

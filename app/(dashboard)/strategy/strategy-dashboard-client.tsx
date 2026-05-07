@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation'
 import {
   Search, Map, RefreshCw, Plus, Lock, ChevronRight, TrendingUp,
   BarChart3, Layers, Users, Lightbulb, Zap, Calendar, Loader2,
-  AlertCircle, ExternalLink, BookOpen, CheckCircle2, X,
+  AlertCircle, ExternalLink, BookOpen, CheckCircle2, X, Archive,
 } from 'lucide-react'
+import { ArchiveMenu } from '@/components/ui/ArchiveMenu'
 import { Button }                                  from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge }                                   from '@/components/ui/badge'
@@ -21,6 +22,7 @@ interface ClienteOption  { id: string; nombre: string; sector: string | null }
 interface SesionResumen  {
   id: string; client_id: string; client_nombre: string; nombre: string
   status: string; created_at: string; total_keywords: number; num_clusters: number
+  archived?: boolean
 }
 interface OportunidadItem {
   id: string; tipo: string; titulo: string; keyword: string | null
@@ -37,6 +39,7 @@ interface ActualidadStats { urgentes: number; estacionales: number; trending: nu
 interface Props {
   clientes              : ClienteOption[]
   sesiones              : SesionResumen[]
+  sesionesArchivadas    : SesionResumen[]
   totalSesiones         : number
   totalKeywords         : number
   totalMapas            : number
@@ -99,7 +102,7 @@ function formatFechaBonita(iso: string): string {
 // ─────────────────────────────────────────────────────────────
 
 export default function StrategyDashboardClient({
-  clientes, sesiones, totalSesiones, totalKeywords, totalMapas,
+  clientes, sesiones, sesionesArchivadas, totalSesiones, totalKeywords, totalMapas,
   mapasPorCliente, mapaSessionPorCliente, bancoPorCliente,
 }: Props) {
 
@@ -116,17 +119,31 @@ export default function StrategyDashboardClient({
   }
   const clienteSeleccionado = clientes.find((c) => c.id === clienteId) ?? null
 
+  // ── Estado de sesiones (archivado) — declarado aquí para evitar uso antes de declaración
+  const [verArchivadas,   setVerArchivadas]   = useState(false)
+  const [localSesiones,   setLocalSesiones]   = useState<SesionResumen[]>(sesiones)
+  const [localArchivadas, setLocalArchivadas] = useState<SesionResumen[]>(sesionesArchivadas)
+
   // ── Sesiones filtradas ────────────────────────────────────
+  const sesionesBase = verArchivadas ? localArchivadas : localSesiones
   const sesionesCliente = useMemo(
-    () => clienteId ? sesiones.filter((s) => s.client_id === clienteId) : sesiones,
-    [sesiones, clienteId],
+    () => clienteId ? sesionesBase.filter((s) => s.client_id === clienteId) : sesionesBase,
+    [sesionesBase, clienteId],
   )
-  // Filtrar sesiones vacías en historial
+  // Filtrar sesiones vacías en historial (solo en vista activa)
   const historialFiltrado = useMemo(
-    () => sesionesCliente.filter((s) => s.total_keywords > 0 || s.status === 'completed'),
-    [sesionesCliente],
+    () => verArchivadas
+      ? sesionesCliente
+      : sesionesCliente.filter((s) => s.total_keywords > 0 || s.status === 'completed'),
+    [sesionesCliente, verArchivadas],
   )
-  const ultimaSesion = historialFiltrado[0] ?? null
+  // La última sesión activa (para módulos del workflow)
+  const ultimaSesion = useMemo(
+    () => localSesiones
+      .filter((s) => clienteId ? s.client_id === clienteId : true)
+      .filter((s) => s.total_keywords > 0 || s.status === 'completed')[0] ?? null,
+    [localSesiones, clienteId],
+  )
   const [historialExpanded, setHistorialExpanded] = useState(false)
   const historialVisible = historialExpanded ? historialFiltrado : historialFiltrado.slice(0, 3)
 
@@ -260,6 +277,38 @@ export default function StrategyDashboardClient({
   // ── Crear contenido desde actualidad ─────────────────────
   const router = useRouter()
   const [creandoContenido, setCreandoContenido] = useState<string | null>(null)
+
+  // ── Gestión de sesiones (archivar / eliminar) ─────────────
+  const [archivandoId, setArchivandoId] = useState<string | null>(null)
+
+  async function handleArchiveSesion(s: SesionResumen, toArchive: boolean) {
+    setArchivandoId(s.id)
+    try {
+      const res = await fetch(`/api/strategy/sessions/${s.id}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ archived: toArchive }),
+      })
+      if (!res.ok) return
+      if (toArchive) {
+        setLocalSesiones((prev) => prev.filter((x) => x.id !== s.id))
+        setLocalArchivadas((prev) => [{ ...s, archived: true }, ...prev])
+      } else {
+        setLocalArchivadas((prev) => prev.filter((x) => x.id !== s.id))
+        setLocalSesiones((prev) => [{ ...s, archived: false }, ...prev])
+      }
+    } finally {
+      setArchivandoId(null)
+    }
+  }
+
+  async function handleDeleteSesion(id: string) {
+    try {
+      await fetch(`/api/strategy/sessions/${id}`, { method: 'DELETE' })
+      setLocalArchivadas((prev) => prev.filter((x) => x.id !== id))
+      setLocalSesiones((prev) => prev.filter((x) => x.id !== id))
+    } catch { /* noop */ }
+  }
   async function handleCrearContenido(op: OportunidadItem) {
     setCreandoContenido(op.id)
     try {
@@ -711,26 +760,55 @@ export default function StrategyDashboardClient({
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-semibold text-gray-700">
+            <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
               {clienteId ? `Sesiones de ${clienteSeleccionado?.nombre ?? 'cliente'}` : 'Últimas sesiones'}
+              {verArchivadas && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">
+                  <Archive className="h-2.5 w-2.5" /> Archivadas
+                </span>
+              )}
             </CardTitle>
-            {historialFiltrado.length > 3 && (
-              <button type="button" onClick={() => setHistorialExpanded((v) => !v)}
-                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                {historialExpanded ? 'Ver menos' : `Ver todas (${historialFiltrado.length})`}
+            <div className="flex items-center gap-2">
+              {historialFiltrado.length > 3 && (
+                <button type="button" onClick={() => setHistorialExpanded((v) => !v)}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                  {historialExpanded ? 'Ver menos' : `Ver todas (${historialFiltrado.length})`}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setVerArchivadas((v) => !v); setHistorialExpanded(false) }}
+                className={`text-xs font-medium px-2 py-1 rounded-md transition-colors ${
+                  verArchivadas
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {verArchivadas ? 'Ver activas' : 'Ver archivadas'}
+                {!verArchivadas && localArchivadas.length > 0 && (
+                  <span className="ml-1 text-[10px] font-bold bg-gray-200 text-gray-600 rounded-full px-1.5">
+                    {localArchivadas.length}
+                  </span>
+                )}
               </button>
-            )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {historialVisible.length === 0 ? (
             <div className="text-center py-10 text-gray-400">
               <Search className="h-8 w-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm font-medium text-gray-500">Sin sesiones con datos todavía</p>
-              <p className="text-xs mt-1">
-                Crea tu primera estrategia con el botón{' '}
-                <span className="font-semibold text-indigo-600">Nueva Estrategia</span>
-              </p>
+              {verArchivadas ? (
+                <p className="text-sm font-medium text-gray-500">No hay sesiones archivadas</p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-gray-500">Sin sesiones con datos todavía</p>
+                  <p className="text-xs mt-1">
+                    Crea tu primera estrategia con el botón{' '}
+                    <span className="font-semibold text-indigo-600">Nueva Estrategia</span>
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="divide-y divide-gray-100">
@@ -743,7 +821,7 @@ export default function StrategyDashboardClient({
                     </div>
                     <p className="text-xs text-gray-400">{s.client_nombre} · {formatearFecha(s.created_at)}</p>
                   </div>
-                  <div className="flex items-center gap-4 text-right shrink-0">
+                  <div className="flex items-center gap-3 text-right shrink-0">
                     <div className="hidden sm:block">
                       <p className="text-sm font-semibold text-gray-700">{s.total_keywords.toLocaleString('es-ES')}</p>
                       <p className="text-[10px] text-gray-400">keywords</p>
@@ -752,10 +830,18 @@ export default function StrategyDashboardClient({
                       <p className="text-sm font-semibold text-gray-700">{s.num_clusters}</p>
                       <p className="text-[10px] text-gray-400">clusters</p>
                     </div>
-                    <Link href={`/strategy/${s.id}/keywords`}
-                      className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors">
-                      Ver →
-                    </Link>
+                    {!verArchivadas && (
+                      <Link href={`/strategy/${s.id}/keywords`}
+                        className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors">
+                        Ver →
+                      </Link>
+                    )}
+                    <ArchiveMenu
+                      archived={!!s.archived}
+                      loading={archivandoId === s.id}
+                      onArchive={() => handleArchiveSesion(s, !s.archived)}
+                      onDelete={() => handleDeleteSesion(s.id)}
+                    />
                   </div>
                 </div>
               ))}

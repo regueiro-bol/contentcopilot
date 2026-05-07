@@ -26,6 +26,7 @@ import { Button }              from '@/components/ui/button'
 import { Card, CardContent }   from '@/components/ui/card'
 import { cn }                  from '@/lib/utils'
 import FaseDistributorModal    from './FaseDistributorModal'
+import { ArchiveMenu }         from '@/components/ui/ArchiveMenu'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,7 @@ const ESTADOS: { value: string; label: string; color: string }[] = [
   { value: 'revision_editorial',      label: 'Rev. editorial',        color: 'bg-orange-100 text-orange-700'  },
   { value: 'publicado',               label: 'Publicado',             color: 'bg-emerald-100 text-emerald-700'},
   { value: 'actualizacion_pendiente', label: 'Actualiz. pendiente',   color: 'bg-rose-100 text-rose-700'      },
+  { value: 'descartado',             label: 'Descartado',            color: 'bg-red-100 text-red-600'         },
 ]
 
 function estadoStyle(estado: string) {
@@ -413,6 +415,51 @@ export default function BancoClient({ clientes }: Props) {
     }
   }
 
+  // ── Descartar / Restaurar / Eliminar item ────────────────
+  const [descartandoId, setDescartandoId] = useState<string | null>(null)
+
+  async function handleDescartar(itemId: string) {
+    setDescartandoId(itemId)
+    try {
+      await fetch(`/api/strategy/almacen/${itemId}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ status: 'descartado' }),
+      })
+      cargarItems(true)
+    } finally {
+      setDescartandoId(null)
+    }
+  }
+
+  async function handleRestaurar(itemId: string) {
+    setDescartandoId(itemId)
+    try {
+      await fetch(`/api/strategy/almacen/${itemId}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ status: 'propuesto' }),
+      })
+      cargarItems(true)
+    } finally {
+      setDescartandoId(null)
+    }
+  }
+
+  async function handleDeleteItem(itemId: string) {
+    setDescartandoId(itemId)
+    try {
+      const res = await fetch(`/api/strategy/almacen/${itemId}`, { method: 'DELETE' })
+      if (res.ok) cargarItems(true)
+      else {
+        const d = await res.json().catch(() => ({}))
+        setError((d as { error?: string }).error ?? 'Error eliminando artículo')
+      }
+    } finally {
+      setDescartandoId(null)
+    }
+  }
+
   // ── Items con overrides aplicados ──────────────────────────
   const itemsMerged = useMemo(
     () => items.map((i) => localOverrides[i.id] ? { ...i, ...localOverrides[i.id] } : i),
@@ -614,6 +661,14 @@ export default function BancoClient({ clientes }: Props) {
         )}
       </div>
 
+      {/* ── Banner descartados ──────────────────────────────── */}
+      {filtroEstado === 'descartado' && (
+        <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <Archive className="h-3.5 w-3.5 shrink-0" />
+          Artículos descartados — puedes restaurarlos o eliminarlos definitivamente (solo si no tienen pedido vinculado).
+        </div>
+      )}
+
       {/* ── Error ───────────────────────────────────────────── */}
       {error && (
         <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
@@ -771,18 +826,30 @@ export default function BancoClient({ clientes }: Props) {
                         </td>
 
                         {/* Acción */}
-                        <td className="px-3 py-3 text-center">
-                          {item.contenido_id ? (
-                            <Link
-                              href={`/contenidos/${item.contenido_id}`}
-                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              Ver pedido
-                            </Link>
-                          ) : (
-                            <span className="text-gray-300 text-xs">—</span>
-                          )}
+                        <td className="px-3 py-3">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {item.contenido_id && item.status !== 'descartado' && (
+                              <Link
+                                href={`/contenidos/${item.contenido_id}`}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                Ver pedido
+                              </Link>
+                            )}
+                            <ArchiveMenu
+                              archived={item.status === 'descartado' || item.estado_almacen === 'descartado'}
+                              archiveLabel="Descartar"
+                              restoreLabel="Restaurar"
+                              loading={descartandoId === item.id}
+                              onArchive={() =>
+                                item.status === 'descartado' || item.estado_almacen === 'descartado'
+                                  ? handleRestaurar(item.id)
+                                  : handleDescartar(item.id)
+                              }
+                              onDelete={!item.contenido_id ? () => handleDeleteItem(item.id) : undefined}
+                            />
+                          </div>
                         </td>
                       </tr>
                     )

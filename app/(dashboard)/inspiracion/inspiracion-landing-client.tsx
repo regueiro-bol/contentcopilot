@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   Lightbulb, FileText, Smartphone, Palette, Target,
-  Loader2, ChevronRight, Lock, AlertCircle,
+  Loader2, ChevronRight, Lock, AlertCircle, Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { ArchiveMenu } from '@/components/ui/ArchiveMenu'
 
 // ─────────────────────────────────────────────────────────────
 // Tipos
@@ -18,13 +19,14 @@ import { Badge } from '@/components/ui/badge'
 interface Cliente { id: string; nombre: string; sector: string | null }
 interface Sesion {
   id: string; client_id: string; client_nombre: string
-  status: string; foco: string; created_at: string
+  status: string; foco: string; created_at: string; archived?: boolean
 }
 
 interface Props {
-  clientes: Cliente[]
-  sesiones: Sesion[]
-  clienteIdInicial: string | null
+  clientes           : Cliente[]
+  sesiones           : Sesion[]
+  sesionesArchivadas : Sesion[]
+  clienteIdInicial   : string | null
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -49,16 +51,25 @@ const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
 // Componente
 // ─────────────────────────────────────────────────────────────
 
-export default function InspiracionLandingClient({ clientes, sesiones, clienteIdInicial }: Props) {
+export default function InspiracionLandingClient({
+  clientes, sesiones, sesionesArchivadas, clienteIdInicial,
+}: Props) {
   const router = useRouter()
   const [clienteId, setClienteId] = useState(clienteIdInicial ?? '')
   const [foco, setFoco]           = useState('contenidos')
   const [lanzando, setLanzando]   = useState(false)
   const [error, setError]         = useState<string | null>(null)
 
+  // Gestión de archivado
+  const [verArchivados,  setVerArchivados]  = useState(false)
+  const [accionId,       setAccionId]       = useState<string | null>(null)
+  const [localActivas,   setLocalActivas]   = useState<Sesion[]>(sesiones)
+  const [localArchivadas, setLocalArchivadas] = useState<Sesion[]>(sesionesArchivadas)
+
+  const sesionesBase = verArchivados ? localArchivadas : localActivas
   const sesionesCliente = clienteId
-    ? sesiones.filter((s) => s.client_id === clienteId)
-    : sesiones
+    ? sesionesBase.filter((s) => s.client_id === clienteId)
+    : sesionesBase
 
   async function handleLanzar() {
     if (!clienteId) return
@@ -79,6 +90,38 @@ export default function InspiracionLandingClient({ clientes, sesiones, clienteId
       setError(err instanceof Error ? err.message : 'Error desconocido')
     } finally {
       setLanzando(false)
+    }
+  }
+
+  async function handleArchive(s: Sesion, toArchive: boolean) {
+    setAccionId(s.id)
+    try {
+      const res = await fetch(`/api/strategy/inspiracion/${s.id}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ archived: toArchive }),
+      })
+      if (!res.ok) return
+      if (toArchive) {
+        setLocalActivas((prev) => prev.filter((x) => x.id !== s.id))
+        setLocalArchivadas((prev) => [{ ...s, archived: true }, ...prev])
+      } else {
+        setLocalArchivadas((prev) => prev.filter((x) => x.id !== s.id))
+        setLocalActivas((prev) => [{ ...s, archived: false }, ...prev])
+      }
+    } finally {
+      setAccionId(null)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setAccionId(id)
+    try {
+      await fetch(`/api/strategy/inspiracion/${id}`, { method: 'DELETE' })
+      setLocalActivas((prev) => prev.filter((x) => x.id !== id))
+      setLocalArchivadas((prev) => prev.filter((x) => x.id !== id))
+    } finally {
+      setAccionId(null)
     }
   }
 
@@ -176,35 +219,73 @@ export default function InspiracionLandingClient({ clientes, sesiones, clienteId
       )}
 
       {/* Historial */}
-      {sesionesCliente.length > 0 && (
+      {(localActivas.length > 0 || localArchivadas.length > 0) && (
         <Card>
           <CardContent className="p-5">
-            <p className="text-sm font-semibold text-gray-700 mb-3">Informes anteriores</p>
-            <div className="divide-y divide-gray-100">
-              {sesionesCliente.slice(0, 5).map((s) => {
-                const st = STATUS_LABEL[s.status] ?? STATUS_LABEL.pending
-                return (
-                  <div key={s.id} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-                    <div>
-                      <p className="text-sm text-gray-800">{s.client_nombre}</p>
-                      <p className="text-xs text-gray-400">
-                        {new Date(s.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        {' · '}{s.foco}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={`text-[10px] ${st.cls}`}>{st.label}</Badge>
-                      {s.status === 'completed' && (
-                        <Link href={`/inspiracion/${s.id}`}
-                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5">
-                          Ver <ChevronRight className="h-3 w-3" />
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                Informes anteriores
+                {verArchivados && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">
+                    <Archive className="h-2.5 w-2.5" /> Archivados
+                  </span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => setVerArchivados((v) => !v)}
+                className={`text-xs font-medium px-2 py-1 rounded-md transition-colors ${
+                  verArchivados
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {verArchivados ? 'Ver activos' : 'Ver archivados'}
+                {!verArchivados && localArchivadas.length > 0 && (
+                  <span className="ml-1 text-[10px] font-bold bg-gray-200 text-gray-600 rounded-full px-1.5">
+                    {localArchivadas.length}
+                  </span>
+                )}
+              </button>
             </div>
+
+            {sesionesCliente.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">
+                {verArchivados ? 'No hay informes archivados' : 'No hay informes para este cliente'}
+              </p>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {sesionesCliente.slice(0, 6).map((s) => {
+                  const st = STATUS_LABEL[s.status] ?? STATUS_LABEL.pending
+                  return (
+                    <div key={s.id} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-800 truncate">{s.client_nombre}</p>
+                        <p className="text-xs text-gray-400">
+                          {new Date(s.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          {' · '}{s.foco}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge className={`text-[10px] ${st.cls}`}>{st.label}</Badge>
+                        {s.status === 'completed' && !verArchivados && (
+                          <Link href={`/inspiracion/${s.id}`}
+                            className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5">
+                            Ver <ChevronRight className="h-3 w-3" />
+                          </Link>
+                        )}
+                        <ArchiveMenu
+                          archived={!!s.archived}
+                          loading={accionId === s.id}
+                          onArchive={() => handleArchive(s, !s.archived)}
+                          onDelete={() => handleDelete(s.id)}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

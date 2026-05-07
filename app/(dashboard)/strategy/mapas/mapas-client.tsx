@@ -2,18 +2,18 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import {
   Map,
   Calendar,
   FileText,
-  Trash2,
   Loader2,
   AlertCircle,
   ChevronRight,
+  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { ArchiveMenu } from '@/components/ui/ArchiveMenu'
 
 // ─────────────────────────────────────────────────────────────
 // Tipos
@@ -26,6 +26,7 @@ interface MapaResumen {
   created_at   : string
   session_id   : string | null
   sesion_nombre: string | null
+  archived     : boolean
   total        : number
   planned      : number
   assigned     : number
@@ -33,43 +34,76 @@ interface MapaResumen {
 }
 
 interface Props {
-  mapas        : MapaResumen[]
-  clienteNombre: string | null
-  clienteId    : string | null
+  mapas           : MapaResumen[]
+  mapasArchivados : MapaResumen[]
+  clienteNombre   : string | null
+  clienteId       : string | null
 }
 
 // ─────────────────────────────────────────────────────────────
 // Componente
 // ─────────────────────────────────────────────────────────────
 
-export default function MapasClient({ mapas, clienteNombre, clienteId }: Props) {
-  const router = useRouter()
-  const [eliminando, setEliminando]     = useState<string | null>(null)
-  const [confirmId, setConfirmId]       = useState<string | null>(null)
-  const [errorElim, setErrorElim]       = useState<string | null>(null)
+export default function MapasClient({ mapas, mapasArchivados, clienteNombre, clienteId }: Props) {
+  const [verArchivados,  setVerArchivados]  = useState(false)
+  const [accionId,       setAccionId]       = useState<string | null>(null)
+  const [error,          setError]          = useState<string | null>(null)
 
-  async function handleEliminar(mapId: string) {
-    setEliminando(mapId)
-    setErrorElim(null)
+  // Local state para movimientos optimistas
+  const [localActivos,    setLocalActivos]    = useState<MapaResumen[]>(mapas)
+  const [localArchivados, setLocalArchivados] = useState<MapaResumen[]>(mapasArchivados)
+
+  const lista = verArchivados ? localArchivados : localActivos
+
+  async function handleArchive(m: MapaResumen, toArchive: boolean) {
+    setAccionId(m.id)
+    setError(null)
+    try {
+      const res = await fetch(`/api/strategy/mapas/${m.id}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ archived: toArchive }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error((d as { error?: string }).error ?? 'Error')
+      }
+      if (toArchive) {
+        setLocalActivos((prev) => prev.filter((x) => x.id !== m.id))
+        setLocalArchivados((prev) => [{ ...m, archived: true }, ...prev])
+      } else {
+        setLocalArchivados((prev) => prev.filter((x) => x.id !== m.id))
+        setLocalActivos((prev) => [{ ...m, archived: false }, ...prev])
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error desconocido')
+    } finally {
+      setAccionId(null)
+    }
+  }
+
+  async function handleDelete(mapId: string) {
+    setAccionId(mapId)
+    setError(null)
     try {
       const res = await fetch(`/api/strategy/mapas/${mapId}`, { method: 'DELETE' })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error((data as { error?: string }).error ?? 'Error eliminando mapa')
+        const d = await res.json().catch(() => ({}))
+        throw new Error((d as { error?: string }).error ?? 'Error eliminando mapa')
       }
-      setConfirmId(null)
-      router.refresh()
+      setLocalActivos((prev) => prev.filter((x) => x.id !== mapId))
+      setLocalArchivados((prev) => prev.filter((x) => x.id !== mapId))
     } catch (e) {
-      setErrorElim(e instanceof Error ? e.message : 'Error desconocido')
+      setError(e instanceof Error ? e.message : 'Error desconocido')
     } finally {
-      setEliminando(null)
+      setAccionId(null)
     }
   }
 
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-gray-900">
             Mapas de contenido
@@ -78,38 +112,66 @@ export default function MapasClient({ mapas, clienteNombre, clienteId }: Props) 
             <p className="text-sm text-gray-500">{clienteNombre}</p>
           )}
         </div>
-        <p className="text-sm text-gray-400 tabular-nums">{mapas.length} mapa{mapas.length !== 1 ? 's' : ''}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-gray-400 tabular-nums">{lista.length} mapa{lista.length !== 1 ? 's' : ''}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setVerArchivados((v) => !v); setError(null) }}
+            className={`gap-1.5 text-xs ${verArchivados ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100' : ''}`}
+          >
+            <Archive className="h-3.5 w-3.5" />
+            {verArchivados ? 'Ver activos' : 'Ver archivados'}
+            {!verArchivados && localArchivados.length > 0 && (
+              <span className="ml-0.5 text-[10px] font-bold bg-gray-200 text-gray-600 rounded-full px-1.5">
+                {localArchivados.length}
+              </span>
+            )}
+          </Button>
+        </div>
       </div>
 
+      {/* Aviso archivados */}
+      {verArchivados && (
+        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <Archive className="h-3.5 w-3.5 shrink-0" />
+          Mapas archivados — solo visibles aquí. Restaura uno para volver a usarlo.
+        </div>
+      )}
+
       {/* Empty state */}
-      {mapas.length === 0 && (
+      {lista.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="py-16 text-center">
             <Map className="h-10 w-10 text-gray-300 mx-auto mb-4" />
-            <p className="text-sm font-semibold text-gray-500">Sin mapas de contenido</p>
-            <p className="text-xs text-gray-400 mt-1">
-              Genera un mapa desde una sesión de investigación
+            <p className="text-sm font-semibold text-gray-500">
+              {verArchivados ? 'Sin mapas archivados' : 'Sin mapas de contenido'}
             </p>
+            {!verArchivados && (
+              <p className="text-xs text-gray-400 mt-1">
+                Genera un mapa desde una sesión de investigación
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
 
       {/* Error global */}
-      {errorElim && (
+      {error && (
         <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-          {errorElim}
+          {error}
         </div>
       )}
 
       {/* Lista de mapas */}
       <div className="space-y-3">
-        {mapas.map((m) => (
-          <Card key={m.id} className="hover:shadow-sm transition-shadow">
+        {lista.map((m) => (
+          <Card key={m.id} className={`hover:shadow-sm transition-shadow ${m.archived ? 'opacity-75' : ''}`}>
             <CardContent className="p-5">
               <div className="flex items-start gap-4">
                 {/* Icono */}
-                <div className="rounded-xl p-2.5 bg-violet-100 text-violet-600 shrink-0">
+                <div className={`rounded-xl p-2.5 shrink-0 ${m.archived ? 'bg-gray-100 text-gray-400' : 'bg-violet-100 text-violet-600'}`}>
                   <Map className="h-5 w-5" />
                 </div>
 
@@ -131,7 +193,7 @@ export default function MapasClient({ mapas, clienteNombre, clienteId }: Props) 
                   </div>
 
                   {/* Stats por estado */}
-                  <div className="flex items-center gap-3 mt-2.5">
+                  <div className="flex items-center gap-3 mt-2.5 flex-wrap">
                     <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-600 bg-gray-100 rounded-full px-2 py-0.5">
                       <FileText className="h-3 w-3" />
                       {m.total} artículos
@@ -156,44 +218,7 @@ export default function MapasClient({ mapas, clienteNombre, clienteId }: Props) 
 
                 {/* Acciones */}
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Confirmar eliminación */}
-                  {confirmId === m.id ? (
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setConfirmId(null)}
-                        disabled={eliminando === m.id}
-                        className="text-xs h-7 px-2"
-                      >
-                        Cancelar
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleEliminar(m.id)}
-                        disabled={eliminando === m.id}
-                        className="text-xs h-7 px-2 gap-1"
-                      >
-                        {eliminando === m.id
-                          ? <Loader2 className="h-3 w-3 animate-spin" />
-                          : <Trash2 className="h-3 w-3" />
-                        }
-                        Eliminar
-                      </Button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => { setConfirmId(m.id); setErrorElim(null) }}
-                      className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                      title="Eliminar mapa"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
-
-                  {m.session_id && (
+                  {!m.archived && m.session_id && (
                     <Link
                       href={`/strategy/${m.session_id}/mapa`}
                       className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
@@ -202,6 +227,12 @@ export default function MapasClient({ mapas, clienteNombre, clienteId }: Props) 
                       <ChevronRight className="h-3 w-3" />
                     </Link>
                   )}
+                  <ArchiveMenu
+                    archived={m.archived}
+                    loading={accionId === m.id}
+                    onArchive={() => handleArchive(m, !m.archived)}
+                    onDelete={() => handleDelete(m.id)}
+                  />
                 </div>
               </div>
             </CardContent>

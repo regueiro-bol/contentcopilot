@@ -3,6 +3,35 @@ import { auth } from '@clerk/nextjs/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 /**
+ * PATCH /api/strategy/mapas/[mapId]
+ * Body: { archived: boolean }
+ * Archiva o restaura un mapa de contenido.
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { mapId: string } },
+) {
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
+  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+  const body: { archived?: boolean } = await request.json().catch(() => ({}))
+  const toArchive = body.archived !== false
+
+  const supabase = createAdminClient()
+
+  const { error } = await supabase
+    .from('content_maps')
+    .update({
+      archived   : toArchive,
+      archived_at: toArchive ? new Date().toISOString() : null,
+    })
+    .eq('id', params.mapId)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
+
+/**
  * DELETE /api/strategy/mapas/[mapId]
  *
  * Elimina un content_map y sus items (CASCADE).

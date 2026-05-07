@@ -1,39 +1,15 @@
 /**
- * GET /api/strategy/inspiracion/[sessionId]
- * Devuelve la sesion de inspiracion completa con resultado y oportunidades.
- *
- * PATCH /api/strategy/inspiracion/[sessionId]
+ * PATCH /api/strategy/sessions/[sessionId]
  * Body: { archived: boolean }
- * Archiva o restaura el informe.
+ * Archiva o restaura una sesión de keyword research.
  *
- * DELETE /api/strategy/inspiracion/[sessionId]
- * Elimina definitivamente el informe.
+ * DELETE /api/strategy/sessions/[sessionId]
+ * Elimina definitivamente la sesión y sus keywords (CASCADE).
  */
 
-import { auth } from '@clerk/nextjs/server'
+import { auth }          from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { sessionId: string } },
-) {
-  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
-  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('inspiracion_sessions')
-    .select('*, clientes(nombre, sector)')
-    .eq('id', params.sessionId)
-    .single()
-
-  if (error || !data) {
-    return NextResponse.json({ error: 'Sesion no encontrada' }, { status: 404 })
-  }
-
-  return NextResponse.json({ session: data })
-}
+import { createAdminClient }         from '@/lib/supabase/admin'
 
 export async function PATCH(
   request: NextRequest,
@@ -43,12 +19,12 @@ export async function PATCH(
   if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const body: { archived?: boolean } = await request.json().catch(() => ({}))
-  const toArchive = body.archived !== false
+  const toArchive = body.archived !== false  // default: archive
 
   const supabase = createAdminClient()
 
   const { error } = await supabase
-    .from('inspiracion_sessions')
+    .from('keyword_research_sessions')
     .update({
       archived   : toArchive,
       archived_at: toArchive ? new Date().toISOString() : null,
@@ -68,8 +44,11 @@ export async function DELETE(
 
   const supabase = createAdminClient()
 
+  // Eliminar keywords primero (safety — DB CASCADE debería manejarlo)
+  await supabase.from('keywords').delete().eq('session_id', params.sessionId)
+
   const { error } = await supabase
-    .from('inspiracion_sessions')
+    .from('keyword_research_sessions')
     .delete()
     .eq('id', params.sessionId)
 

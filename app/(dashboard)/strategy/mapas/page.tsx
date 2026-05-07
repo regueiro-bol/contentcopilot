@@ -15,13 +15,14 @@ export default async function MapasPage({ searchParams }: PageProps) {
   const supabase  = createAdminClient()
   const clienteId = searchParams.cliente ?? null
 
-  // ── Cargar mapas ──────────────────────────────────────────
+  // ── Cargar mapas activos ──────────────────────────────────
   let query = supabase
     .from('content_maps')
     .select(`
-      id, nombre, status, created_at, config, session_id, client_id,
+      id, nombre, status, created_at, config, session_id, client_id, archived,
       keyword_research_sessions ( nombre )
     `)
+    .neq('archived', true)
     .order('created_at', { ascending: false })
 
   if (clienteId) {
@@ -29,6 +30,22 @@ export default async function MapasPage({ searchParams }: PageProps) {
   }
 
   const { data: mapasRaw } = await query
+
+  // ── Cargar mapas archivados ───────────────────────────────
+  let queryArch = supabase
+    .from('content_maps')
+    .select(`
+      id, nombre, status, created_at, config, session_id, client_id, archived,
+      keyword_research_sessions ( nombre )
+    `)
+    .eq('archived', true)
+    .order('created_at', { ascending: false })
+
+  if (clienteId) {
+    queryArch = queryArch.eq('client_id', clienteId)
+  }
+
+  const { data: mapasArchivadosRaw } = await queryArch
 
   // ── Nombre del cliente ────────────────────────────────────
   let clienteNombre: string | null = null
@@ -63,12 +80,11 @@ export default async function MapasPage({ searchParams }: PageProps) {
   }
 
   // ── Serializar para el client component ───────────────────
-  const mapas = (mapasRaw ?? []).map((m) => {
+  function serializarMapa(m: NonNullable<typeof mapasRaw>[number]) {
     const mid   = String(m.id)
     const stats = itemStats[mid] ?? { total: 0, planned: 0, assigned: 0, published: 0 }
     const sesionNombre =
       (m.keyword_research_sessions as { nombre?: string } | null)?.nombre ?? null
-
     return {
       id           : mid,
       nombre       : String(m.nombre ?? ''),
@@ -76,12 +92,16 @@ export default async function MapasPage({ searchParams }: PageProps) {
       created_at   : String(m.created_at),
       session_id   : m.session_id ? String(m.session_id) : null,
       sesion_nombre: sesionNombre ? String(sesionNombre) : null,
+      archived     : Boolean(m.archived),
       total        : stats.total,
       planned      : stats.planned,
       assigned     : stats.assigned,
       published    : stats.published,
     }
-  })
+  }
+
+  const mapas          = (mapasRaw         ?? []).map(serializarMapa)
+  const mapasArchivados = (mapasArchivadosRaw ?? []).map(serializarMapa)
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -96,6 +116,7 @@ export default async function MapasPage({ searchParams }: PageProps) {
 
       <MapasClient
         mapas={mapas}
+        mapasArchivados={mapasArchivados}
         clienteNombre={clienteNombre}
         clienteId={clienteId}
       />

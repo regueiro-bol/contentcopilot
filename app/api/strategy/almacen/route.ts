@@ -54,8 +54,13 @@ export async function GET(request: NextRequest) {
   if (cluster)                 query = query.eq('cluster', cluster)
   if (q)                       query = query.or(`title.ilike.%${q}%,main_keyword.ilike.%${q}%`)
 
-  // El filtro de estado se aplica sobre el campo calculado estado_almacen
-  if (estado)                  query = query.eq('estado_almacen', estado)
+  // El filtro de estado se aplica sobre el campo calculado estado_almacen.
+  // Por defecto se excluyen los descartados (son visibles solo cuando se filtra por 'descartado').
+  if (estado) {
+    query = query.eq('estado_almacen', estado)
+  } else {
+    query = query.neq('estado_almacen', 'descartado')
+  }
 
   const { data, error, count } = await query
 

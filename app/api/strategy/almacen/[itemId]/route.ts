@@ -120,3 +120,42 @@ export async function PATCH(
 
   return NextResponse.json({ ok: true, item: updated, pedido_id: pedidoId })
 }
+
+/**
+ * DELETE /api/strategy/almacen/[itemId]
+ *
+ * Elimina definitivamente un artículo del banco.
+ * Solo se permite si el artículo NO tiene un pedido (contenido_id) vinculado.
+ */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { itemId: string } },
+) {
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
+  if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+
+  const supabase = createAdminClient()
+
+  const { data: item } = await supabase
+    .from('content_map_items')
+    .select('id, contenido_id')
+    .eq('id', params.itemId)
+    .maybeSingle()
+
+  if (!item) return NextResponse.json({ error: 'Artículo no encontrado' }, { status: 404 })
+
+  if (item.contenido_id) {
+    return NextResponse.json(
+      { error: 'No se puede eliminar: tiene un pedido vinculado. Desvincula el pedido primero.' },
+      { status: 409 },
+    )
+  }
+
+  const { error } = await supabase
+    .from('content_map_items')
+    .delete()
+    .eq('id', params.itemId)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
