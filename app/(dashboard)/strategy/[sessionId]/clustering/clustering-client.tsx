@@ -2,15 +2,12 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import {
   Layers,
   Sparkles,
   Loader2,
   AlertCircle,
   Map,
-  ChevronRight,
-  TrendingUp,
   Check,
   Search,
 } from 'lucide-react'
@@ -84,20 +81,11 @@ export default function ClusteringClient({
   totalIncluidas,
   unclassifiedCount,
 }: Props) {
-  const router = useRouter()
-
   // ── Estado clustering ──────────────────────────────────────
   const [ejecutandoClustering, setEjecutandoClustering] = useState(false)
   const [progresoClustering, setProgresoClustering]     = useState('')
   const [errorClustering, setErrorClustering]           = useState<string | null>(null)
   const [clusteringOk, setClusteringOk]                 = useState(false)
-
-  // ── Estado generar mapa ────────────────────────────────────
-  const [mostrarConfigMapa, setMostrarConfigMapa]   = useState(false)
-  const [meses, setMeses]                           = useState<3 | 6 | 9 | 12>(6)
-  const [artMes, setArtMes]                         = useState<4 | 6 | 8 | 10>(6)
-  const [generandoMapa, setGenerandoMapa]           = useState(false)
-  const [errorMapa, setErrorMapa]                   = useState<string | null>(null)
 
   const hayCluster = clusters.length > 0
 
@@ -150,31 +138,6 @@ export default function ClusteringClient({
       console.error('[Clustering] Error en handleClustering:', e)
       setErrorClustering(e instanceof Error ? e.message : 'Error desconocido')
       setEjecutandoClustering(false)
-    }
-  }
-
-  // ── Acción: generar mapa ───────────────────────────────────
-  async function handleGenerarMapa() {
-    setGenerandoMapa(true)
-    setErrorMapa(null)
-
-    try {
-      const res = await fetch('/api/strategy/generate-map', {
-        method : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({
-          session_id: session.id,
-          config    : { meses, articulos_por_mes: artMes },
-        }),
-      })
-      const data = await res.json()
-
-      if (!res.ok) throw new Error(data.error ?? 'Error generando mapa')
-
-      router.push(`/strategy/${session.id}/mapa`)
-    } catch (e) {
-      setErrorMapa(e instanceof Error ? e.message : 'Error desconocido')
-      setGenerandoMapa(false)
     }
   }
 
@@ -387,133 +350,6 @@ export default function ClusteringClient({
         </Card>
       )}
 
-      {/* Panel generar mapa — siempre visible */}
-      <Card className="border-violet-200 bg-violet-50/30">
-          <CardContent className="p-5">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 shrink-0">
-                <Map className="h-5 w-5 text-violet-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-900">Generar mapa de contenidos</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Claude crea el plan editorial con títulos SEO, distribución por meses y prioridad de publicación.
-                </p>
-
-                {!mostrarConfigMapa && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="mt-3 gap-2 bg-violet-600 hover:bg-violet-700"
-                    onClick={() => setMostrarConfigMapa(true)}
-                    disabled={generandoMapa}
-                  >
-                    <TrendingUp className="h-4 w-4" />
-                    Configurar y generar mapa
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                )}
-
-                {/* Config panel */}
-                {mostrarConfigMapa && (
-                  <div className="mt-4 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      {/* Duración */}
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-semibold text-gray-600">Duración del plan</p>
-                        <div className="flex gap-1.5">
-                          {([3, 6, 9, 12] as const).map((m) => (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => setMeses(m)}
-                              className={cn(
-                                'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                                meses === m
-                                  ? 'bg-violet-600 text-white border-violet-600'
-                                  : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400',
-                              )}
-                            >
-                              {m}m
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Artículos/mes */}
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-semibold text-gray-600">Artículos por mes</p>
-                        <div className="flex gap-1.5">
-                          {([4, 6, 8, 10] as const).map((n) => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => setArtMes(n)}
-                              className={cn(
-                                'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                                artMes === n
-                                  ? 'bg-violet-600 text-white border-violet-600'
-                                  : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400',
-                              )}
-                            >
-                              {n}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Resumen config */}
-                    <p className="text-xs text-violet-700 font-medium bg-violet-100 rounded-lg px-3 py-2">
-                      Plan: {meses} meses × {artMes} artículos/mes = hasta{' '}
-                      <strong>{meses * artMes} artículos</strong> planificados
-                    </p>
-
-                    {/* Loading mapa */}
-                    {generandoMapa && (
-                      <div className="flex items-center gap-2 text-sm text-violet-700">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Generando mapa editorial con Claude... (30-60 segundos)
-                      </div>
-                    )}
-
-                    {/* Error mapa */}
-                    {errorMapa && (
-                      <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
-                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                        {errorMapa}
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={handleGenerarMapa}
-                        disabled={generandoMapa}
-                        className="gap-2 bg-violet-600 hover:bg-violet-700"
-                      >
-                        {generandoMapa
-                          ? <><Loader2 className="h-4 w-4 animate-spin" />Generando...</>
-                          : <><Map className="h-4 w-4" />Generar mapa</>
-                        }
-                      </Button>
-                      {!generandoMapa && (
-                        <button
-                          type="button"
-                          onClick={() => { setMostrarConfigMapa(false); setErrorMapa(null) }}
-                          className="text-xs text-gray-400 hover:text-gray-600"
-                        >
-                          Cancelar
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
     </div>
   )
 }

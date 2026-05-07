@@ -204,7 +204,6 @@ export default function StrategyDashboardClient({
   // ── Planificar desde actualidad ───────────────────────────
   const [planificandoId,  setPlanificandoId]  = useState<string | null>(null)
   const [planFecha,       setPlanFecha]       = useState('')
-  const [planNotas,       setPlanNotas]       = useState('')
   const [guardandoPlan,   setGuardandoPlan]   = useState(false)
   const [planificadas,    setPlanificadas]    = useState<Record<string, { fecha: string }>>({})
   const [toastMsg,        setToastMsg]        = useState<string | null>(null)
@@ -213,7 +212,6 @@ export default function StrategyDashboardClient({
     if (planificandoId === op.id) { setPlanificandoId(null); return }
     setPlanificandoId(op.id)
     setPlanFecha(op.fecha_evento ? op.fecha_evento.slice(0, 10) : tomorrow())
-    setPlanNotas('')
   }
 
   async function confirmarPlan(op: OportunidadItem) {
@@ -233,7 +231,7 @@ export default function StrategyDashboardClient({
           fecha_publicacion: planFecha,
           fuente           : 'actualidad',
           oportunidad_id   : op.id,
-          notas            : planNotas || null,
+          notas            : null,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error ?? 'Error')
@@ -349,6 +347,13 @@ export default function StrategyDashboardClient({
       ? `/strategy/${mapaSessionPorCliente[clienteId]}/mapa`
       : `/strategy/mapas?cliente=${clienteId}`
     : undefined
+
+  // Href del módulo Mapa: usa la sesión con mapa si existe, sino la última sesión con keywords
+  const mapaModuleHref = clienteId && mapaSessionPorCliente[clienteId]
+    ? `/strategy/${mapaSessionPorCliente[clienteId]}/mapa`
+    : ultimaSesion
+      ? `/strategy/${ultimaSesion.id}/mapa`
+      : undefined
 
   // ────────────────────────────────────────────────────────────
   return (
@@ -519,7 +524,9 @@ export default function StrategyDashboardClient({
             icon={Search} title="Briefing y Research" color="bg-indigo-100 text-indigo-600"
             description="Define tópicos semilla, lanza la investigación de keywords con DataForSEO y analiza el mercado."
             locked={false}
-            href={clienteId ? `/strategy/nueva?cliente=${clienteId}` : '/strategy/nueva'}
+            href={ultimaSesion
+              ? `/strategy/${ultimaSesion.id}/keywords`
+              : clienteId ? `/strategy/nueva?cliente=${clienteId}` : '/strategy/nueva'}
             subtitle={ultimaSesion ? `Última: ${formatearFecha(ultimaSesion.created_at)}` : 'Sin sesiones'}
           />
           <ModuleCard
@@ -532,8 +539,8 @@ export default function StrategyDashboardClient({
           <ModuleCard
             icon={Map} title="Mapa de Contenidos" color="bg-emerald-100 text-emerald-600"
             description="Genera el plan editorial mensual: artículos, keywords objetivo, clúster y etapa del funnel."
-            locked={!ultimaSesion}
-            href={ultimaSesion ? `/strategy/${ultimaSesion.id}/mapa` : undefined}
+            locked={!mapaModuleHref}
+            href={mapaModuleHref}
             subtitle={bancoCount > 0 ? `${bancoCount} artículos` : 'Pendiente'}
           />
           <ModuleCard
@@ -637,7 +644,7 @@ export default function StrategyDashboardClient({
                                   ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
                                   : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
                               }`}>
-                              <Calendar className="h-3 w-3" /> Planificar
+                              <Calendar className="h-3 w-3" /> Añadir al calendario
                             </button>
                           )}
                           <button type="button" onClick={() => handleCrearContenido(op)}
@@ -654,26 +661,14 @@ export default function StrategyDashboardClient({
                       {/* Mini-form planificar */}
                       {isPlanificando && !yaPlanificada && (
                         <div className="mt-3 border-t border-indigo-100 pt-3 space-y-2">
-                          <div className="flex gap-2">
-                            <div className="flex-1">
-                              <label className="block text-[10px] font-semibold text-gray-500 mb-1">Fecha de publicación</label>
-                              <input
-                                type="date"
-                                value={planFecha}
-                                onChange={(e) => setPlanFecha(e.target.value)}
-                                className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-indigo-400"
-                              />
-                            </div>
-                            <div className="flex-1">
-                              <label className="block text-[10px] font-semibold text-gray-500 mb-1">Notas (opcional)</label>
-                              <textarea
-                                rows={2}
-                                value={planNotas}
-                                onChange={(e) => setPlanNotas(e.target.value)}
-                                placeholder="Contexto, ángulo…"
-                                className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs outline-none resize-none focus:border-indigo-400"
-                              />
-                            </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Fecha de publicación</label>
+                            <input
+                              type="date"
+                              value={planFecha}
+                              onChange={(e) => setPlanFecha(e.target.value)}
+                              className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-indigo-400"
+                            />
                           </div>
                           <div className="flex gap-2 justify-end">
                             <button type="button" onClick={() => setPlanificandoId(null)}

@@ -20,7 +20,7 @@ import {
   CalendarDays,
   CalendarCheck2,
   ChevronRight,
-  GitBranch,
+  CalendarPlus,
 } from 'lucide-react'
 import { Button }              from '@/components/ui/button'
 import { Card, CardContent }   from '@/components/ui/card'
@@ -55,6 +55,7 @@ interface BancoItem {
   notas            : string | null
   estado_almacen   : string
   sesion_nombre    : string
+  fecha_calendario : string | null
 }
 
 interface SuggestedItem {
@@ -418,6 +419,48 @@ export default function BancoClient({ clientes }: Props) {
   // ── Descartar / Restaurar / Eliminar item ────────────────
   const [descartandoId, setDescartandoId] = useState<string | null>(null)
 
+  // ── Añadir al calendario (por fila) ──────────────────────
+  const [calItemId,  setCalItemId]  = useState<string | null>(null)
+  const [calFecha,   setCalFecha]   = useState('')
+  const [calLoading, setCalLoading] = useState(false)
+  const [calDone,    setCalDone]    = useState<Set<string>>(new Set())
+
+  function abrirCalendario(item: BancoItem) {
+    if (calItemId === item.id) { setCalItemId(null); return }
+    setCalItemId(item.id)
+    // Pre-fill with existing fecha_calendario or tomorrow
+    const d = new Date(); d.setDate(d.getDate() + 1)
+    setCalFecha(item.fecha_calendario?.slice(0, 10) ?? d.toISOString().slice(0, 10))
+  }
+
+  async function confirmarCalendario(item: BancoItem) {
+    if (!calFecha || !clienteId) return
+    setCalLoading(true)
+    try {
+      const res = await fetch('/api/strategy/calendario', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          client_id        : clienteId,
+          titulo           : item.title,
+          keyword          : item.main_keyword,
+          tipo_articulo    : item.tipo_articulo ?? 'nuevo',
+          funnel_stage     : item.funnel_stage ?? 'tofu',
+          cluster          : item.cluster,
+          fecha_publicacion: calFecha,
+          fuente           : 'banco',
+          map_item_id      : item.id,
+        }),
+      })
+      if (res.ok) {
+        setCalDone((prev) => { const next = new Set(prev); next.add(item.id); return next })
+        setCalItemId(null)
+      }
+    } finally {
+      setCalLoading(false)
+    }
+  }
+
   async function handleDescartar(itemId: string) {
     setDescartandoId(itemId)
     try {
@@ -513,25 +556,6 @@ export default function BancoClient({ clientes }: Props) {
           >
             <RefreshCw className={cn('h-3.5 w-3.5', cargando && 'animate-spin')} />
             Actualizar
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => openPlanModal()}
-            className="gap-1.5 text-indigo-600 border-indigo-200 hover:bg-indigo-50"
-          >
-            <CalendarDays className="h-3.5 w-3.5" />
-            Planificar trimestre
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setFasesModal(true)}
-            disabled={!clienteId}
-            className="gap-1.5 text-violet-600 border-violet-200 hover:bg-violet-50"
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            Distribuir en fases
           </Button>
         </div>
       </div>
@@ -827,28 +851,76 @@ export default function BancoClient({ clientes }: Props) {
 
                         {/* Acción */}
                         <td className="px-3 py-3">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {item.contenido_id && item.status !== 'descartado' && (
-                              <Link
-                                href={`/contenidos/${item.contenido_id}`}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                Ver pedido
-                              </Link>
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {item.contenido_id && item.status !== 'descartado' && (
+                                <Link
+                                  href={`/contenidos/${item.contenido_id}`}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition-colors"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                  Ver pedido
+                                </Link>
+                              )}
+                              {/* Añadir al calendario */}
+                              {item.estado_almacen !== 'descartado' && (
+                                <button
+                                  type="button"
+                                  onClick={() => abrirCalendario(item)}
+                                  title="Añadir al calendario"
+                                  className={`inline-flex items-center gap-0.5 text-[10px] font-semibold rounded-lg px-2 py-1.5 transition-colors ${
+                                    calDone.has(item.id)
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : calItemId === item.id
+                                        ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
+                                        : 'bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'
+                                  }`}
+                                >
+                                  {calDone.has(item.id)
+                                    ? <CalendarCheck2 className="h-3 w-3" />
+                                    : <CalendarPlus className="h-3 w-3" />
+                                  }
+                                </button>
+                              )}
+                              <ArchiveMenu
+                                archived={item.status === 'descartado' || item.estado_almacen === 'descartado'}
+                                archiveLabel="Descartar"
+                                restoreLabel="Restaurar"
+                                loading={descartandoId === item.id}
+                                onArchive={() =>
+                                  item.status === 'descartado' || item.estado_almacen === 'descartado'
+                                    ? handleRestaurar(item.id)
+                                    : handleDescartar(item.id)
+                                }
+                                onDelete={!item.contenido_id ? () => handleDeleteItem(item.id) : undefined}
+                              />
+                            </div>
+                            {/* Inline fecha picker */}
+                            {calItemId === item.id && (
+                              <div className="flex items-center gap-1 mt-1">
+                                <input
+                                  type="date"
+                                  value={calFecha}
+                                  onChange={(e) => setCalFecha(e.target.value)}
+                                  className="border border-gray-200 rounded px-1.5 py-0.5 text-[10px] text-gray-700 outline-none focus:border-indigo-400 w-28"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => confirmarCalendario(item)}
+                                  disabled={!calFecha || calLoading}
+                                  className="text-[10px] font-semibold bg-indigo-600 text-white rounded px-2 py-0.5 hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                  {calLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : '✓'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCalItemId(null)}
+                                  className="text-gray-400 hover:text-gray-600"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
                             )}
-                            <ArchiveMenu
-                              archived={item.status === 'descartado' || item.estado_almacen === 'descartado'}
-                              archiveLabel="Descartar"
-                              restoreLabel="Restaurar"
-                              loading={descartandoId === item.id}
-                              onArchive={() =>
-                                item.status === 'descartado' || item.estado_almacen === 'descartado'
-                                  ? handleRestaurar(item.id)
-                                  : handleDescartar(item.id)
-                              }
-                              onDelete={!item.contenido_id ? () => handleDeleteItem(item.id) : undefined}
-                            />
                           </div>
                         </td>
                       </tr>

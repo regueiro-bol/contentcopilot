@@ -82,6 +82,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, contenido_id: existente.id, already_exists: true })
   }
 
+  // Construir brief SEO pre-rellenado con los datos de la oportunidad
+  const brief = {
+    keyword_principal    : keyword ?? '',
+    titulo_propuesto     : urgencia === '24h' ? `[URGENTE] ${titulo}` : titulo,
+    url_prevista         : `/${slug}`,
+    tipo_keyword         : 'informacional',
+    tipo_serp            : 'articulo',
+    description_propuesta: '',
+    respuesta_directa    : '',
+    featured_snippet     : false,
+    estructura_h         : '',
+    keywords_secundarias : [] as string[],
+    fuentes              : [] as string[],
+    links_obligatorios   : [] as string[],
+    formato_recomendado  : 'articulo',
+    enfoque              : contexto ?? '',
+    observaciones_seo    : urgencia ? `Urgencia: ${urgencia}` : '',
+  }
+
   // Crear contenido
   const { data: contenido, error: contErr } = await supabase
     .from('contenidos')
@@ -92,7 +111,8 @@ export async function POST(request: NextRequest) {
       cliente_id: client_id,
       estado: 'pendiente',
       keyword_principal: keyword || null,
-      brief: contexto ? { contexto_actualidad: contexto, urgencia } : null,
+      notas_iniciales: contexto || null,
+      brief,
     })
     .select('id')
     .single()
