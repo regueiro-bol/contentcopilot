@@ -21,6 +21,7 @@ import {
   CalendarCheck2,
   ChevronRight,
   CalendarPlus,
+  CheckCircle2,
 } from 'lucide-react'
 import { Button }              from '@/components/ui/button'
 import { Card, CardContent }   from '@/components/ui/card'
@@ -518,7 +519,7 @@ export default function BancoClient({ clientes }: Props) {
   }), [itemsMerged, total])
 
   const clienteNombre = clientes.find((c) => c.id === clienteId)?.nombre ?? '—'
-  const hayFiltros    = !!(filtroEstado || filtroTipo || filtroFunnel || filtroFase || filtroPrioridad || filtroCluster || busqueda)
+  const hayFiltros    = !!(filtroTipo || filtroFunnel || filtroFase || filtroPrioridad || filtroCluster || busqueda)
   const todosSeleccionados = seleccionados.size > 0 && seleccionados.size === itemsMerged.length
 
   return (
@@ -577,6 +578,32 @@ export default function BancoClient({ clientes }: Props) {
         ))}
       </div>
 
+      {/* ── Pills de estado ─────────────────────────────────── */}
+      <div className="flex items-center gap-1.5">
+        {([
+          { pill: '',          label: 'Todos'      },
+          { pill: 'pendientes', label: 'Pendientes' },
+          { pill: 'publicado',  label: 'Publicados' },
+        ] as const).map(({ pill, label }) => {
+          const active = filtroEstado === pill
+          return (
+            <button
+              key={pill}
+              type="button"
+              onClick={() => setFiltroEstado(pill)}
+              className={cn(
+                'rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors',
+                active
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+              )}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
       {/* ── Filtros ─────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-2 items-center bg-gray-50 rounded-xl px-3 py-2.5">
         {/* Búsqueda */}
@@ -623,16 +650,6 @@ export default function BancoClient({ clientes }: Props) {
           <option value="bofu">BOFU</option>
         </select>
 
-        {/* Estado */}
-        <select
-          value={filtroEstado}
-          onChange={(e) => setFiltroEstado(e.target.value)}
-          className="text-xs text-gray-600 border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none cursor-pointer"
-        >
-          <option value="">Estado: todos</option>
-          {ESTADOS.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
-        </select>
-
         {/* Tipo */}
         <select
           value={filtroTipo}
@@ -674,7 +691,7 @@ export default function BancoClient({ clientes }: Props) {
           <button
             type="button"
             onClick={() => {
-              setFiltroEstado(''); setFiltroTipo(''); setFiltroFunnel('')
+              setFiltroTipo(''); setFiltroFunnel('')
               setFiltroFase(''); setFiltroPrioridad(''); setFiltroCluster('')
               setBusqueda(''); setBusquedaInput('')
             }}
@@ -684,14 +701,6 @@ export default function BancoClient({ clientes }: Props) {
           </button>
         )}
       </div>
-
-      {/* ── Banner descartados ──────────────────────────────── */}
-      {filtroEstado === 'descartado' && (
-        <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <Archive className="h-3.5 w-3.5 shrink-0" />
-          Artículos descartados — puedes restaurarlos o eliminarlos definitivamente (solo si no tienen pedido vinculado).
-        </div>
-      )}
 
       {/* ── Error ───────────────────────────────────────────── */}
       {error && (
@@ -754,6 +763,7 @@ export default function BancoClient({ clientes }: Props) {
                   {itemsMerged.map((item) => {
                     const seleccionado = seleccionados.has(item.id)
                     const asignado     = item.assignee_name ?? item.redactor_asignado
+                    const publicado    = item.estado_almacen === 'publicado'
 
                     return (
                       <tr
@@ -761,6 +771,7 @@ export default function BancoClient({ clientes }: Props) {
                         className={cn(
                           'hover:bg-gray-50/60 transition-colors',
                           seleccionado && 'bg-indigo-50/40',
+                          publicado && 'opacity-70',
                         )}
                       >
                         {/* Checkbox */}
@@ -779,9 +790,19 @@ export default function BancoClient({ clientes }: Props) {
 
                         {/* Título */}
                         <td className="px-3 py-3 max-w-[240px]">
-                          <p className="font-medium text-gray-900 leading-snug line-clamp-2 text-xs">{item.title}</p>
+                          <div className="flex items-start gap-1.5">
+                            {publicado && (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0 mt-0.5" />
+                            )}
+                            <p className={cn(
+                              'font-medium leading-snug line-clamp-2 text-xs',
+                              publicado ? 'text-gray-400' : 'text-gray-900',
+                            )}>
+                              {item.title}
+                            </p>
+                          </div>
                           {item.slug && (
-                            <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5">/{item.slug}</p>
+                            <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5 ml-5">/{item.slug}</p>
                           )}
                         </td>
 
@@ -834,7 +855,23 @@ export default function BancoClient({ clientes }: Props) {
 
                         {/* Estado */}
                         <td className="px-3 py-3 text-center">
-                          <EstadoBadge estado={item.estado_almacen} />
+                          {item.estado_almacen === 'publicado' && (
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                              Publicado
+                            </span>
+                          )}
+                          {item.estado_almacen === 'en_redaccion' && (
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-blue-100 text-blue-700 whitespace-nowrap">
+                              En redacción
+                            </span>
+                          )}
+                          {item.estado_almacen === 'en_calendario' && (
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-700 whitespace-nowrap">
+                              {item.fecha_calendario
+                                ? `Planif. · ${new Date(item.fecha_calendario).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`
+                                : 'Planificado'}
+                            </span>
+                          )}
                         </td>
 
                         {/* Asignado a */}

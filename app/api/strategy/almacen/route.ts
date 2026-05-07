@@ -56,7 +56,10 @@ export async function GET(request: NextRequest) {
 
   // El filtro de estado se aplica sobre el campo calculado estado_almacen.
   // Por defecto se excluyen los descartados (son visibles solo cuando se filtra por 'descartado').
-  if (estado) {
+  if (estado === 'pendientes') {
+    // Artículos que aún no están publicados ni descartados
+    query = query.neq('estado_almacen', 'publicado').neq('estado_almacen', 'descartado')
+  } else if (estado) {
     query = query.eq('estado_almacen', estado)
   } else {
     query = query.neq('estado_almacen', 'descartado')

@@ -6,13 +6,13 @@ import { useRouter } from 'next/navigation'
 import {
   Search, Map, RefreshCw, Plus, Lock, ChevronRight, TrendingUp,
   BarChart3, Layers, Users, Lightbulb, Zap, Calendar, Loader2,
-  AlertCircle, ExternalLink, BookOpen, CheckCircle2, X, Archive,
+  AlertCircle, ExternalLink, BookOpen, CheckCircle2, X, Archive, Pencil,
 } from 'lucide-react'
 import { ArchiveMenu } from '@/components/ui/ArchiveMenu'
 import { Button }                                  from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge }                                   from '@/components/ui/badge'
-import { formatearFecha }                          from '@/lib/utils'
+import { formatearFecha, cn }                       from '@/lib/utils'
 
 // ─────────────────────────────────────────────────────────────
 // Tipos
@@ -604,58 +604,69 @@ export default function StrategyDashboardClient({
                   const isPlanificando = planificandoId === op.id
                   return (
                     <div key={op.id}
-                      className={`rounded-lg border bg-white p-3.5 ${
-                        yaPlanificada ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-200'
-                      }`}>
-                      <div className="flex items-start gap-3">
-                        <span className="text-base shrink-0">{isEstacional ? '📅' : '📈'}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap mb-1">
-                            <p className="text-sm font-semibold text-gray-900">{op.titulo}</p>
-                            {isEstacional
-                              ? <Badge className={`text-[10px] shrink-0 ${urg.cls}`}>{urg.label}</Badge>
-                              : <Badge className={`text-[10px] shrink-0 ${rel.cls}`}>{rel.label}</Badge>}
-                            {op.fecha_evento && (
-                              <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
-                                <Calendar className="h-3 w-3" />
-                                {new Date(op.fecha_evento).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
-                              </span>
-                            )}
-                            {yaPlanificada && (
-                              <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 flex items-center gap-0.5">
-                                <CheckCircle2 className="h-3 w-3" />
-                                Planificado · {new Date(planificadas[op.id].fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
-                              </span>
-                            )}
-                          </div>
+                      className={cn(
+                        'rounded-lg bg-white p-3.5',
+                        'border-t border-r border-b border-gray-200',
+                        yaPlanificada
+                          ? 'border-l-4 border-l-emerald-400'
+                          : (op.urgencia === '24h' || op.urgencia === 'semana')
+                            ? 'border-l-4 border-l-red-400'
+                            : op.urgencia === 'mes'
+                              ? 'border-l-4 border-l-amber-400'
+                              : 'border-l-4 border-l-gray-300',
+                      )}>
+                      {/* Título + badge urgencia */}
+                      <div className="flex items-start gap-2 mb-1.5">
+                        <span className="text-sm shrink-0 mt-0.5">{isEstacional ? '📅' : '🔥'}</span>
+                        <p className="text-sm font-semibold text-gray-900 flex-1 leading-snug">{op.titulo}</p>
+                        {yaPlanificada ? (
+                          <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 flex items-center gap-0.5 shrink-0">
+                            <CheckCircle2 className="h-3 w-3" />
+                            {new Date(planificadas[op.id].fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                          </span>
+                        ) : (
+                          <Badge className={`text-[10px] shrink-0 ${isEstacional ? urg.cls : rel.cls}`}>
+                            {isEstacional ? urg.label : rel.label}
+                          </Badge>
+                        )}
+                      </div>
+                      {/* Keyword + descripción */}
+                      <div className="ml-6 space-y-0.5 mb-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           {op.keyword && (
-                            <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5 mr-1">{op.keyword}</span>
+                            <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">{op.keyword}</span>
                           )}
-                          {(op.descripcion || op.contexto) && (
-                            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{op.descripcion ?? op.contexto}</p>
+                          {op.fecha_evento && (
+                            <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+                              <Calendar className="h-2.5 w-2.5" />
+                              {new Date(op.fecha_evento).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                            </span>
                           )}
                         </div>
-                        {/* Acciones */}
-                        <div className="flex flex-col gap-1.5 shrink-0">
-                          {!yaPlanificada && (
-                            <button type="button" onClick={() => abrirPlan(op)}
-                              className={`inline-flex items-center gap-1 text-[10px] font-semibold rounded-lg px-2.5 py-1.5 transition-colors ${
-                                isPlanificando
-                                  ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
-                                  : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
-                              }`}>
-                              <Calendar className="h-3 w-3" /> Añadir al calendario
-                            </button>
-                          )}
-                          <button type="button" onClick={() => handleCrearContenido(op)}
-                            disabled={creandoContenido === op.id}
-                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg px-2.5 py-1.5 transition-colors">
-                            {creandoContenido === op.id
-                              ? <Loader2 className="h-3 w-3 animate-spin" />
-                              : <ExternalLink className="h-3 w-3" />}
-                            Crear contenido
+                        {(op.descripcion || op.contexto) && (
+                          <p className="text-xs text-gray-500 line-clamp-1">{op.descripcion ?? op.contexto}</p>
+                        )}
+                      </div>
+                      {/* Botones de acción */}
+                      <div className="ml-6 flex items-center gap-2">
+                        {!yaPlanificada && (
+                          <button type="button" onClick={() => abrirPlan(op)}
+                            className={`inline-flex items-center gap-1 text-[10px] font-semibold rounded-lg px-2.5 py-1.5 transition-colors ${
+                              isPlanificando
+                                ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300'
+                                : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                            }`}>
+                            <Calendar className="h-3 w-3" /> Añadir al calendario
                           </button>
-                        </div>
+                        )}
+                        <button type="button" onClick={() => handleCrearContenido(op)}
+                          disabled={creandoContenido === op.id}
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg px-2.5 py-1.5 transition-colors">
+                          {creandoContenido === op.id
+                            ? <Loader2 className="h-3 w-3 animate-spin" />
+                            : <Pencil className="h-3 w-3" />}
+                          Crear contenido
+                        </button>
                       </div>
 
                       {/* Mini-form planificar */}

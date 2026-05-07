@@ -1112,14 +1112,9 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                         <tr className="border-b border-gray-100">
                           <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 w-6">#</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">Título</th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden lg:table-cell">Keyword principal</th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Cluster</th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">Funnel</th>
-                          <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 hidden sm:table-cell">Volumen</th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Dificultad</th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Prioridad</th>
-                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden sm:table-cell">Tipo</th>
-                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden lg:table-cell">Asignado a</th>
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">Etapas</th>
+                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">P</th>
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Redactor</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden md:table-cell">Validación</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">Acción</th>
                         </tr>
@@ -1128,65 +1123,42 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                         {faseItems.map((item: MapItem, idx: number) => (
                           <tr key={item.id} className="hover:bg-gray-50/60 transition-colors">
                             <td className="px-4 py-3 text-xs text-gray-400 tabular-nums">{idx + 1}</td>
+                            {/* Título + keyword + cluster */}
                             <td className="px-3 py-3 max-w-[280px]">
-                              <p className="font-medium text-gray-900 leading-snug line-clamp-2">
+                              <p className="font-medium text-gray-900 leading-snug line-clamp-2 text-sm">
                                 {item.title}
                               </p>
-                              {item.slug && (
-                                <p className="text-[11px] text-gray-400 mt-0.5 font-mono truncate">
-                                  /{item.slug}
-                                </p>
+                              <p className="text-[11px] text-gray-500 mt-0.5 truncate">
+                                {item.main_keyword}
+                              </p>
+                              {item.cluster && (
+                                <p className="text-[10px] text-gray-400 mt-0.5 truncate">{item.cluster}</p>
                               )}
                             </td>
-                            <td className="px-3 py-3 hidden lg:table-cell">
-                              <span className="text-xs text-gray-600 font-medium">{item.main_keyword}</span>
-                              {item.secondary_keywords.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {item.secondary_keywords.slice(0, 2).map((kw: string) => (
-                                    <span key={kw} className="text-[10px] text-gray-400 bg-gray-50 rounded px-1">
-                                      {kw}
-                                    </span>
-                                  ))}
-                                  {item.secondary_keywords.length > 2 && (
-                                    <span className="text-[10px] text-gray-300">
-                                      +{item.secondary_keywords.length - 2}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-3 py-3 hidden md:table-cell">
-                              <span className="text-xs text-gray-500 line-clamp-2">{item.cluster ?? '—'}</span>
-                            </td>
+                            {/* Funnel + Fase badges */}
                             <td className="px-3 py-3">
-                              <FunnelBadge stage={item.funnel_stage} />
+                              <div className="flex flex-col gap-1">
+                                <FunnelBadge stage={item.funnel_stage} />
+                                <FaseBadge fase={item.fase} />
+                              </div>
                             </td>
-                            <td className="px-3 py-3 text-right hidden sm:table-cell">
-                              <span className="text-sm font-semibold tabular-nums text-gray-700">
-                                {item.volume != null ? volumenLabel(item.volume) : <span className="text-gray-300">—</span>}
-                              </span>
+                            {/* Prioridad simple */}
+                            <td className="px-3 py-3 text-center">
+                              {(() => {
+                                const p = item.prioridad_final ?? item.priority
+                                const cls = p === 1 ? 'text-red-600 font-bold' : p === 2 ? 'text-amber-600 font-semibold' : 'text-gray-400'
+                                return <span className={`text-xs ${cls}`}>P{p ?? 2}</span>
+                              })()}
                             </td>
-                            <td className="px-3 py-3 hidden sm:table-cell">
-                              {item.difficulty != null ? (
-                                <span className="text-xs text-gray-600">
-                                  {item.difficulty} · {dificultadLabel(item.difficulty)}
-                                </span>
-                              ) : <span className="text-gray-300 text-xs">—</span>}
-                            </td>
+                            {/* Redactor */}
                             <td className="px-3 py-3 hidden md:table-cell">
-                              <PrioridadFinalBadge item={item} />
-                            </td>
-                            <td className="px-3 py-3 text-center hidden sm:table-cell">
-                              <TipoArticuloBadge tipo={item.tipo_articulo} />
-                            </td>
-                            <td className="px-3 py-3 hidden lg:table-cell">
                               {item.redactor_asignado ? (
                                 <span className="inline-flex items-center gap-1 text-xs text-gray-600">
                                   <User className="h-3 w-3 text-gray-400" />
                                   {item.redactor_asignado}
                                 </span>
                               ) : (
-                                <span className="text-[10px] text-gray-300">Sin asignar</span>
+                                <span className="text-[10px] text-gray-300">—</span>
                               )}
                             </td>
                             <td className="px-3 py-3 text-center hidden md:table-cell">

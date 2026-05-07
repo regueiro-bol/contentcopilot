@@ -15,6 +15,8 @@ import {
   Zap,
   Pencil,
   ArrowUpRight,
+  CheckCircle2,
+  Eye,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -88,8 +90,20 @@ function FuenteIcon({ fuente }: { fuente: string }) {
       <Archive className="h-2 w-2" />Banco
     </span>
   )
-  if (fuente === 'actualidad') return <Zap    className="h-2.5 w-2.5 shrink-0 text-amber-500" aria-label="Actualidad" />
-  return <Pencil className="h-2.5 w-2.5 shrink-0 text-gray-400" aria-label="Manual" />
+  if (fuente === 'actualidad') return <Zap className="h-2.5 w-2.5 shrink-0 text-amber-500" aria-label="Actualidad" />
+  return null
+}
+
+function StatusChipIcon({ status }: { status: string }) {
+  if (status === 'publicado')    return <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+  if (status === 'revision')     return <Eye className="h-3 w-3 text-blue-400 shrink-0" />
+  if (status === 'en_redaccion') return <Pencil className="h-2.5 w-2.5 text-gray-400 shrink-0" />
+  return null
+}
+
+const FUENTE_BORDER: Record<string, string> = {
+  actualidad: 'border-l-2 border-l-amber-400',
+  almacen   : 'border-l-2 border-l-indigo-300',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -440,33 +454,32 @@ export default function CalendarioClient({ clientes }: Props) {
                     </span>
 
                     {/* Artículos del día */}
-                    {articulosDia.map(item => {
-                      const st  = STATUS_STYLE[item.status] ?? STATUS_STYLE.planificado
-                      const tip = TIPO_STYLE[item.tipo_articulo ?? 'nuevo'] ?? 'bg-gray-100 text-gray-500'
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => { setPanelItem(item); setPanelEdits({}) }}
-                          className="w-full text-left rounded-md border border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm transition-all px-1.5 py-1 group"
-                        >
-                          <div className="flex items-center gap-1 mb-0.5">
-                            <FuenteIcon fuente={item.fuente} />
-                            <span className={`text-[9px] font-bold rounded-full px-1.5 py-0 ${st.cls}`}>
-                              {st.label}
-                            </span>
-                          </div>
-                          <p className="text-[11px] font-medium text-gray-800 leading-snug line-clamp-2">
+                    {articulosDia.map(item => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => { setPanelItem(item); setPanelEdits({}) }}
+                        className={cn(
+                          'w-full text-left rounded-md bg-white hover:border-indigo-300 hover:shadow-sm transition-all px-1.5 py-1',
+                          'border border-gray-200',
+                          FUENTE_BORDER[item.fuente] ?? 'border-l-2 border-l-gray-200',
+                          item.status === 'publicado' && 'opacity-70',
+                        )}
+                      >
+                        <div className="flex items-start gap-1">
+                          {item.fuente === 'actualidad' && (
+                            <Zap className="h-2.5 w-2.5 text-amber-500 mt-0.5 shrink-0" />
+                          )}
+                          <p className={cn(
+                            'text-[11px] font-medium leading-snug line-clamp-2 flex-1',
+                            item.status === 'publicado' ? 'text-gray-400' : 'text-gray-800',
+                          )}>
                             {item.titulo}
                           </p>
-                          {item.tipo_articulo && (
-                            <span className={`text-[9px] font-bold rounded-full px-1.5 py-0 ${tip}`}>
-                              {item.tipo_articulo}
-                            </span>
-                          )}
-                        </button>
-                      )
-                    })}
+                          <StatusChipIcon status={item.status} />
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )
               })}
