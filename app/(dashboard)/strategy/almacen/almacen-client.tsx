@@ -20,10 +20,12 @@ import {
   CalendarDays,
   CalendarCheck2,
   ChevronRight,
+  GitBranch,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
+import { Button }              from '@/components/ui/button'
+import { Card, CardContent }   from '@/components/ui/card'
+import { cn }                  from '@/lib/utils'
+import FaseDistributorModal    from './FaseDistributorModal'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -209,6 +211,9 @@ export default function BancoClient({ clientes }: Props) {
   // Overrides optimistas
   const [localOverrides, setLocalOverrides]     = useState<Record<string, Partial<BancoItem>>>({})
   const [guardandoId, setGuardandoId]           = useState<string | null>(null)
+
+  // Distribuidor por fases
+  const [fasesModal, setFasesModal]             = useState(false)
 
   // Planificador trimestral
   const [planModal, setPlanModal]               = useState(false)
@@ -470,6 +475,16 @@ export default function BancoClient({ clientes }: Props) {
           >
             <CalendarDays className="h-3.5 w-3.5" />
             Planificar trimestre
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setFasesModal(true)}
+            disabled={!clienteId}
+            className="gap-1.5 text-violet-600 border-violet-200 hover:bg-violet-50"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Distribuir en fases
           </Button>
         </div>
       </div>
@@ -1082,6 +1097,19 @@ export default function BancoClient({ clientes }: Props) {
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Modal Distribuir en fases ────────────────────── */}
+      {fasesModal && clienteId && (
+        <FaseDistributorModal
+          clienteId={clienteId}
+          items={items.filter((i) => i.estado_almacen !== 'publicado')}
+          onClose={() => setFasesModal(false)}
+          onDone={() => {
+            setFasesModal(false)
+            cargarItems(true)
+          }}
+        />
       )}
     </div>
   )
