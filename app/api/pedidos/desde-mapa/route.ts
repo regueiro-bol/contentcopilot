@@ -41,7 +41,8 @@ function buildBriefPrompt(ctx: {
   perfilLector: string | null
   competidores: string[] | null
   // Publicados
-  publicados: { titulo: string; keyword: string | null }[]
+  publicados   : { titulo: string; keyword: string | null }[]
+  extraContext?: string
 }): string {
   const lines: string[] = []
 
@@ -104,6 +105,13 @@ function buildBriefPrompt(ctx: {
     for (const p of ctx.publicados) {
       lines.push(`- "${p.titulo}"${p.keyword ? ` (kw: ${p.keyword})` : ''}`)
     }
+  }
+
+  // Extra context (oportunidades de actualidad)
+  if (ctx.extraContext) {
+    lines.push('')
+    lines.push('# CONTEXTO ADICIONAL')
+    lines.push(ctx.extraContext)
   }
 
   // Instrucciones
@@ -199,31 +207,164 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json() as {
-      map_item_id         : string
+      map_item_id?        : string
+      oportunidad_id?     : string
       client_id           : string
       titulo              : string
       keyword_principal   : string
       keywords_secundarias: string[]
       tipo?               : 'nuevo' | 'actualizacion'
       existing_url?       : string
+      // Contexto extra para oportunidades
+      urgencia?           : string
+      contexto?           : string
+      fecha_evento?       : string
     }
 
-    const { map_item_id, client_id, titulo: tituloRaw, keyword_principal, keywords_secundarias } = body
+    const {
+      map_item_id, oportunidad_id, client_id,
+      titulo: tituloRaw, keyword_principal, keywords_secundarias,
+    } = body
     const esActualizacion = body.tipo === 'actualizacion'
     const titulo = esActualizacion ? `[ACTUALIZACIÓN] ${tituloRaw}` : tituloRaw
 
-    if (!map_item_id || !client_id || !titulo) {
+    if ((!map_item_id && !oportunidad_id) || !client_id || !titulo) {
       return NextResponse.json(
-        { error: 'map_item_id, client_id y titulo son obligatorios' },
+        { error: 'map_item_id o oportunidad_id, client_id y titulo son obligatorios' },
         { status: 400 },
       )
     }
 
+    // ── Rama OPORTUNIDAD ─────────────────────────────────────────
+    if (oportunidad_id) {
+      const { data: op } = await supabase
+        .from('oportunidades_actualidad')
+        .select('id, contenido_id, titulo, keyword, contexto, urgencia, fecha_evento')
+        .eq('id', oportunidad_id)
+        .single()
+
+      if (!op) return NextResponse.json({ error: 'Oportunidad no encontrada' }, { status: 404 })
+
+      if (op.contenido_id) {
+        return NextResponse.json({ ok: true, contenido_id: op.contenido_id, message: 'Ya existe un pedido' })
+      }
+
+      // Crear o encontrar proyecto "Actualidad"
+      const PROJECT_ACTUALIDAD = 'Actualidad'
+      let { data: proyActualidad } = await supabase
+        .from('proyectos')
+        .select('id, tono_voz, perfil_lector')
+        .eq('cliente_id', client_id)
+        .eq('nombre', PROJECT_ACTUALIDAD)
+        .eq('activo', true)
+        .maybeSingle()
+
+      if (!proyActualidad) {
+        const { data: newP, error: pErr } = await supabase
+          .from('proyectos')
+          .insert({ cliente_id: client_id, nombre: PROJECT_ACTUALIDAD, slug: 'actualidad', activo: true })
+          .select('id, tono_voz, perfil_lector')
+          .single()
+        if (pErr || !newP) return NextResponse.json({ error: 'Error creando proyecto Actualidad' }, { status: 500 })
+        proyActualidad = newP
+      }
+
+      const slug = toSlug(titulo)
+      const { data: existente } = await supabase
+        .from('contenidos')
+        .select('id')
+        .eq('proyecto_id', proyActualidad.id)
+        .eq('slug', slug)
+        .maybeSingle()
+
+      let contenidoId: string
+      if (existente) {
+        contenidoId = existente.id
+      } else {
+        const urgenciaStr = body.urgencia ?? op.urgencia
+        const { data: cont, error: cErr } = await supabase
+          .from('contenidos')
+          .insert({
+            titulo           : urgenciaStr === '24h' ? `[URGENTE] ${titulo}` : titulo,
+            slug,
+            proyecto_id      : proyActualidad.id,
+            cliente_id       : client_id,
+            estado           : 'pendiente',
+            keyword_principal: keyword_principal || null,
+            notas_iniciales  : op.contexto ?? body.contexto ?? null,
+          })
+          .select('id')
+          .single()
+        if (cErr || !cont) return NextResponse.json({ error: 'Error creando contenido' }, { status: 500 })
+        contenidoId = cont.id
+      }
+
+      // Vincular oportunidad al contenido
+      await supabase
+        .from('oportunidades_actualidad')
+        .update({ contenido_id: contenidoId })
+        .eq('id', oportunidad_id)
+
+      // Generar brief SEO con contexto de actualidad
+      const { data: clienteOp } = await supabase
+        .from('clientes')
+        .select('nombre, sector, descripcion, tono_voz, perfil_lector, competidores')
+        .eq('id', client_id)
+        .single()
+
+      const urgenciaContext = body.urgencia ?? op.urgencia
+      const fechaContext    = body.fecha_evento ?? op.fecha_evento
+      const contextoOp      = op.contexto ?? body.contexto ?? ''
+
+      const briefPromptOp = buildBriefPrompt({
+        titulo          : tituloRaw,
+        slug,
+        mainKeyword     : keyword_principal,
+        secondaryKeywords: keywords_secundarias ?? [],
+        cluster         : null,
+        esActualizacion : false,
+        existingUrl     : null,
+        funnelStage     : 'tofu',
+        volume          : null,
+        difficulty      : null,
+        suggestedMonth  : fechaContext ? new Date(fechaContext).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }) : null,
+        gscPosition     : null,
+        gscClicks       : null,
+        gscImpressions  : null,
+        gscCtr          : null,
+        gscOpportunity  : null,
+        clienteNombre   : clienteOp?.nombre ?? 'Cliente',
+        clienteSector   : clienteOp?.sector ?? null,
+        clienteDescripcion: clienteOp?.descripcion ?? null,
+        tonoVoz         : (proyActualidad.tono_voz as string | null) || (clienteOp?.tono_voz as string | null) || null,
+        perfilLector    : (proyActualidad.perfil_lector as string | null) || (clienteOp?.perfil_lector as string | null) || null,
+        competidores    : Array.isArray(clienteOp?.competidores) ? clienteOp.competidores as string[] : null,
+        publicados      : [],
+        extraContext    : `OPORTUNIDAD DE ACTUALIDAD: ${op.titulo}\nContexto: ${contextoOp}${urgenciaContext ? `\nUrgencia: ${urgenciaContext}` : ''}${fechaContext ? `\nFecha relevante: ${fechaContext}` : ''}`,
+      })
+
+      const respOp = await anthropic.messages.create({
+        model: 'claude-sonnet-4-5', max_tokens: 4096,
+        system: BRIEF_SYSTEM,
+        messages: [{ role: 'user', content: briefPromptOp }],
+      })
+      const briefTextOp = respOp.content[0].type === 'text' ? respOp.content[0].text.trim() : ''
+      if (briefTextOp) {
+        await supabase
+          .from('contenidos')
+          .update({ brief: { texto_generado: briefTextOp } })
+          .eq('id', contenidoId)
+      }
+
+      return NextResponse.json({ ok: true, contenido_id: contenidoId, brief_generated: briefTextOp.length > 0 })
+    }
+
+    // ── Rama MAP_ITEM (flujo original) ──────────────────────────
     // ── Verificar que el map_item existe y cargar datos completos ──
     const { data: mapItem } = await supabase
       .from('content_map_items')
       .select('id, contenido_id, map_id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, suggested_month')
-      .eq('id', map_item_id)
+      .eq('id', map_item_id!)
       .single()
 
     if (!mapItem) {

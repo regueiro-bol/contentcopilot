@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     // 2. Oportunidades activas y no caducadas
     supabase
       .from('oportunidades_actualidad')
-      .select('id, tipo, titulo, keyword, descripcion, urgencia, relevancia, fecha_evento, trending_pct, contexto, activa, expires_at')
+      .select('id, tipo, titulo, keyword, descripcion, urgencia, relevancia, fecha_evento, trending_pct, contexto, activa, expires_at, validacion, motivo_rechazo, contenido_id')
       .eq('client_id', client_id)
       .eq('activa', true)
       .or(`expires_at.is.null,expires_at.gt.${now}`)

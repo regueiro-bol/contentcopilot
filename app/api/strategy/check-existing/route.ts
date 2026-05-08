@@ -65,23 +65,39 @@ export async function POST(request: NextRequest) {
 
   try {
     const { map_id, client_id } = (await request.json()) as {
-      map_id: string
+      map_id?  : string
       client_id: string
     }
 
-    if (!map_id || !client_id) {
+    if (!client_id) {
       return NextResponse.json(
-        { error: 'map_id y client_id son obligatorios' },
+        { error: 'client_id es obligatorio' },
         { status: 400 },
       )
     }
 
-    // ── Cargar items del mapa ──────────────────────────────────
-    const { data: items, error: itemsErr } = await supabase
+    // ── Cargar items del mapa (por map_id o por client_id) ────────
+    let itemsQuery = supabase
       .from('content_map_items')
       .select('id, title, main_keyword, secondary_keywords')
-      .eq('map_id', map_id)
       .order('sort_order', { ascending: true })
+
+    if (map_id) {
+      itemsQuery = itemsQuery.eq('map_id', map_id)
+    } else {
+      // Encontrar todos los content_maps del cliente
+      const { data: maps } = await supabase
+        .from('content_maps')
+        .select('id')
+        .eq('client_id', client_id)
+      const mapIds = (maps ?? []).map((m) => m.id as string)
+      if (mapIds.length === 0) {
+        return NextResponse.json({ error: 'No hay mapas para este cliente' }, { status: 404 })
+      }
+      itemsQuery = itemsQuery.in('map_id', mapIds)
+    }
+
+    const { data: items, error: itemsErr } = await itemsQuery
 
     if (itemsErr || !items || items.length === 0) {
       return NextResponse.json(
