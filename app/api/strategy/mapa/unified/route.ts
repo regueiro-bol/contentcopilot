@@ -73,6 +73,39 @@ export async function GET(request: NextRequest) {
         .limit(1000)
 
       mapItems = (items ?? []) as unknown as Record<string, unknown>[]
+
+      // ── Fallback: rellenar fecha_calendario desde calendario_editorial ──
+      // Para items planificados desde Contenidos o Calendario (no desde Mapa)
+      // que aún tienen fecha_calendario = null en content_map_items.
+      const missingIds = mapItems
+        .filter((i) => !i.fecha_calendario && i.contenido_id)
+        .map((i) => i.contenido_id as string)
+
+      if (missingIds.length > 0) {
+        const { data: calEntradas } = await supabase
+          .from('calendario_editorial')
+          .select('contenido_id, fecha_publicacion')
+          .in('contenido_id', missingIds)
+          .neq('status', 'cancelado')
+          .order('fecha_publicacion', { ascending: false })
+
+        if (calEntradas && calEntradas.length > 0) {
+          // One entry per contenido_id (first = latest due to desc order)
+          const calMap = new Map<string, string>()
+          for (const e of calEntradas) {
+            if (e.contenido_id && !calMap.has(e.contenido_id)) {
+              calMap.set(e.contenido_id, e.fecha_publicacion)
+            }
+          }
+          mapItems = mapItems.map((item) => {
+            if (!item.fecha_calendario && item.contenido_id) {
+              const fallback = calMap.get(item.contenido_id as string)
+              if (fallback) return { ...item, fecha_calendario: fallback }
+            }
+            return item
+          })
+        }
+      }
     }
   }
 

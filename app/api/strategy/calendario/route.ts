@@ -152,8 +152,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: entradaError.message }, { status: 500 })
   }
 
-  // Actualizar map_item si viene del almacén
+  // Sincronizar content_map_items.fecha_calendario ────────────────────────────
   if (body.map_item_id) {
+    // Planificado desde Mapa — ya tenemos el item directo
     await supabase
       .from('content_map_items')
       .update({
@@ -162,6 +163,15 @@ export async function POST(request: NextRequest) {
         fecha_calendario: body.fecha_publicacion,
       })
       .eq('id', body.map_item_id)
+  } else if (contenido_id) {
+    // Planificado desde Contenidos o Calendario — buscar por contenido_id
+    await supabase
+      .from('content_map_items')
+      .update({
+        status          : 'planificado',
+        fecha_calendario: body.fecha_publicacion,
+      })
+      .eq('contenido_id', contenido_id)
   }
 
   return NextResponse.json({ ok: true, entrada, contenido_id })

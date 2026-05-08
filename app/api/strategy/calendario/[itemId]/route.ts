@@ -60,6 +60,21 @@ export async function PATCH(
     }
   }
 
+  // Sincronizar fecha_calendario en content_map_items cuando cambia la fecha
+  if (body.fecha_publicacion) {
+    if (data.map_item_id) {
+      await supabase
+        .from('content_map_items')
+        .update({ fecha_calendario: body.fecha_publicacion })
+        .eq('id', data.map_item_id)
+    } else if (data.contenido_id) {
+      await supabase
+        .from('content_map_items')
+        .update({ fecha_calendario: body.fecha_publicacion })
+        .eq('contenido_id', data.contenido_id)
+    }
+  }
+
   return NextResponse.json({ ok: true, item: data })
 }
 
