@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildClientContext } from '@/lib/context/client-context'
 import { contextToPrompt } from '@/lib/context/context-to-prompt'
+import { toSpanishTitleCase } from '@/lib/utils'
 
 export const maxDuration = 120
 
@@ -486,7 +487,7 @@ export async function POST(request: NextRequest) {
 
           const base = {
             map_id            : map.id,
-            title             : a.title,
+            title             : toSpanishTitleCase(a.title),
             slug              : a.slug,
             main_keyword      : a.main_keyword,
             secondary_keywords: a.secondary_keywords,

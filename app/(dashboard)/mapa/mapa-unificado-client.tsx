@@ -38,6 +38,18 @@ interface UnifiedItem {
 type FiltroActivo = 'todos' | 'aprobados' | 'revision' | 'tofu' | 'mofu' | 'bofu'
 
 // ─────────────────────────────────────────────────────────────
+// Extension pills
+// ─────────────────────────────────────────────────────────────
+
+const EXTENSION_PILLS = [
+  { label: '400–600',     min: 400,  max: 600  },
+  { label: '800–1.000',   min: 800,  max: 1000 },
+  { label: '1.200–1.500', min: 1200, max: 1500 },
+  { label: '2.000–2.500', min: 2000, max: 2500 },
+  { label: '3.000+',      min: 3000, max: 4000 },
+] as const
+
+// ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
@@ -209,6 +221,12 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   // ── Pedidos ──────────────────────────────────────────────
   const [pedidosEnProceso, setPedidosEnProceso] = useState<Set<string>>(new Set())
   const [pedidosCreados,   setPedidosCreados]   = useState<Record<string, string>>({})
+
+  // ── Extension modal (pre-brief) ──────────────────────────
+  const [pedidoItem,   setPedidoItem]   = useState<UnifiedItem | null>(null)
+  const [extPillIdx,   setExtPillIdx]   = useState(1)   // default: 800–1.000
+  const [extCustomMin, setExtCustomMin] = useState('')
+  const [extCustomMax, setExtCustomMax] = useState('')
 
   // ── Modal pedir ──────────────────────────────────────────
   const [mostrarModal,    setMostrarModal]    = useState(false)
@@ -418,9 +436,25 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   // Pedidos
   // ─────────────────────────────────────────────────────────
 
-  const handlePedir = async (item: UnifiedItem) => {
+  /** Abre el modal de extensión para el item seleccionado */
+  const handlePedir = (item: UnifiedItem) => {
     if (pedidosEnProceso.has(item.id)) return
+    setExtPillIdx(1)       // default 800–1.000
+    setExtCustomMin('')
+    setExtCustomMax('')
+    setPedidoItem(item)
+  }
+
+  /** Confirma la extensión y llama al API */
+  const handleConfirmarPedido = async () => {
+    const item = pedidoItem
+    if (!item) return
+    setPedidoItem(null)
     setPedidosEnProceso((prev) => { const n = new Set(prev); n.add(item.id); return n })
+
+    const pill   = EXTENSION_PILLS[extPillIdx]
+    const extMin = extCustomMin ? parseInt(extCustomMin, 10) : pill.min
+    const extMax = extCustomMax ? parseInt(extCustomMax, 10) : pill.max
 
     try {
       const body: Record<string, unknown> = {
@@ -428,6 +462,8 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
         titulo              : item.titulo,
         keyword_principal   : item.keyword ?? '',
         keywords_secundarias: [],
+        extension_min       : extMin,
+        extension_max       : extMax,
       }
 
       if (item.source === 'mapa') {
@@ -889,6 +925,64 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
           >
             {planLoading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Añadiendo…</> : 'Añadir al calendario'}
           </button>
+        </div>
+      )}
+
+      {/* ── Modal extensión (pre-brief) ──────────────────────── */}
+      {pedidoItem && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setPedidoItem(null) }}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Extensión del artículo</h2>
+            <p className="text-sm text-gray-500 mb-4 line-clamp-2 italic">{pedidoItem.titulo}</p>
+
+            {/* Pills de extensión */}
+            <p className="text-xs font-medium text-gray-600 uppercase tracking-wide mb-2">Selecciona el rango de palabras</p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {EXTENSION_PILLS.map((pill, idx) => (
+                <button
+                  key={pill.label}
+                  onClick={() => { setExtPillIdx(idx); setExtCustomMin(''); setExtCustomMax('') }}
+                  className={cn(
+                    'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                    extPillIdx === idx && !extCustomMin
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300',
+                  )}
+                >{pill.label}</button>
+              ))}
+            </div>
+
+            {/* Custom inputs */}
+            <p className="text-xs font-medium text-gray-600 uppercase tracking-wide mb-2">O personaliza</p>
+            <div className="flex items-center gap-2 mb-5">
+              <input
+                type="number" placeholder="Mín" min={100} value={extCustomMin}
+                onChange={(e) => setExtCustomMin(e.target.value)}
+                className="w-24 text-center text-sm border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <span className="text-gray-400 text-sm">—</span>
+              <input
+                type="number" placeholder="Máx" min={100} value={extCustomMax}
+                onChange={(e) => setExtCustomMax(e.target.value)}
+                className="w-24 text-center text-sm border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <span className="text-xs text-gray-400">palabras</span>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setPedidoItem(null)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">
+                Cancelar
+              </button>
+              <button onClick={handleConfirmarPedido}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-1.5">
+                <Pencil className="h-3.5 w-3.5" /> Generar brief →
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

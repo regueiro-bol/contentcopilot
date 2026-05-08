@@ -94,3 +94,36 @@ export function etiquetaEstadoContenido(estado: EstadoContenido | string): strin
 // Aliases de compatibilidad (para código legacy)
 export const colorEstadoProyecto = colorEstadoContenido
 export const etiquetaEstado = etiquetaEstadoContenido
+
+/**
+ * Convierte un título en English Title Case a sentence case español.
+ * Detecta si >60% de las palabras largas están capitalizadas (Title Case)
+ * y, si es así, convierte todo a minúsculas salvo la primera letra.
+ * Las preposiciones y artículos comunes siempre quedan en minúscula.
+ */
+export function toSpanishTitleCase(text: string): string {
+  if (!text || !text.trim()) return text
+
+  const words = text.split(' ')
+  const longWords = words.filter((w) => w.replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ]/g, '').length > 3)
+  const capitalizedLong = longWords.filter((w) => {
+    const first = w[0]
+    return first && first === first.toUpperCase() && first !== first.toLowerCase()
+  })
+  const ratio = longWords.length > 2 ? capitalizedLong.length / longWords.length : 0
+  if (ratio <= 0.6) return text // already sentence case or not detectable
+
+  const lowercase = new Set([
+    'de','del','la','las','el','los','un','una','unos','unas',
+    'y','o','a','en','con','por','para','sin','sobre','entre',
+    'hasta','desde','que','como','pero','sino','aunque','e','u',
+    'al','sus','tu','su','mi','más','muy','vs','vs.',
+  ])
+
+  return words.map((word, i) => {
+    const clean = word.toLowerCase()
+    if (i === 0) return clean.charAt(0).toUpperCase() + clean.slice(1)
+    if (lowercase.has(clean)) return clean
+    return clean
+  }).join(' ')
+}

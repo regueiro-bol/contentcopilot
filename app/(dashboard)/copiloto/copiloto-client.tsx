@@ -481,9 +481,8 @@ export default function CopilotoClient({
     const c = contenidoActual
     if (!c) return SYSTEM_COPILOTO
     // Use stored extension if available; fall back to a sensible default for older contenidos
-    const extension = c.tamanyo_texto_min && c.tamanyo_texto_max
-      ? `${c.tamanyo_texto_min}–${c.tamanyo_texto_max} palabras`
-      : '800–1200 palabras'
+    const extMin = c.tamanyo_texto_min ?? 800
+    const extMax = c.tamanyo_texto_max ?? 1200
     return `${SYSTEM_COPILOTO}
 
 CONTEXTO ACTIVO DEL CONTENIDO:
@@ -492,7 +491,7 @@ Proyecto: ${c.proyectos?.nombre ?? 'Sin definir'}
 Tono de voz: ${c.proyectos?.tono_voz || 'No especificado'}
 Keywords objetivo: ${(c.proyectos?.keywords_objetivo ?? []).join(', ') || 'No especificadas'}
 Keyword principal: ${c.keyword_principal ?? 'No especificada'}
-Extensión objetivo: ${extension}
+EXTENSIÓN OBLIGATORIA: ${extMin}–${extMax} palabras. NO termines el artículo hasta alcanzar ${extMin} palabras. Si el contenido va corto, añade más ejemplos, datos, contexto y secciones hasta completar el mínimo.
 
 IMPORTANTE: Cuando generes un artículo completo o secciones largas, asegúrate de COMPLETAR el texto.
 Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible reducir el detalle que dejar el contenido incompleto.`

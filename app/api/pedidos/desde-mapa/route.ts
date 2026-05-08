@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { toSpanishTitleCase } from '@/lib/utils'
 
 export const maxDuration = 120
 
@@ -12,6 +13,8 @@ export const maxDuration = 120
 const BRIEF_SYSTEM = `Eres un director de estrategia de contenidos SEO para el mercado español con 10+ años de experiencia.
 Generas briefs editoriales exhaustivos y accionables que permiten a un redactor producir contenido optimizado sin necesidad de investigación adicional.
 Respondes siempre en español, con formato Markdown estructurado.
+
+REGLA TIPOGRÁFICA: Los títulos y H2/H3 deben seguir la tipografía española: solo la primera palabra del título lleva mayúscula inicial, el resto en minúscula (excepto nombres propios). NUNCA uses English Title Case.
 
 IMPORTANTE: El brief debe estar COMPLETO. No cortes ninguna sección.
 Si el espacio es limitado, reduce el detalle de secciones anteriores pero SIEMPRE completa las 7 secciones obligatorias.`
@@ -67,8 +70,11 @@ function buildBriefPrompt(ctx: {
   perfilLector: string | null
   competidores: string[] | null
   // Publicados
-  publicados   : { titulo: string; keyword: string | null }[]
-  extraContext?: string
+  publicados    : { titulo: string; keyword: string | null }[]
+  extraContext? : string
+  // Extensión
+  extensionMin? : number
+  extensionMax? : number
 }): string {
   const lines: string[] = []
 
@@ -138,6 +144,16 @@ function buildBriefPrompt(ctx: {
     lines.push('')
     lines.push('# CONTEXTO ADICIONAL')
     lines.push(ctx.extraContext)
+  }
+
+  // Extensión obligatoria (si se especificó)
+  if (ctx.extensionMin != null) {
+    const extStr = ctx.extensionMax != null
+      ? `entre ${ctx.extensionMin.toLocaleString('es-ES')} y ${ctx.extensionMax.toLocaleString('es-ES')} palabras`
+      : `mínimo ${ctx.extensionMin.toLocaleString('es-ES')} palabras`
+    lines.push('')
+    lines.push(`# ⚠️ EXTENSIÓN OBLIGATORIA`)
+    lines.push(`El artículo DEBE tener ${extStr}. Adapta la profundidad, número de secciones y ejemplos para alcanzar exactamente este rango. Esta instrucción tiene prioridad sobre cualquier otra estimación de extensión.`)
   }
 
   // Instrucciones
@@ -241,6 +257,9 @@ export async function POST(request: NextRequest) {
       keywords_secundarias: string[]
       tipo?               : 'nuevo' | 'actualizacion'
       existing_url?       : string
+      // Extensión
+      extension_min?      : number
+      extension_max?      : number
       // Contexto extra para oportunidades
       urgencia?           : string
       contexto?           : string
@@ -249,8 +268,9 @@ export async function POST(request: NextRequest) {
 
     const {
       map_item_id, oportunidad_id, client_id,
-      titulo: tituloRaw, keyword_principal, keywords_secundarias,
+      titulo: tituloRawOriginal, keyword_principal, keywords_secundarias,
     } = body
+    const tituloRaw   = toSpanishTitleCase(tituloRawOriginal)
     const esActualizacion = body.tipo === 'actualizacion'
     const titulo = esActualizacion ? `[ACTUALIZACIÓN] ${tituloRaw}` : tituloRaw
 
@@ -311,13 +331,17 @@ export async function POST(request: NextRequest) {
         const { data: cont, error: cErr } = await supabase
           .from('contenidos')
           .insert({
-            titulo           : urgenciaStr === '24h' ? `[URGENTE] ${titulo}` : titulo,
+            titulo            : urgenciaStr === '24h' ? `[URGENTE] ${titulo}` : titulo,
             slug,
-            proyecto_id      : proyActualidad.id,
-            cliente_id       : client_id,
-            estado           : 'pendiente',
-            keyword_principal: keyword_principal || null,
-            notas_iniciales  : op.contexto ?? body.contexto ?? null,
+            proyecto_id       : proyActualidad.id,
+            cliente_id        : client_id,
+            estado            : 'pendiente',
+            keyword_principal : keyword_principal || null,
+            notas_iniciales   : op.contexto ?? body.contexto ?? null,
+            ...(body.extension_min != null ? {
+              tamanyo_texto_min: body.extension_min,
+              tamanyo_texto_max: body.extension_max ?? null,
+            } : {}),
           })
           .select('id')
           .single()
@@ -367,6 +391,8 @@ export async function POST(request: NextRequest) {
         competidores    : Array.isArray(clienteOp?.competidores) ? clienteOp.competidores as string[] : null,
         publicados      : [],
         extraContext    : `OPORTUNIDAD DE ACTUALIDAD: ${op.titulo}\nContexto: ${contextoOp}${urgenciaContext ? `\nUrgencia: ${urgenciaContext}` : ''}${fechaContext ? `\nFecha relevante: ${fechaContext}` : ''}`,
+        extensionMin    : body.extension_min,
+        extensionMax    : body.extension_max,
       })
 
       const respOp = await anthropic.messages.create({
@@ -467,10 +493,14 @@ export async function POST(request: NextRequest) {
       .insert({
         titulo,
         slug,
-        proyecto_id      : proyecto.id,
-        cliente_id       : client_id,
-        estado           : 'pendiente',
-        keyword_principal: keyword_principal || null,
+        proyecto_id       : proyecto.id,
+        cliente_id        : client_id,
+        estado            : 'pendiente',
+        keyword_principal : keyword_principal || null,
+        ...(body.extension_min != null ? {
+          tamanyo_texto_min: body.extension_min,
+          tamanyo_texto_max: body.extension_max ?? null,
+        } : {}),
       })
       .select('id')
       .single()
@@ -535,7 +565,7 @@ export async function POST(request: NextRequest) {
     console.log('[DesdeMapa] Generando brief con Claude...')
 
     const briefPrompt = buildBriefPrompt({
-      titulo: tituloRaw,
+      titulo     : tituloRaw,
       slug,
       mainKeyword       : keyword_principal,
       secondaryKeywords : keywords_secundarias ?? [],
@@ -561,6 +591,8 @@ export async function POST(request: NextRequest) {
         titulo : String(p.titulo),
         keyword: (p.keyword_principal as string | null) ?? null,
       })),
+      extensionMin      : body.extension_min,
+      extensionMax      : body.extension_max,
     })
 
     const response = await anthropic.messages.create({

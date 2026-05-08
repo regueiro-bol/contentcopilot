@@ -799,7 +799,7 @@ BRIEF SEO COMPLETO:
 ${briefSeoBloque}
 
 INSTRUCCIÓN: Genera el artículo completo en español siguiendo estrictamente el brief anterior.
-Extensión objetivo: ${extMin}-${extMax} palabras.`
+EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarrolla completamente todas las secciones previstas en el brief. No resumas, no acortes, no cortes secciones. Si vas corto de palabras, añade más ejemplos, datos, contexto y subsecciones hasta alcanzar el mínimo de ${extMin} palabras.`
 
       const res = await fetch('/api/claude', {
         method: 'POST',
