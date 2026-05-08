@@ -298,14 +298,6 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
 
   useEffect(() => { if (clienteId) fetchData(clienteId) }, [clienteId, fetchData])
 
-  // Close plan popover on outside click — setTimeout avoids capturing the
-  // opening click itself (the popover renders after the click fires).
-  useEffect(() => {
-    if (!planPopover) return
-    const handler = () => setPlanPopover(null)
-    const timer = setTimeout(() => document.addEventListener('click', handler), 100)
-    return () => { clearTimeout(timer); document.removeEventListener('click', handler) }
-  }, [planPopover])
 
   // ─────────────────────────────────────────────────────────
   // Filtering & sorting (map items only)
@@ -931,28 +923,36 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
         const item     = allItems.find((i) => i.id === planPopover.itemId)
         const hasFecha = !!(localFechas[planPopover.itemId] ?? item?.fecha_calendario)
         return (
-          <div
-            style={{ position: 'fixed', top: planPopover.y, left: planPopover.x, width: 284, zIndex: 9999 }}
-            className="bg-white rounded-lg shadow-xl border border-gray-200 p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-xs font-semibold text-gray-700 mb-2">Fecha de publicación</p>
-            <input
-              type="date"
-              value={planDate}
-              onChange={(e) => setPlanDate(e.target.value)}
-              className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 mb-3 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          <>
+            {/* Transparent backdrop — catches outside clicks */}
+            <div
+              className="fixed inset-0"
+              style={{ zIndex: 9998 }}
+              onClick={() => setPlanPopover(null)}
             />
-            <button
-              onClick={() => { if (item && planDate) handlePlanificar(item, planDate) }}
-              disabled={planLoading || !planDate}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded px-3 py-1.5 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            {/* Popover — above backdrop */}
+            <div
+              style={{ position: 'fixed', top: planPopover.y, left: planPopover.x, width: 284, zIndex: 9999 }}
+              className="bg-white rounded-lg shadow-xl border border-gray-200 p-4"
             >
-              {planLoading
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Añadiendo…</>
-                : hasFecha ? 'Actualizar calendario' : 'Añadir al calendario'}
-            </button>
-          </div>
+              <p className="text-xs font-semibold text-gray-700 mb-2">Fecha de publicación</p>
+              <input
+                type="date"
+                value={planDate}
+                onChange={(e) => setPlanDate(e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 mb-3 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <button
+                onClick={() => { if (item && planDate) handlePlanificar(item, planDate) }}
+                disabled={planLoading || !planDate}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded px-3 py-1.5 disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                {planLoading
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Añadiendo…</>
+                  : hasFecha ? 'Actualizar calendario' : 'Añadir al calendario'}
+              </button>
+            </div>
+          </>
         )
       })()}
 
