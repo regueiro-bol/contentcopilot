@@ -539,8 +539,8 @@ export default function StrategyDashboardClient({
           <ModuleCard
             icon={Map} title="Mapa de Contenidos" color="bg-emerald-100 text-emerald-600"
             description="Genera el plan editorial mensual: artículos, keywords objetivo, clúster y etapa del funnel."
-            locked={!mapaModuleHref}
-            href={mapaModuleHref}
+            locked={false}
+            href={clienteId ? `/mapa?cliente=${clienteId}` : '/mapa'}
             subtitle={bancoCount > 0 ? `${bancoCount} artículos` : 'Pendiente'}
           />
           <ModuleCard

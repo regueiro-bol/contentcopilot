@@ -242,9 +242,35 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ── Auto-excluir keywords de artículos rechazados ───────────
+    // Leemos todas las main_keywords rechazadas de los mapas del cliente
+    // para que no se regeneren sin que el gestor tenga que recordarlo.
+    let autoExclude: string[] = []
+    {
+      const { data: clientMaps } = await supabase
+        .from('content_maps')
+        .select('id')
+        .eq('client_id', session.client_id)
+
+      const mapIds = (clientMaps ?? []).map((m) => m.id as string)
+      if (mapIds.length > 0) {
+        const { data: rejected } = await supabase
+          .from('content_map_items')
+          .select('main_keyword')
+          .in('map_id', mapIds)
+          .eq('validacion', 'rechazado')
+
+        autoExclude = (rejected ?? [])
+          .map((r) => r.main_keyword as string)
+          .filter(Boolean)
+      }
+    }
+
+    const allExclude = [...(exclude_keywords ?? []), ...autoExclude]
+
     // ── Excluir keywords ya en el mapa (para "solicitar más") ──
-    const filteredKeywords = (exclude_keywords && exclude_keywords.length > 0)
-      ? keywords.filter((kw) => !exclude_keywords.some(
+    const filteredKeywords = (allExclude.length > 0)
+      ? keywords.filter((kw) => !allExclude.some(
           (ek) => ek.toLowerCase().trim() === String(kw.keyword).toLowerCase().trim(),
         ))
       : keywords
