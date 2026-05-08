@@ -1,13 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import {
   Check, HelpCircle, X, CalendarPlus, Pencil, Zap, ExternalLink,
   Loader2, RefreshCw, Plus, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { DatePickerPopover } from '@/components/ui/DatePickerPopover'
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -213,11 +212,10 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   const [motivoInput,   setMotivoInput]   = useState('')
 
   // ── Planificar ───────────────────────────────────────────
-  const [planId,       setPlanId]       = useState<string | null>(null)
-  const [planFecha,    setPlanFecha]    = useState(proximoLunesHabil)
+  interface PlanPopover { itemId: string; x: number; y: number; currentDate: string }
+  const [planPopover,  setPlanPopover]  = useState<PlanPopover | null>(null)
+  const [planDate,     setPlanDate]     = useState(proximoLunesHabil)
   const [planLoading,  setPlanLoading]  = useState(false)
-  const [planPos,      setPlanPos]      = useState({ top: 0, left: 0 })
-  const triggerRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
   // ── Pedidos ──────────────────────────────────────────────
   const [pedidosEnProceso, setPedidosEnProceso] = useState<Set<string>>(new Set())
@@ -300,16 +298,14 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
 
   useEffect(() => { if (clienteId) fetchData(clienteId) }, [clienteId, fetchData])
 
-  // Close plan popover on outside click
+  // Close plan popover on outside click — setTimeout avoids capturing the
+  // opening click itself (the popover renders after the click fires).
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node
-      const inTrigger = Object.values(triggerRefs.current).some((r) => r?.contains(target))
-      if (!inTrigger) setPlanId(null)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
+    if (!planPopover) return
+    const handler = () => setPlanPopover(null)
+    const timer = setTimeout(() => document.addEventListener('click', handler), 100)
+    return () => { clearTimeout(timer); document.removeEventListener('click', handler) }
+  }, [planPopover])
 
   // ─────────────────────────────────────────────────────────
   // Filtering & sorting (map items only)
@@ -396,25 +392,22 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   // Planificar
   // ─────────────────────────────────────────────────────────
 
-  const openPlan = (itemId: string) => {
-    const trigger = triggerRefs.current[itemId]
-    if (trigger) {
-      const rect = trigger.getBoundingClientRect()
-      const popH = 140
-      const top  = rect.bottom + popH > window.innerHeight ? rect.top - popH - 8 : rect.bottom + 8
-      const left = rect.right - 284 < 8 ? 8 : rect.right - 284
-      setPlanPos({ top, left })
-    }
-    // Pre-fill with existing fecha if available
-    const existing = [...mapItems, ...opItems].find((i) => i.id === itemId)
-    const existingFecha = localFechas[itemId] ?? existing?.fecha_calendario
-    if (existingFecha) setPlanFecha(existingFecha)
-    else setPlanFecha(proximoLunesHabil())
-    setPlanId((cur) => cur === itemId ? null : itemId)
+  const openPlan = (e: React.MouseEvent, item: UnifiedItem) => {
+    e.stopPropagation()
+    const rect        = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const popH        = 156
+    const top         = rect.bottom + popH > window.innerHeight ? rect.top - popH - 8 : rect.bottom + 8
+    const left        = Math.min(rect.left, window.innerWidth - 296)
+    const currentDate = localFechas[item.id] ?? item.fecha_calendario ?? proximoLunesHabil()
+    setPlanDate(currentDate)
+    // Toggle: close if already open for same item
+    setPlanPopover((cur) =>
+      cur?.itemId === item.id ? null : { itemId: item.id, x: left, y: top, currentDate }
+    )
   }
 
   const handlePlanificar = async (item: UnifiedItem, fechaOverride?: string) => {
-    const fecha = fechaOverride ?? planFecha
+    const fecha = fechaOverride ?? planDate
     if (!clienteId || !fecha) return
     setPlanLoading(true)
     try {
@@ -447,7 +440,7 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
           : i))
       }
 
-      setPlanId(null)
+      setPlanPopover(null)
       const fechaFmt = new Date(fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })
       setToastMsg(`✓ Planificado para el ${fechaFmt}`)
       setTimeout(() => setToastMsg(null), 3500)
@@ -588,8 +581,7 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
         {/* Planificar — date badge (clickable) or button */}
         {fechaActual ? (
           <button
-            ref={(el) => { triggerRefs.current[item.id] = el }}
-            onClick={() => openPlan(item.id)}
+            onClick={(e) => openPlan(e, item)}
             className="text-[10px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded transition-colors"
             title="Cambiar fecha"
           >
@@ -597,8 +589,7 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
           </button>
         ) : (
           <button
-            ref={(el) => { triggerRefs.current[item.id] = el }}
-            onClick={() => openPlan(item.id)}
+            onClick={(e) => openPlan(e, item)}
             className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600 px-2 py-1 rounded border border-gray-200 hover:border-indigo-300 bg-white transition-colors"
           >
             <CalendarPlus className="h-3.5 w-3.5" /> Planificar
@@ -934,22 +925,36 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
         )}
       </div>
 
-      {/* ── Popover planificar (fixed position) ─────────────── */}
-      {planId && (
-        <DatePickerPopover
-          currentDate={planFecha}
-          saving={planLoading}
-          position={planPos}
-          confirmLabel={localFechas[planId] || [...mapItems, ...opItems].find(i => i.id === planId)?.fecha_calendario
-            ? 'Actualizar calendario'
-            : 'Añadir al calendario'}
-          onConfirm={(fecha) => {
-            const item = [...mapItems, ...opItems].find((i) => i.id === planId)
-            if (item) handlePlanificar(item, fecha)
-          }}
-          onClose={() => setPlanId(null)}
-        />
-      )}
+      {/* ── Popover planificar (global, single instance) ─────── */}
+      {planPopover && (() => {
+        const allItems = [...mapItems, ...opItems]
+        const item     = allItems.find((i) => i.id === planPopover.itemId)
+        const hasFecha = !!(localFechas[planPopover.itemId] ?? item?.fecha_calendario)
+        return (
+          <div
+            style={{ position: 'fixed', top: planPopover.y, left: planPopover.x, width: 284, zIndex: 9999 }}
+            className="bg-white rounded-lg shadow-xl border border-gray-200 p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-xs font-semibold text-gray-700 mb-2">Fecha de publicación</p>
+            <input
+              type="date"
+              value={planDate}
+              onChange={(e) => setPlanDate(e.target.value)}
+              className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 mb-3 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            <button
+              onClick={() => { if (item && planDate) handlePlanificar(item, planDate) }}
+              disabled={planLoading || !planDate}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded px-3 py-1.5 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {planLoading
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Añadiendo…</>
+                : hasFecha ? 'Actualizar calendario' : 'Añadir al calendario'}
+            </button>
+          </div>
+        )
+      })()}
 
       {/* ── Toast planificación ──────────────────────────────── */}
       {toastMsg && (
