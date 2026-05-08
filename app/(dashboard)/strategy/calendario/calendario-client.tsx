@@ -191,7 +191,7 @@ export default function CalendarioClient({ clientes }: Props) {
   const [panelEdits, setPanelEdits] = useState<Partial<CalendarioItem>>({})
   const [guardandoPanel, setGuardandoPanel] = useState(false)
 
-  // Modal añadir
+  // Modal añadir (artículo nuevo)
   const [modalOpen, setModalOpen]   = useState(false)
   const [modalData, setModalData]   = useState({
     titulo           : '',
@@ -206,6 +206,19 @@ export default function CalendarioClient({ clientes }: Props) {
   })
   const [guardandoModal, setGuardandoModal] = useState(false)
   const [errorModal, setErrorModal] = useState<string | null>(null)
+
+  // Modal añadir contenido existente
+  const [modalContenido, setModalContenido] = useState(false)
+  const [contenidosSinFecha, setContenidosSinFecha] = useState<Array<{
+    id: string; titulo: string; keyword_principal: string | null; estado: string
+  }>>([])
+  const [loadingContenidos, setLoadingContenidos] = useState(false)
+  const [selContenidoId, setSelContenidoId] = useState<string | null>(null)
+  const [fechaContenido, setFechaContenido] = useState(toDateStr(hoy))
+  const [busquedaContenido, setBusquedaContenido] = useState('')
+  const [guardandoContenido, setGuardandoContenido] = useState(false)
+  const [errorContenido, setErrorContenido] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   // Overrides optimistas
   const [localOverrides, setLocalOverrides] = useState<Record<string, Partial<CalendarioItem>>>({})
@@ -333,6 +346,61 @@ export default function CalendarioClient({ clientes }: Props) {
     }
   }
 
+  // ── Cargar contenidos sin fecha ──────────────────────────
+  async function abrirModalContenido() {
+    setModalContenido(true)
+    setSelContenidoId(null)
+    setBusquedaContenido('')
+    setErrorContenido(null)
+    setFechaContenido(toDateStr(hoy))
+    if (!clienteId) return
+    setLoadingContenidos(true)
+    try {
+      const res = await fetch(`/api/contenidos/sin-fecha?client_id=${clienteId}`)
+      const data = await res.json()
+      setContenidosSinFecha(data.contenidos ?? [])
+    } catch { setContenidosSinFecha([]) }
+    finally { setLoadingContenidos(false) }
+  }
+
+  async function handleAñadirContenido(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selContenidoId || !fechaContenido) return
+    const sel = contenidosSinFecha.find(c => c.id === selContenidoId)
+    if (!sel) return
+    setGuardandoContenido(true)
+    setErrorContenido(null)
+    try {
+      const res = await fetch('/api/strategy/calendario', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          client_id        : clienteId,
+          titulo           : sel.titulo,
+          keyword          : sel.keyword_principal ?? null,
+          fecha_publicacion: fechaContenido,
+          contenido_id     : selContenidoId,
+          fuente           : 'manual',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error añadiendo')
+      if (data.entrada) setItems(p => [...p, data.entrada])
+      setModalContenido(false)
+      const fechaFmt = new Date(fechaContenido + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })
+      setToast(`✓ Añadido al calendario para el ${fechaFmt}`)
+      setTimeout(() => setToast(null), 3500)
+    } catch (e) {
+      setErrorContenido(e instanceof Error ? e.message : 'Error desconocido')
+    } finally {
+      setGuardandoContenido(false)
+    }
+  }
+
+  const contenidosFiltrados = contenidosSinFecha.filter(c =>
+    !busquedaContenido || c.titulo.toLowerCase().includes(busquedaContenido.toLowerCase())
+  )
+
   const clienteNombre = clientes.find(c => c.id === clienteId)?.nombre ?? '—'
   const hayPanelEdits = Object.keys(panelEdits).length > 0
 
@@ -365,6 +433,10 @@ export default function CalendarioClient({ clientes }: Props) {
             Banco
             <ArrowUpRight className="h-3 w-3" />
           </Link>
+          <Button size="sm" variant="outline" onClick={abrirModalContenido} className="gap-1.5">
+            <Archive className="h-4 w-4" />
+            Añadir contenido
+          </Button>
           <Button size="sm" onClick={() => setModalOpen(true)} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
             Añadir artículo
@@ -784,6 +856,127 @@ export default function CalendarioClient({ clientes }: Props) {
           </div>
         </>
       )}
+      {/* ── Modal añadir contenido existente ──────────────── */}
+      {modalContenido && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-50" onClick={() => setModalContenido(false)} />
+          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+              <h2 className="text-sm font-semibold text-gray-900">Añadir contenido al calendario</h2>
+              <button type="button" onClick={() => setModalContenido(false)}>
+                <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAñadirContenido} className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                {errorContenido && (
+                  <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{errorContenido}
+                  </div>
+                )}
+
+                {/* Buscador */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Buscar contenido..."
+                    value={busquedaContenido}
+                    onChange={e => setBusquedaContenido(e.target.value)}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-400 pr-8"
+                  />
+                </div>
+
+                {/* Lista de contenidos */}
+                {loadingContenidos ? (
+                  <div className="flex items-center justify-center py-8 gap-2 text-gray-400">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Cargando…
+                  </div>
+                ) : contenidosFiltrados.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-6">
+                    {busquedaContenido ? 'No hay resultados' : 'Todos los contenidos ya tienen fecha asignada'}
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                    {contenidosFiltrados.map((c) => (
+                      <label
+                        key={c.id}
+                        className={cn(
+                          'flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors',
+                          selContenidoId === c.id
+                            ? 'border-indigo-400 bg-indigo-50'
+                            : 'border-gray-200 hover:border-gray-300',
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="contenido"
+                          value={c.id}
+                          checked={selContenidoId === c.id}
+                          onChange={() => setSelContenidoId(c.id)}
+                          className="mt-0.5 accent-indigo-600"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 leading-snug truncate">{c.titulo}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {c.keyword_principal && (
+                              <span className="text-[10px] text-gray-500">{c.keyword_principal}</span>
+                            )}
+                            <span className={cn('text-[10px] px-1.5 py-0 rounded-full font-medium',
+                              c.estado === 'aprobado'   ? 'bg-green-100 text-green-700' :
+                              c.estado === 'borrador'   ? 'bg-blue-100 text-blue-700'  :
+                              c.estado === 'pendiente'  ? 'bg-gray-100 text-gray-600'  :
+                              'bg-amber-100 text-amber-700'
+                            )}>
+                              {c.estado.replace('_', ' ')}
+                            </span>
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                {/* Fecha */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1">Fecha de publicación *</label>
+                  <input
+                    required
+                    type="date"
+                    value={fechaContenido}
+                    onChange={e => setFechaContenido(e.target.value)}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100 shrink-0">
+                <Button type="button" variant="outline" size="sm" onClick={() => setModalContenido(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={guardandoContenido || !selContenidoId}
+                  className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+                >
+                  {guardandoContenido ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  Añadir al calendario
+                </Button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
+
+      {/* ── Toast ─────────────────────────────────────────── */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[10000] bg-emerald-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
+          {toast}
+        </div>
+      )}
+
     </div>
   )
 }

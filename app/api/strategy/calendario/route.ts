@@ -72,6 +72,8 @@ export async function POST(request: NextRequest) {
     notas?           : string
     map_item_id?     : string
     oportunidad_id?  : string
+    /** Existing contenido_id — skips creating a new contenido */
+    contenido_id?    : string
   }
   try { body = await request.json() }
   catch { return NextResponse.json({ error: 'JSON inválido' }, { status: 400 }) }
@@ -83,34 +85,44 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Obtener proyecto activo del cliente para crear el pedido
-  const { data: proyecto } = await supabase
-    .from('proyectos')
-    .select('id')
-    .eq('cliente_id', body.client_id)
-    .eq('activo', true)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .single()
+  // Use existing contenido if provided; otherwise create a new one
+  let contenido_id: string | null = body.contenido_id ?? null
 
-  // Crear pedido en contenidos
-  let contenido_id: string | null = null
-  if (proyecto) {
-    const { data: contenido } = await supabase
-      .from('contenidos')
-      .insert({
-        titulo            : body.titulo,
-        keyword_principal : body.keyword ?? null,
-        cliente_id        : body.client_id,
-        proyecto_id       : proyecto.id,
-        estado            : 'pendiente',
-        fecha_entrega     : body.fecha_entrega ?? body.fecha_publicacion,
-        prioridad         : 2,
-        activo            : true,
-      })
+  if (!contenido_id) {
+    // Obtener proyecto activo del cliente para crear el pedido
+    const { data: proyecto } = await supabase
+      .from('proyectos')
       .select('id')
+      .eq('cliente_id', body.client_id)
+      .eq('activo', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
       .single()
-    contenido_id = contenido?.id ?? null
+
+    if (proyecto) {
+      const { data: contenido } = await supabase
+        .from('contenidos')
+        .insert({
+          titulo            : body.titulo,
+          keyword_principal : body.keyword ?? null,
+          cliente_id        : body.client_id,
+          proyecto_id       : proyecto.id,
+          estado            : 'pendiente',
+          fecha_entrega     : body.fecha_entrega ?? body.fecha_publicacion,
+          prioridad         : 2,
+          activo            : true,
+        })
+        .select('id')
+        .single()
+      contenido_id = contenido?.id ?? null
+    }
+  } else {
+    // Existing contenido: update estado to 'planificado' if currently 'pendiente'
+    await supabase
+      .from('contenidos')
+      .update({ estado: 'planificado' })
+      .eq('id', contenido_id)
+      .eq('estado', 'pendiente')
   }
 
   // Crear entrada en calendario_editorial

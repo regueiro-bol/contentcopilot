@@ -7,6 +7,7 @@ import {
   Loader2, RefreshCw, Plus, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { DatePickerPopover } from '@/components/ui/DatePickerPopover'
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -222,6 +223,10 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   const [pedidosEnProceso, setPedidosEnProceso] = useState<Set<string>>(new Set())
   const [pedidosCreados,   setPedidosCreados]   = useState<Record<string, string>>({})
 
+  // ── Fechas planificadas localmente (optimistic) ──────────
+  const [localFechas, setLocalFechas]   = useState<Record<string, string>>({})
+  const [toastMsg,    setToastMsg]      = useState<string | null>(null)
+
   // ── Extension modal (pre-brief) ──────────────────────────
   const [pedidoItem,   setPedidoItem]   = useState<UnifiedItem | null>(null)
   const [extPillIdx,   setExtPillIdx]   = useState(1)   // default: 800–1.000
@@ -395,24 +400,32 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
     const trigger = triggerRefs.current[itemId]
     if (trigger) {
       const rect = trigger.getBoundingClientRect()
-      const popH = 180
+      const popH = 140
       const top  = rect.bottom + popH > window.innerHeight ? rect.top - popH - 8 : rect.bottom + 8
-      const left = rect.right - 280 < 8 ? 8 : rect.right - 280
+      const left = rect.right - 284 < 8 ? 8 : rect.right - 284
       setPlanPos({ top, left })
     }
+    // Pre-fill with existing fecha if available
+    const existing = [...mapItems, ...opItems].find((i) => i.id === itemId)
+    const existingFecha = localFechas[itemId] ?? existing?.fecha_calendario
+    if (existingFecha) setPlanFecha(existingFecha)
+    else setPlanFecha(proximoLunesHabil())
     setPlanId((cur) => cur === itemId ? null : itemId)
   }
 
-  const handlePlanificar = async (item: UnifiedItem) => {
-    if (!clienteId || !planFecha) return
+  const handlePlanificar = async (item: UnifiedItem, fechaOverride?: string) => {
+    const fecha = fechaOverride ?? planFecha
+    if (!clienteId || !fecha) return
     setPlanLoading(true)
     try {
+      const contenidoId = pedidosCreados[item.id] ?? item.contenido_id ?? null
       const body: Record<string, unknown> = {
         client_id        : clienteId,
         titulo           : item.titulo,
         keyword          : item.keyword,
-        fecha_publicacion: planFecha,
+        fecha_publicacion: fecha,
         fuente           : item.source === 'oportunidad' ? 'actualidad' : 'almacen',
+        ...(contenidoId ? { contenido_id: contenidoId } : {}),
       }
       if (item.source === 'mapa')        body.map_item_id    = item.id
       if (item.source === 'oportunidad') body.oportunidad_id = item.id
@@ -422,12 +435,22 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
       })
       if (!res.ok) throw new Error('Error planificando')
       const data = await res.json()
+
+      // Update local fecha state (optimistic)
+      setLocalFechas((cur) => ({ ...cur, [item.id]: fecha }))
+
       if (item.source === 'mapa') {
-        setMapItems((cur) => cur.map((i) => i.id === item.id ? { ...i, fecha_calendario: planFecha } : i))
+        setMapItems((cur) => cur.map((i) => i.id === item.id ? { ...i, fecha_calendario: fecha } : i))
       } else {
-        setOpItems((cur) => cur.map((i) => i.id === item.id ? { ...i, fecha_calendario: planFecha, contenido_id: data.contenido_id ?? i.contenido_id } : i))
+        setOpItems((cur) => cur.map((i) => i.id === item.id
+          ? { ...i, fecha_calendario: fecha, contenido_id: data.contenido_id ?? i.contenido_id }
+          : i))
       }
+
       setPlanId(null)
+      const fechaFmt = new Date(fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })
+      setToastMsg(`✓ Planificado para el ${fechaFmt}`)
+      setTimeout(() => setToastMsg(null), 3500)
     } catch (e) { console.error(e) }
     finally { setPlanLoading(false) }
   }
@@ -549,50 +572,59 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
     const v           = effectiveVal(item)
     const contenidoId = pedidosCreados[item.id] ?? item.contenido_id
     const enProceso   = pedidosEnProceso.has(item.id)
+    const fechaActual = localFechas[item.id] ?? item.fecha_calendario
 
-    if (contenidoId) {
-      return (
-        <Link href={`/contenidos/${contenidoId}`}
-          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5">
-          Ver contenido <ExternalLink className="h-3 w-3" />
-        </Link>
-      )
+    // Non-approved: just show a static fecha badge (no planificar)
+    if (v !== 'aprobado') {
+      return fechaActual
+        ? <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">📅 {fmtFecha(fechaActual)}</span>
+        : null
     }
 
-    if (v !== 'aprobado') return item.fecha_calendario
-      ? <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">📅 {item.fecha_calendario}</span>
-      : null
-
+    // Approved: always show [Planificar/badge] + [Pedir/Ver]
     return (
       <div className="flex items-center gap-1.5 flex-wrap">
-        {item.fecha_calendario && (
-          <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">
-            📅 {item.fecha_calendario}
-          </span>
-        )}
 
-        {/* Planificar */}
-        <div className="relative">
+        {/* Planificar — date badge (clickable) or button */}
+        {fechaActual ? (
           <button
             ref={(el) => { triggerRefs.current[item.id] = el }}
             onClick={() => openPlan(item.id)}
-            className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600 px-2 py-1 rounded border border-gray-200 hover:border-indigo-300 bg-white"
+            className="text-[10px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded transition-colors"
+            title="Cambiar fecha"
+          >
+            📅 {fmtFecha(fechaActual)}
+          </button>
+        ) : (
+          <button
+            ref={(el) => { triggerRefs.current[item.id] = el }}
+            onClick={() => openPlan(item.id)}
+            className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600 px-2 py-1 rounded border border-gray-200 hover:border-indigo-300 bg-white transition-colors"
           >
             <CalendarPlus className="h-3.5 w-3.5" /> Planificar
           </button>
-        </div>
+        )}
 
-        {/* Pedir redacción / Crear contenido */}
-        <button
-          onClick={() => handlePedir(item)}
-          disabled={enProceso}
-          className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600 px-2 py-1 rounded border border-gray-200 hover:border-indigo-300 bg-white disabled:opacity-50"
-        >
-          {enProceso
-            ? <><Loader2 className="h-3 w-3 animate-spin" /> Generando brief…</>
-            : <><Pencil className="h-3.5 w-3.5" /> {item.source === 'oportunidad' ? 'Crear contenido' : 'Pedir redacción'}</>
-          }
-        </button>
+        {/* Ver contenido o Pedir redacción */}
+        {contenidoId ? (
+          <Link
+            href={`/contenidos/${contenidoId}`}
+            className="flex items-center gap-0.5 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+          >
+            Ver <ExternalLink className="h-3 w-3" />
+          </Link>
+        ) : (
+          <button
+            onClick={() => handlePedir(item)}
+            disabled={enProceso}
+            className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600 px-2 py-1 rounded border border-gray-200 hover:border-indigo-300 bg-white disabled:opacity-50 transition-colors"
+          >
+            {enProceso
+              ? <><Loader2 className="h-3 w-3 animate-spin" /> Generando brief…</>
+              : <><Pencil className="h-3.5 w-3.5" /> {item.source === 'oportunidad' ? 'Crear contenido' : 'Pedir redacción'}</>
+            }
+          </button>
+        )}
       </div>
     )
   }
@@ -904,27 +936,25 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
 
       {/* ── Popover planificar (fixed position) ─────────────── */}
       {planId && (
-        <div
-          style={{ position: 'fixed', top: planPos.top, left: planPos.left, width: 280, zIndex: 9999 }}
-          className="bg-white rounded-lg shadow-xl border border-gray-200 p-4"
-        >
-          <p className="text-xs font-semibold text-gray-700 mb-2">Fecha de publicación</p>
-          <input
-            type="date"
-            value={planFecha}
-            onChange={(e) => setPlanFecha(e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 mb-3 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          />
-          <button
-            onClick={() => {
-              const item = [...mapItems, ...opItems].find((i) => i.id === planId)
-              if (item) handlePlanificar(item)
-            }}
-            disabled={planLoading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded px-3 py-1.5 disabled:opacity-50 flex items-center justify-center gap-1.5"
-          >
-            {planLoading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Añadiendo…</> : 'Añadir al calendario'}
-          </button>
+        <DatePickerPopover
+          currentDate={planFecha}
+          saving={planLoading}
+          position={planPos}
+          confirmLabel={localFechas[planId] || [...mapItems, ...opItems].find(i => i.id === planId)?.fecha_calendario
+            ? 'Actualizar calendario'
+            : 'Añadir al calendario'}
+          onConfirm={(fecha) => {
+            const item = [...mapItems, ...opItems].find((i) => i.id === planId)
+            if (item) handlePlanificar(item, fecha)
+          }}
+          onClose={() => setPlanId(null)}
+        />
+      )}
+
+      {/* ── Toast planificación ──────────────────────────────── */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-[10000] bg-emerald-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 animate-fade-in">
+          {toastMsg}
         </div>
       )}
 

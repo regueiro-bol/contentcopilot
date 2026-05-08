@@ -799,7 +799,11 @@ BRIEF SEO COMPLETO:
 ${briefSeoBloque}
 
 INSTRUCCIÓN: Genera el artículo completo en español siguiendo estrictamente el brief anterior.
-EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarrolla completamente todas las secciones previstas en el brief. No resumas, no acortes, no cortes secciones. Si vas corto de palabras, añade más ejemplos, datos, contexto y subsecciones hasta alcanzar el mínimo de ${extMin} palabras.`
+EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarrolla completamente todas las secciones previstas en el brief. No resumas, no acortes, no cortes secciones. Si vas corto de palabras, añade más ejemplos, datos, contexto y subsecciones hasta alcanzar el mínimo de ${extMin} palabras.
+VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escrito. Si son menos de ${extMin}, continúa añadiendo contenido (más ejemplos, datos, contexto) hasta llegar a ${extMin}. Si son más de ${extMax}, reduce y condensa hasta quedar en ${extMax}. El artículo DEBE terminar entre ${extMin} y ${extMax} palabras.`
+
+      // Dynamic max_tokens based on target extension (1.8 tokens/word + headroom)
+      const maxTokensBorrador = Math.min(Math.ceil(extMax * 1.8), 10000)
 
       const res = await fetch('/api/claude', {
         method: 'POST',
@@ -808,7 +812,7 @@ EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarro
           system         : SYSTEM_REDACTOR,
           messages       : [{ role: 'user', content: userContent }],
           modo           : 'json',
-          max_tokens     : 8000,
+          max_tokens     : maxTokensBorrador,
           proyecto_id    : contenido.proyecto_id ?? null,
           contenido_id   : contenido.id,
           tipo_operacion : 'borrador',

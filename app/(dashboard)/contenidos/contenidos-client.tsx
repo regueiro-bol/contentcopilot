@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, ChevronRight } from 'lucide-react'
+import { Search, ChevronRight, CalendarPlus } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { colorEstadoContenido, etiquetaEstadoContenido } from '@/lib/utils'
+import { DatePickerPopover } from '@/components/ui/DatePickerPopover'
 import type { EstadoContenido } from '@/types'
 import type { FilaContenido } from './page'
 
@@ -22,6 +23,13 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
   const [filtroProyecto, setFiltroProyecto] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroRedactor, setFiltroRedactor] = useState('')
+
+  // ── Date picker state ────────────────────────────────────
+  const [planItem,    setPlanItem]    = useState<FilaContenido | null>(null)
+  const [planPos,     setPlanPos]     = useState({ top: 0, left: 0 })
+  const [planLoading, setPlanLoading] = useState(false)
+  const [localFechas, setLocalFechas] = useState<Record<string, string>>({})
+  const [toastMsg,    setToastMsg]    = useState<string | null>(null)
 
   const clientes = Array.from(new Set(contenidos.map((c) => c.cliente_nombre))).sort()
   const proyectos = Array.from(new Set(contenidos.map((c) => c.proyecto_nombre))).sort()
@@ -41,6 +49,46 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
   })
 
   const hayFiltros = filtroCliente || filtroProyecto || filtroEstado || filtroRedactor
+
+  function openDatePicker(e: React.MouseEvent, item: FilaContenido) {
+    e.stopPropagation()
+    const el = e.currentTarget as HTMLElement
+    const rect = el.getBoundingClientRect()
+    const top  = rect.bottom + 140 > window.innerHeight ? rect.top - 148 : rect.bottom + 8
+    const left = Math.min(rect.left, window.innerWidth - 292)
+    setPlanPos({ top, left })
+    setPlanItem(item)
+  }
+
+  async function handlePlanificarContenido(fecha: string) {
+    if (!planItem) return
+    const item = planItem
+    setPlanLoading(true)
+    try {
+      const res = await fetch('/api/strategy/calendario', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          client_id        : item.cliente_id,
+          titulo           : item.titulo,
+          keyword          : item.keyword_principal ?? null,
+          fecha_publicacion: fecha,
+          contenido_id     : item.id,
+          fuente           : 'manual',
+        }),
+      })
+      if (!res.ok) throw new Error('Error planificando')
+      setLocalFechas((p) => ({ ...p, [item.id]: fecha }))
+      setPlanItem(null)
+      const fechaFmt = new Date(fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })
+      setToastMsg(`✓ Planificado para el ${fechaFmt}`)
+      setTimeout(() => setToastMsg(null), 3500)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setPlanLoading(false)
+    }
+  }
 
   function limpiarFiltros() {
     setFiltroCliente('')
@@ -146,11 +194,12 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-x-4 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <div className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-x-4 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
             <span>Título / Proyecto</span>
             <span className="hidden md:block">Keyword</span>
             <span className="hidden md:block">Redactor</span>
             <span className="hidden md:block">Entrega</span>
+            <span className="hidden md:block">Publicación</span>
             <span>Estado</span>
           </div>
 
@@ -159,7 +208,7 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
               <div
                 key={c.id}
                 onClick={() => router.push(`/contenidos/${c.id}`)}
-                className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-x-4 items-center px-4 py-3 hover:bg-indigo-50/40 transition-colors group cursor-pointer"
+                className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-x-4 items-center px-4 py-3 hover:bg-indigo-50/40 transition-colors group cursor-pointer"
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate group-hover:text-indigo-700 transition-colors">
@@ -212,12 +261,52 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
                   )}
                 </div>
 
+                {/* Columna Publicación */}
+                <div className="hidden md:block">
+                  {(() => {
+                    const fecha = localFechas[c.id] ?? c.fecha_publicacion
+                    return (
+                      <button
+                        onClick={(e) => openDatePicker(e, c)}
+                        className={fecha
+                          ? 'text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded transition-colors'
+                          : 'flex items-center gap-0.5 text-xs text-gray-300 hover:text-indigo-500 transition-colors'
+                        }
+                        title={fecha ? 'Cambiar fecha' : 'Planificar'}
+                      >
+                        {fecha
+                          ? `📅 ${new Date(fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`
+                          : <><CalendarPlus className="h-3 w-3" /> —</>
+                        }
+                      </button>
+                    )
+                  })()}
+                </div>
+
                 <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ${colorEstadoContenido(c.estado)}`}>
                   {etiquetaEstadoContenido(c.estado)}
                 </span>
               </div>
             ))}
           </div>
+        </div>
+      )}
+      {/* Date picker popover */}
+      {planItem && (
+        <DatePickerPopover
+          currentDate={localFechas[planItem.id] ?? planItem.fecha_publicacion}
+          saving={planLoading}
+          position={planPos}
+          confirmLabel={localFechas[planItem.id] ?? planItem.fecha_publicacion ? 'Actualizar calendario' : 'Añadir al calendario'}
+          onConfirm={handlePlanificarContenido}
+          onClose={() => setPlanItem(null)}
+        />
+      )}
+
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-[10000] bg-emerald-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
+          {toastMsg}
         </div>
       )}
     </div>

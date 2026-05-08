@@ -15,6 +15,7 @@ export interface FilaContenido {
   redactor?: string
   estado: EstadoContenido
   fecha_entrega?: string
+  fecha_publicacion?: string
 }
 
 export default async function ContenidosPage() {
@@ -90,7 +91,26 @@ export default async function ContenidosPage() {
     fecha_entrega: c.fecha_entrega ?? undefined,
   }))
 
+  // ── Lookup de fechas de publicación (calendario_editorial) ──────────────────
+  const contenidoIds = contenidos.map((c) => c.id)
+  const calMap = new Map<string, string>()
+  if (contenidoIds.length > 0) {
+    const { data: calEntradas } = await supabase
+      .from('calendario_editorial')
+      .select('contenido_id, fecha_publicacion')
+      .in('contenido_id', contenidoIds)
+      .neq('status', 'cancelado')
+    ;(calEntradas ?? []).forEach((e) => {
+      if (e.contenido_id && e.fecha_publicacion) calMap.set(e.contenido_id, e.fecha_publicacion)
+    })
+  }
+
+  const contenidosConFecha: FilaContenido[] = contenidos.map((c) => ({
+    ...c,
+    fecha_publicacion: calMap.get(c.id) ?? undefined,
+  }))
+
   console.log('[contenidos] mapeados:', contenidos.length)
 
-  return <ContenidosPageClient contenidos={contenidos} />
+  return <ContenidosPageClient contenidos={contenidosConFecha} />
 }
