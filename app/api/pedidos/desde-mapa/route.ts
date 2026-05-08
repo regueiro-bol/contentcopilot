@@ -11,7 +11,33 @@ export const maxDuration = 120
 
 const BRIEF_SYSTEM = `Eres un director de estrategia de contenidos SEO para el mercado español con 10+ años de experiencia.
 Generas briefs editoriales exhaustivos y accionables que permiten a un redactor producir contenido optimizado sin necesidad de investigación adicional.
-Respondes siempre en español, con formato Markdown estructurado.`
+Respondes siempre en español, con formato Markdown estructurado.
+
+IMPORTANTE: El brief debe estar COMPLETO. No cortes ninguna sección.
+Si el espacio es limitado, reduce el detalle de secciones anteriores pero SIEMPRE completa las 7 secciones obligatorias.`
+
+// ─────────────────────────────────────────────────────────────
+// Extension parser — extracts word-count range from brief text
+// ─────────────────────────────────────────────────────────────
+
+function parseExtension(text: string): { min: number | null; max: number | null } {
+  const patterns = [
+    /(\d[\d.,]*)\s*[–\-a]\s*(\d[\d.,]*)\s*palabras/i,
+    /entre\s*(\d[\d.,]*)\s*y\s*(\d[\d.,]*)\s*palabras/i,
+    /(\d[\d.,]*)\s*palabras/i,
+  ]
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      const min = parseInt(match[1].replace(/[.,]/g, ''), 10)
+      const max = match[2]
+        ? parseInt(match[2].replace(/[.,]/g, ''), 10)
+        : min + Math.round(min * 0.25)
+      if (!isNaN(min) && min > 100) return { min, max: isNaN(max) ? null : max }
+    }
+  }
+  return { min: null, max: null }
+}
 
 function buildBriefPrompt(ctx: {
   // Artículo
@@ -344,16 +370,16 @@ export async function POST(request: NextRequest) {
       })
 
       const respOp = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5', max_tokens: 4096,
+        model: 'claude-sonnet-4-5', max_tokens: 6000,
         system: BRIEF_SYSTEM,
         messages: [{ role: 'user', content: briefPromptOp }],
       })
       const briefTextOp = respOp.content[0].type === 'text' ? respOp.content[0].text.trim() : ''
       if (briefTextOp) {
-        await supabase
-          .from('contenidos')
-          .update({ brief: { texto_generado: briefTextOp } })
-          .eq('id', contenidoId)
+        const { min: extMin, max: extMax } = parseExtension(briefTextOp)
+        const briefUpdate: Record<string, unknown> = { brief: { texto_generado: briefTextOp } }
+        if (extMin !== null) { briefUpdate.tamanyo_texto_min = extMin; briefUpdate.tamanyo_texto_max = extMax }
+        await supabase.from('contenidos').update(briefUpdate).eq('id', contenidoId)
       }
 
       return NextResponse.json({ ok: true, contenido_id: contenidoId, brief_generated: briefTextOp.length > 0 })
@@ -539,7 +565,7 @@ export async function POST(request: NextRequest) {
 
     const response = await anthropic.messages.create({
       model     : 'claude-sonnet-4-5',
-      max_tokens: 4096,
+      max_tokens: 6000,
       system    : BRIEF_SYSTEM,
       messages  : [{ role: 'user', content: briefPrompt }],
     })
@@ -548,18 +574,22 @@ export async function POST(request: NextRequest) {
 
     console.log(`[DesdeMapa] Brief generado: ${briefText.length} chars, ${response.usage.output_tokens} tokens`)
 
-    // ── Guardar brief en contenido ──
+    // ── Guardar brief + extensión en contenido ──
     if (briefText) {
+      const { min: extMin, max: extMax } = parseExtension(briefText)
+      const briefUpdate: Record<string, unknown> = { brief: { texto_generado: briefText } }
+      if (extMin !== null) { briefUpdate.tamanyo_texto_min = extMin; briefUpdate.tamanyo_texto_max = extMax }
+
       const { error: briefError } = await supabase
         .from('contenidos')
-        .update({ brief: { texto_generado: briefText } })
+        .update(briefUpdate)
         .eq('id', contenido.id)
 
       if (briefError) {
         console.error('[DesdeMapa] Error guardando brief:', briefError)
         // No fatal — el contenido existe, el brief se puede regenerar manualmente
       } else {
-        console.log(`[DesdeMapa] Brief guardado en contenido ${contenido.id}`)
+        console.log(`[DesdeMapa] Brief guardado en contenido ${contenido.id} (ext: ${extMin ?? '?'}–${extMax ?? '?'} palabras)`)
       }
     }
 

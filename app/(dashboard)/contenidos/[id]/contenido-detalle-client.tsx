@@ -563,6 +563,72 @@ export default function ContenidoDetalleClient({
   const [urlParaPublicar, setUrlParaPublicar] = useState(contenido.url_publicado ?? '')
   const [notasRevision, setNotasRevision] = useState(contenido.notas_revision ?? '')
 
+  // ── Brief editing ────────────────────────────────────────────────────────
+  type BriefSections = {
+    resumen   : string; tipo      : string; extension : string
+    estructura: string; keywords  : string; geo       : string; marca: string
+  }
+  const SECTION_HEADERS = [
+    '## 1. Resumen estratégico',
+    '## 2. Tipo de contenido recomendado',
+    '## 3. Extensión recomendada',
+    '## 4. Estructura H2/H3 completa',
+    '## 5. Palabras clave a integrar',
+    '## 6. Recomendaciones GEO (optimización para IA)',
+    '## 7. Contexto de marca',
+  ] as const
+  const SECTION_KEYS: (keyof BriefSections)[] = ['resumen','tipo','extension','estructura','keywords','geo','marca']
+  const SECTION_LABELS = ['Resumen estratégico','Tipo de contenido','Extensión recomendada','Estructura H2/H3','Palabras clave','Recomendaciones GEO','Contexto de marca']
+
+  function parseBriefSections(texto: string): BriefSections {
+    const result: BriefSections = { resumen:'', tipo:'', extension:'', estructura:'', keywords:'', geo:'', marca:'' }
+    const parts = texto.split(/^(## \d+\..*)/m)
+    let currentIdx = -1
+    for (const part of parts) {
+      const headerIdx = SECTION_HEADERS.findIndex((h) => part.trimStart().startsWith(h.replace(/\(.*\)/, '').trim()))
+      if (headerIdx >= 0) { currentIdx = headerIdx; continue }
+      if (currentIdx >= 0 && SECTION_KEYS[currentIdx]) {
+        result[SECTION_KEYS[currentIdx]] += part
+      }
+    }
+    // Trim trailing whitespace from each section
+    for (const k of SECTION_KEYS) result[k] = result[k].trim()
+    return result
+  }
+
+  function rebuildBriefText(s: BriefSections): string {
+    return SECTION_KEYS
+      .map((k, i) => `${SECTION_HEADERS[i]}\n\n${s[k]}`)
+      .join('\n\n')
+  }
+
+  const [editingBrief,  setEditingBrief]  = useState(false)
+  const [briefSections, setBriefSections] = useState<BriefSections>(() =>
+    parseBriefSections(contenido.brief?.texto_generado ?? '')
+  )
+  const [localBriefText, setLocalBriefText] = useState(contenido.brief?.texto_generado ?? '')
+  const [briefDirty,    setBriefDirty]    = useState(false)
+  const [briefSaving,   setBriefSaving]   = useState(false)
+  const [briefSaved,    setBriefSaved]    = useState(false)
+
+  async function handleSaveBrief() {
+    setBriefSaving(true)
+    const rebuilt = rebuildBriefText(briefSections)
+    try {
+      const res = await fetch(`/api/contenidos/${contenido.id}/brief`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ texto_generado: rebuilt }),
+      })
+      if (!res.ok) throw new Error('Error guardando brief')
+      setLocalBriefText(rebuilt)
+      setBriefDirty(false)
+      setBriefSaved(true)
+      setTimeout(() => setBriefSaved(false), 3000)
+    } catch { /* silent — keep dirty */ }
+    finally { setBriefSaving(false) }
+  }
+
   // ── Tab Social ────────────────────────────────────────────────────────────
   type VideoGenerado = { id?: string; url: string; tipo: 'reel' | 'story'; duracion: number; num_slides: number; status?: string }
   type SlideForm     = { texto_principal: string; texto_secundario: string; imagen_prompt: string }
@@ -742,7 +808,7 @@ Extensión objetivo: ${extMin}-${extMax} palabras.`
           system         : SYSTEM_REDACTOR,
           messages       : [{ role: 'user', content: userContent }],
           modo           : 'json',
-          max_tokens     : 4000,
+          max_tokens     : 8000,
           proyecto_id    : contenido.proyecto_id ?? null,
           contenido_id   : contenido.id,
           tipo_operacion : 'borrador',
@@ -1437,11 +1503,28 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-semibold">Brief SEO</CardTitle>
               <div className="flex gap-2">
-                {contenido.brief && (
+                {(contenido.brief?.texto_generado || localBriefText) && !editingBrief && (
                   <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5"
+                    size="sm" variant="outline" className="gap-1.5"
+                    onClick={() => {
+                      setBriefSections(parseBriefSections(localBriefText || contenido.brief?.texto_generado || ''))
+                      setEditingBrief(true)
+                    }}
+                  >
+                    <PenLine className="h-3.5 w-3.5" />Editar
+                  </Button>
+                )}
+                {editingBrief && (
+                  <Button
+                    size="sm" variant="ghost" className="gap-1.5 text-gray-500"
+                    onClick={() => { setEditingBrief(false); setBriefDirty(false) }}
+                  >
+                    <X className="h-3.5 w-3.5" />Cancelar
+                  </Button>
+                )}
+                {contenido.brief && !editingBrief && (
+                  <Button
+                    size="sm" variant="outline" className="gap-1.5"
                     onClick={() => setModalBrief(true)}
                   >
                     <RefreshCw className="h-3.5 w-3.5" />Regenerar con IA
@@ -1450,14 +1533,52 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
               </div>
             </CardHeader>
             <CardContent>
-              {contenido.brief?.texto_generado ? (
+              {editingBrief ? (
+                /* ── Modo edición ── */
+                <div className="space-y-4">
+                  {SECTION_KEYS.map((key, idx) => (
+                    <div key={key}>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                        {SECTION_LABELS[idx]}
+                      </label>
+                      <textarea
+                        value={briefSections[key]}
+                        onChange={(e) => {
+                          setBriefSections((prev) => ({ ...prev, [key]: e.target.value }))
+                          setBriefDirty(true)
+                        }}
+                        rows={key === 'estructura' || key === 'keywords' || key === 'geo' ? 10 : 5}
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 font-mono resize-y focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      />
+                    </div>
+                  ))}
+                  {briefDirty && (
+                    <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                      {briefSaved && (
+                        <span className="text-xs text-emerald-600 flex items-center gap-1">
+                          ✓ Brief guardado
+                        </span>
+                      )}
+                      <Button
+                        size="sm" onClick={handleSaveBrief} disabled={briefSaving}
+                        className="gap-1.5"
+                      >
+                        {briefSaving
+                          ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Guardando…</>
+                          : 'Guardar cambios'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : (localBriefText || contenido.brief?.texto_generado) ? (
                 /* ── Brief generado por IA: renderizado visual ── */
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-xs text-indigo-600 bg-indigo-50 px-3 py-2 rounded-lg">
                     <Sparkles className="h-3.5 w-3.5" />
                     Brief generado por el agente Brief SEO
+                    {briefSaved && <span className="ml-auto text-emerald-600">✓ Guardado</span>}
                   </div>
-                  <BriefSEODisplay texto={contenido.brief.texto_generado} />
+                  <BriefSEODisplay texto={localBriefText || contenido.brief!.texto_generado!} />
                 </div>
               ) : contenido.brief ? (
                 /* ── Brief estructurado (campos individuales) ── */
