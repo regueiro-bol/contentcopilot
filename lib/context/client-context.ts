@@ -85,6 +85,24 @@ export interface ClientContext {
     totalClicks    : number
     avgPosition    : number
   } | null
+
+  /** Active GSC-detected content opportunities (populated when includeAnalytics=true) */
+  gscOpportunities: Array<{
+    type           : string
+    titulo         : string
+    keyword        : string | null
+    currentPosition: number | null
+    impressions    : number | null
+    clicks         : number | null
+  }>
+
+  /** Latest GMB snapshot — null if no GMB connected or no data (populated when includeGMB=true) */
+  gmb: {
+    rating          : number | null
+    reviewCount     : number | null
+    topKeywords     : string[]
+    implicitQuestions: string[]
+  } | null
 }
 
 export interface ClientContextOptions {
@@ -98,6 +116,8 @@ export interface ClientContextOptions {
   includeAssets?     : boolean
   /** Include GSC analytics from latest snapshot (default: false) */
   includeAnalytics?  : boolean
+  /** Include GMB snapshot data (default: false) */
+  includeGMB?        : boolean
   /** Max pending map items to include (default: 10) */
   maxMapItems?       : number
   /** Max oportunidades from inspiracion to include (default: 5) */
@@ -122,6 +142,7 @@ export async function buildClientContext(
     includeBrand       = true,
     includeAssets      = false,
     includeAnalytics   = false,
+    includeGMB         = false,
     maxMapItems        = 10,
     maxOportunidades   = 5,
   } = options
@@ -136,71 +157,98 @@ export async function buildClientContext(
   if (!cliente) return null
 
   // ── Optional parallel queries ────────────────────────────
-  const [brandResult, assetsResult, competitorsResult, inspiracionResult, mapItemsResult, analyticsResult] =
-    await Promise.allSettled([
-      // 1. brand_context — real columns: tone_of_voice, style_keywords, restrictions, raw_summary
-      includeBrand
-        ? supabase
-            .from('brand_context')
-            .select('tone_of_voice, style_keywords, restrictions, raw_summary')
-            .eq('client_id', clientId)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
+  const [
+    brandResult, assetsResult, competitorsResult, inspiracionResult,
+    mapItemsResult, analyticsResult, gscOpResult, gmbResult,
+  ] = await Promise.allSettled([
+    // 1. brand_context — real columns: tone_of_voice, style_keywords, restrictions, raw_summary
+    includeBrand
+      ? supabase
+          .from('brand_context')
+          .select('tone_of_voice, style_keywords, restrictions, raw_summary')
+          .eq('client_id', clientId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
 
-      // 2. brand_assets — filter active = true
-      includeAssets
-        ? supabase
-            .from('brand_assets')
-            .select('asset_type, drive_url')
-            .eq('client_id', clientId)
-            .eq('active', true)
-        : Promise.resolve({ data: [] as Array<{ asset_type: string; drive_url: string }>, error: null }),
+    // 2. brand_assets — filter active = true
+    includeAssets
+      ? supabase
+          .from('brand_assets')
+          .select('asset_type, drive_url')
+          .eq('client_id', clientId)
+          .eq('active', true)
+      : Promise.resolve({ data: [] as Array<{ asset_type: string; drive_url: string }>, error: null }),
 
-      // 3. social competitors
-      supabase
-        .from('competitors')
-        .select('page_name, platform')
-        .eq('client_id', clientId)
-        .eq('active', true)
-        .order('created_at', { ascending: true }),
+    // 3. social competitors
+    supabase
+      .from('competitors')
+      .select('page_name, platform')
+      .eq('client_id', clientId)
+      .eq('active', true)
+      .order('created_at', { ascending: true }),
 
-      // 4. latest completed inspiracion session
-      includeInspiracion
-        ? supabase
-            .from('inspiracion_sessions')
-            .select('resultado')
-            .eq('client_id', clientId)
-            .eq('status', 'completed')
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
+    // 4. latest completed inspiracion session
+    includeInspiracion
+      ? supabase
+          .from('inspiracion_sessions')
+          .select('resultado')
+          .eq('client_id', clientId)
+          .eq('status', 'completed')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
 
-      // 5. pending content_map_items (non-published, ordered by priority)
-      includeMapItems
-        ? supabase
-            .from('content_map_items')
-            .select('title, main_keyword, cluster, funnel_stage, fase_recomendada, priority')
-            .eq('client_id', clientId)
-            .neq('status', 'publicado')
-            .order('priority', { ascending: true, nullsFirst: false })
-            .limit(maxMapItems)
-        : Promise.resolve({ data: [] as Array<{
-            title: string; main_keyword: string; cluster: string | null
-            funnel_stage: string | null; fase_recomendada: string | null; priority: number | null
-          }>, error: null }),
+    // 5. pending content_map_items (non-published, ordered by priority)
+    includeMapItems
+      ? supabase
+          .from('content_map_items')
+          .select('title, main_keyword, cluster, funnel_stage, fase_recomendada, priority')
+          .eq('client_id', clientId)
+          .neq('status', 'publicado')
+          .order('priority', { ascending: true, nullsFirst: false })
+          .limit(maxMapItems)
+      : Promise.resolve({ data: [] as Array<{
+          title: string; main_keyword: string; cluster: string | null
+          funnel_stage: string | null; fase_recomendada: string | null; priority: number | null
+        }>, error: null }),
 
-      // 6. Latest GSC snapshot for analytics context
-      includeAnalytics
-        ? supabase
-            .from('gsc_snapshots')
-            .select('total_clicks, avg_position, top_queries, cluster_breakdown, search_type_breakdown')
-            .eq('client_id', clientId)
-            .order('date', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
-    ])
+    // 6. Latest GSC snapshot for analytics context
+    includeAnalytics
+      ? supabase
+          .from('gsc_snapshots')
+          .select('total_clicks, avg_position, top_queries, cluster_breakdown, search_type_breakdown')
+          .eq('client_id', clientId)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+
+    // 7. Active GSC content opportunities (only when includeAnalytics)
+    includeAnalytics
+      ? supabase
+          .from('content_opportunities')
+          .select('type, titulo, keyword, current_position, impressions, clicks')
+          .eq('client_id', clientId)
+          .eq('status', 'activa')
+          .order('impressions', { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: [] as Array<{
+          type: string; titulo: string; keyword: string | null
+          current_position: number | null; impressions: number | null; clicks: number | null
+        }>, error: null }),
+
+    // 8. Latest GMB snapshot
+    includeGMB
+      ? supabase
+          .from('gmb_snapshots')
+          .select('avg_rating, total_reviews, review_keywords, top_questions')
+          .eq('client_id', clientId)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ])
 
   // ── Safely extract results (failures → sensible defaults) ─
   const brandData     = brandResult.status       === 'fulfilled' ? brandResult.value.data      : null
@@ -209,6 +257,8 @@ export async function buildClientContext(
   const inspData      = inspiracionResult.status === 'fulfilled' ? inspiracionResult.value.data : null
   const mapData       = mapItemsResult.status    === 'fulfilled' ? mapItemsResult.value.data    : []
   const analyticsData = analyticsResult.status   === 'fulfilled' ? analyticsResult.value.data   : null
+  const gscOpData     = gscOpResult.status       === 'fulfilled' ? gscOpResult.value.data       : []
+  const gmbData       = gmbResult.status         === 'fulfilled' ? gmbResult.value.data         : null
 
   // ── Parse inspiracion resultado ──────────────────────────
   let inspiracion: ClientContext['inspiracion'] = null
@@ -236,9 +286,9 @@ export async function buildClientContext(
   let analytics: ClientContext['analytics'] = null
   if (analyticsData) {
     const snap = analyticsData as Record<string, unknown>
-    const rawQueries        = (snap.top_queries          as Array<Record<string, unknown>> | undefined) ?? []
-    const rawClusters       = (snap.cluster_breakdown    as Array<Record<string, unknown>> | undefined) ?? []
-    const rawBreakdown      = (snap.search_type_breakdown as Record<string, number>        | undefined) ?? {}
+    const rawQueries   = (snap.top_queries           as Array<Record<string, unknown>> | undefined) ?? []
+    const rawClusters  = (snap.cluster_breakdown     as Array<Record<string, unknown>> | undefined) ?? []
+    const rawBreakdown = (snap.search_type_breakdown as Record<string, number>         | undefined) ?? {}
 
     analytics = {
       topKeywords: rawQueries.slice(0, 10).map((q) => ({
@@ -261,6 +311,37 @@ export async function buildClientContext(
       },
       totalClicks : Number(snap.total_clicks   ?? 0),
       avgPosition : Number(snap.avg_position   ?? 0),
+    }
+  }
+
+  // ── Parse GSC opportunities ──────────────────────────────
+  const gscOpportunities: ClientContext['gscOpportunities'] = (gscOpData ?? []).map((op) => {
+    const o = op as {
+      type: string; titulo: string; keyword: string | null
+      current_position: number | null; impressions: number | null; clicks: number | null
+    }
+    return {
+      type           : o.type,
+      titulo         : o.titulo,
+      keyword        : o.keyword        ?? null,
+      currentPosition: o.current_position ?? null,
+      impressions    : o.impressions    ?? null,
+      clicks         : o.clicks         ?? null,
+    }
+  })
+
+  // ── Parse GMB ───────────────────────────────────────────
+  let gmb: ClientContext['gmb'] = null
+  if (gmbData) {
+    const g = gmbData as {
+      avg_rating: number | null; total_reviews: number | null
+      review_keywords: unknown; top_questions: unknown
+    }
+    gmb = {
+      rating          : g.avg_rating    ?? null,
+      reviewCount     : g.total_reviews ?? null,
+      topKeywords     : Array.isArray(g.review_keywords) ? (g.review_keywords as string[]).slice(0, 10) : [],
+      implicitQuestions: Array.isArray(g.top_questions) ? (g.top_questions as string[]).slice(0, 5) : [],
     }
   }
 
@@ -305,6 +386,10 @@ export async function buildClientContext(
     inspiracion,
 
     analytics,
+
+    gscOpportunities,
+
+    gmb,
 
     pendingMapItems: (mapData ?? []).map((item) => {
       const i = item as {

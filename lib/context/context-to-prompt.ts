@@ -106,5 +106,39 @@ export function contextToPrompt(ctx: ClientContext): string {
     sections.push(analyticsLines.join('\n'))
   }
 
+  // ── GSC content opportunities ────────────────────────────
+  if (ctx.gscOpportunities && ctx.gscOpportunities.length > 0) {
+    const lines = ctx.gscOpportunities
+      .map((op) => {
+        const parts = [`  - [${op.type}] ${op.titulo}`]
+        if (op.keyword)         parts.push(`    Keyword: ${op.keyword}`)
+        if (op.currentPosition) parts.push(`    Posición actual: ${op.currentPosition}`)
+        if (op.impressions)     parts.push(`    Impresiones: ${op.impressions}`)
+        parts.push('    → Priorizar este contenido')
+        return parts.join('\n')
+      })
+      .join('\n')
+    sections.push(`OPORTUNIDADES SEO DETECTADAS:\n${lines}`)
+  }
+
+  // ── GMB reviews context ──────────────────────────────────
+  if (ctx.gmb) {
+    const g = ctx.gmb
+    const gmbLines: string[] = []
+
+    const header = `RESEÑAS GOOGLE (${g.reviewCount ?? '?'} reseñas${g.rating ? `, ${g.rating}⭐` : ''}):`
+    gmbLines.push(header)
+
+    if (g.topKeywords.length > 0) {
+      gmbLines.push(`  Lo que más valoran los clientes: ${g.topKeywords.join(', ')}`)
+    }
+    if (g.implicitQuestions.length > 0) {
+      gmbLines.push('  Preguntas frecuentes de clientes:')
+      g.implicitQuestions.forEach((q) => gmbLines.push(`    - ${q}`))
+    }
+
+    if (gmbLines.length > 1) sections.push(gmbLines.join('\n'))
+  }
+
   return sections.join('\n\n')
 }

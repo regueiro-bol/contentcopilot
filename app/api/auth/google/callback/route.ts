@@ -85,6 +85,7 @@ export async function GET(request: NextRequest) {
             'webmasters.readonly',
             'analytics.readonly',
             'userinfo.email',
+            'business.manage',
           ],
           updated_at   : new Date().toISOString(),
         },

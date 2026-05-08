@@ -224,6 +224,8 @@ export async function POST(request: NextRequest) {
       includeMapItems   : false,  // mapa aún no existe
       includeInspiracion: true,
       includeBrand      : true,
+      includeAnalytics  : true,
+      includeGMB        : true,
     })
     const clientContextStr = clientCtx ? contextToPrompt(clientCtx) : undefined
 

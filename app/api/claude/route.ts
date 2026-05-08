@@ -98,6 +98,8 @@ export async function POST(request: NextRequest) {
         includeMapItems   : true,
         includeInspiracion: true,
         includeBrand      : true,
+        includeAnalytics  : true,
+        includeGMB        : true,
       })
       if (clientCtx) {
         systemPrompt = `${systemPrompt}\n\n${contextToPrompt(clientCtx)}`

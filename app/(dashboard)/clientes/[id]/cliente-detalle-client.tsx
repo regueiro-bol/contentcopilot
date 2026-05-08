@@ -646,6 +646,217 @@ function ClusterTable({ data }: { data: GSCData['cluster_breakdown'] }) {
   )
 }
 
+// ── GMB types ─────────────────────────────────────────────────────────────
+
+interface GMBData {
+  connected         : boolean
+  cached            : boolean
+  date              : string
+  avg_rating        : number
+  total_reviews     : number
+  views_maps        : number
+  views_search      : number
+  clicks_website    : number
+  clicks_phone      : number
+  clicks_directions : number
+  review_keywords   : string[]
+  negative_keywords : string[]
+  implicit_questions: string[]
+  content_ideas     : Array<{
+    titulo: string; keyword: string; razon: string; funnel: string
+  }>
+  recent_reviews    : Array<{
+    rating: number; comment: string; createTime: string; reviewerName: string
+  }>
+}
+
+// ── GMB section sub-component ─────────────────────────────────────────────
+
+function GMBSection({ clienteId }: { clienteId: string }) {
+  const [gmb,       setGmb]       = useState<GMBData | null | false>(null) // null=loading, false=not connected
+  const [adding,    setAdding]    = useState<string | null>(null) // ideaIdx being added to map
+  const [addedIdxs, setAddedIdxs] = useState<Set<number>>(new Set())
+
+  useEffect(() => {
+    fetch(`/api/google/gmb/${clienteId}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.connected === false) setGmb(false)
+        else setGmb(d as GMBData)
+      })
+      .catch(() => setGmb(false))
+  }, [clienteId])
+
+  if (gmb === null) return null // loading silently
+
+  if (gmb === false) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Google My Business</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Conecta GMB para analizar reseñas y descubrir ideas de contenido.
+              </p>
+            </div>
+            <Link href="/ajustes/conexiones" className="shrink-0">
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs">
+                <Plus className="h-3.5 w-3.5" /> Conectar GMB
+              </Button>
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const totalClicks = gmb.clicks_website + gmb.clicks_phone + gmb.clicks_directions
+
+  const handleAddToMap = async (idea: GMBData['content_ideas'][number], idx: number) => {
+    setAdding(String(idx))
+    try {
+      // Get first available map
+      const mapsRes = await fetch(`/api/strategy/mapas?client_id=${clienteId}`)
+      if (!mapsRes.ok) throw new Error('No map found')
+      const mapsData = await mapsRes.json()
+      const mapId = (mapsData.maps as Array<{ id: string }>)?.[0]?.id
+      if (!mapId) throw new Error('No map found')
+
+      const res = await fetch('/api/strategy/mapa/items', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          map_id      : mapId,
+          title       : idea.titulo,
+          main_keyword: idea.keyword,
+          funnel_stage: idea.funnel,
+          cluster     : 'GMB Ideas',
+          fase        : 'fase_1',
+        }),
+      })
+      if (!res.ok) throw new Error('Error adding to map')
+      setAddedIdxs((prev) => new Set(Array.from(prev).concat(idx)))
+    } catch (e) {
+      console.error('[GMB AddToMap]', e)
+    } finally {
+      setAdding(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+          <span className="text-base">🗺️</span> Google My Business
+        </h3>
+        <span className="text-[10px] text-gray-400">
+          {gmb.avg_rating > 0 && `${gmb.avg_rating}⭐ · `}{gmb.total_reviews} reseñas
+        </span>
+      </div>
+
+      {/* 4 stat cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Rating"          value={gmb.avg_rating > 0 ? `${gmb.avg_rating} ⭐` : '—'}      color="text-amber-600" />
+        <StatCard label="Total reseñas"   value={String(gmb.total_reviews)}                              color="text-indigo-700" />
+        <StatCard label="Vistas en Maps"  value={(gmb.views_maps + gmb.views_search).toLocaleString('es-ES')} color="text-sky-700" />
+        <StatCard label="Clicks web+tel"  value={totalClicks.toLocaleString('es-ES')}                    color="text-emerald-700" />
+      </div>
+
+      {/* Keywords positivas */}
+      {gmb.review_keywords.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Lo que más valoran los clientes
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {gmb.review_keywords.map((kw, i) => (
+                <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                  {kw}
+                </span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Preguntas implícitas */}
+      {gmb.implicit_questions.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Preguntas frecuentes de clientes
+            </p>
+            <ul className="space-y-1">
+              {gmb.implicit_questions.map((q, i) => (
+                <li key={i} className="text-xs text-gray-700 flex items-start gap-1.5">
+                  <span className="text-indigo-400 shrink-0 mt-0.5">→</span>{q}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Ideas de contenido */}
+      {gmb.content_ideas.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+              <Lightbulb className="h-4 w-4 text-amber-500" /> Ideas de contenido desde reseñas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {gmb.content_ideas.map((idea, i) => {
+                const funnelCls = idea.funnel === 'bofu'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : idea.funnel === 'mofu'
+                  ? 'bg-violet-100 text-violet-700'
+                  : 'bg-sky-100 text-sky-700'
+                const added = addedIdxs.has(i)
+                return (
+                  <div key={i} className="flex items-start justify-between gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${funnelCls}`}>
+                          {idea.funnel}
+                        </span>
+                        <span className="text-sm font-medium text-gray-900 truncate">{idea.titulo}</span>
+                      </div>
+                      <p className="text-xs text-gray-500">{idea.razon}</p>
+                      {idea.keyword && <p className="text-xs text-indigo-500 mt-0.5">🔑 {idea.keyword}</p>}
+                    </div>
+                    <button
+                      onClick={() => handleAddToMap(idea, i)}
+                      disabled={!!adding || added}
+                      className={`shrink-0 text-xs px-2 py-1 rounded border transition-colors flex items-center gap-1 ${
+                        added
+                          ? 'bg-emerald-50 text-emerald-600 border-emerald-200 cursor-default'
+                          : 'bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50 disabled:opacity-50'
+                      }`}
+                    >
+                      {adding === String(i)
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : added
+                        ? <CheckCircle2 className="h-3 w-3" />
+                        : <Plus className="h-3 w-3" />
+                      }
+                      {added ? 'Añadido' : '+ Mapa'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
 // ── Main AnaliticaTab ──────────────────────────────────────────────────────
 
 function AnaliticaTab({ clienteId }: { clienteId: string }) {
@@ -871,6 +1082,9 @@ function AnaliticaTab({ clienteId }: { clienteId: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Google My Business ── */}
+      <GMBSection clienteId={clienteId} />
 
       {/* ── Top 20 queries ── */}
       {gsc?.top_queries && gsc.top_queries.length > 0 && (

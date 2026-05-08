@@ -20,6 +20,7 @@ const SCOPES = [
   'https://www.googleapis.com/auth/webmasters.readonly',   // GSC
   'https://www.googleapis.com/auth/analytics.readonly',     // GA4
   'https://www.googleapis.com/auth/userinfo.email',         // Email del usuario
+  'https://www.googleapis.com/auth/business.manage',        // Google My Business
 ]
 
 // ─────────────────────────────────────────────────────────────

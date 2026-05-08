@@ -16,7 +16,7 @@ interface ClienteOption { id: string; nombre: string }
 
 interface UnifiedItem {
   id              : string
-  source          : 'mapa' | 'oportunidad'
+  source          : 'mapa' | 'oportunidad' | 'gsc'
   titulo          : string
   keyword?        : string
   cluster?        : string
@@ -33,6 +33,26 @@ interface UnifiedItem {
   tipo?           : string
   fecha_evento?   : string
   contexto?       : string
+  // gsc opportunity fields
+  gscType?        : string
+  impressions?    : number
+  currentPosition?: number
+}
+
+interface GscOpportunity {
+  id             : string
+  type           : string
+  titulo         : string
+  descripcion    : string | null
+  keyword        : string | null
+  cluster        : string | null
+  current_position: number | null
+  impressions    : number | null
+  clicks         : number | null
+  priority       : number
+  status         : string
+  funnel_stage   : string | null
+  fase           : string | null
 }
 
 type FiltroActivo = 'todos' | 'aprobados' | 'revision' | 'tofu' | 'mofu' | 'bofu'
@@ -184,8 +204,9 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   }
 
   // ── Data ─────────────────────────────────────────────────
-  const [mapItems,  setMapItems]  = useState<UnifiedItem[]>([])
-  const [opItems,   setOpItems]   = useState<UnifiedItem[]>([])
+  const [mapItems,        setMapItems]        = useState<UnifiedItem[]>([])
+  const [opItems,         setOpItems]         = useState<UnifiedItem[]>([])
+  const [gscOpportunities, setGscOpportunities] = useState<GscOpportunity[]>([])
   const [stats, setStats] = useState({ total: 0, aprobados: 0, revision: 0, rechazados: 0 })
   const [loading,   setLoading]   = useState(false)
   const [error,     setError]     = useState<string | null>(null)
@@ -198,6 +219,18 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   const toggleOps = () => {
     setShowOps((v) => {
       localStorage.setItem('mapa_show_oportunidades', String(!v))
+      return !v
+    })
+  }
+
+  // ── GSC opportunities toggle ─────────────────────────────
+  const [showGsc, setShowGsc] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    return localStorage.getItem('mapa_show_gsc') !== 'false'
+  })
+  const toggleGsc = () => {
+    setShowGsc((v) => {
+      localStorage.setItem('mapa_show_gsc', String(!v))
       return !v
     })
   }
@@ -286,6 +319,7 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
 
       setMapItems((data.mapItems ?? []).map(toMapItem))
       setOpItems((data.oportunidades ?? []).map(toOpItem))
+      setGscOpportunities(data.gscOpportunities ?? [])
       setStats(data.stats ?? { total: 0, aprobados: 0, revision: 0, rechazados: 0 })
       setLocalVal({})
       setPedidosCreados({})
@@ -441,6 +475,35 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
   }
 
   // ─────────────────────────────────────────────────────────
+  // GSC Opportunity actions
+  // ─────────────────────────────────────────────────────────
+
+  const handleDescartarGsc = async (oppId: string) => {
+    setGscOpportunities((cur) => cur.filter((o) => o.id !== oppId))
+    try {
+      await fetch(`/api/strategy/oportunidades-gsc/${oppId}`, {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ status: 'descartada' }),
+      })
+    } catch (e) { console.error(e) }
+  }
+
+  const handleCrearDesdeGsc = (opp: GscOpportunity) => {
+    // Map GSC opportunity to UnifiedItem shape and open extension modal
+    const pseudoItem: UnifiedItem = {
+      id        : opp.id,
+      source    : 'gsc',
+      titulo    : opp.titulo,
+      keyword   : opp.keyword ?? undefined,
+      funnel_stage: opp.funnel_stage ?? undefined,
+      validacion: 'propuesto',
+      gscType   : opp.type,
+    }
+    setPedidoItem(pseudoItem)
+  }
+
+  // ─────────────────────────────────────────────────────────
   // Pedidos
   // ─────────────────────────────────────────────────────────
 
@@ -479,6 +542,9 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
         if (item.content_status === 'existing_content') {
           body.tipo = 'actualizacion'; body.existing_url = item.keyword
         }
+      } else if (item.source === 'gsc') {
+        body.tipo    = item.gscType === 'quick_win' || item.gscType === 'update' ? 'actualizacion' : 'nuevo'
+        body.contexto = `Oportunidad GSC detectada: ${item.gscType ?? 'missing_content'}`
       } else {
         body.oportunidad_id = item.id
         body.urgencia       = item.urgencia
@@ -901,6 +967,89 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
               </div>
             )}
 
+            {/* ── SECCIÓN 3: Oportunidades GSC ────────────────── */}
+            {gscOpportunities.length > 0 && (
+              <div className="mb-6">
+                <button
+                  onClick={toggleGsc}
+                  className="flex items-center gap-2 text-sm font-semibold text-indigo-700 mb-3 hover:text-indigo-900 transition-colors"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Oportunidades GSC
+                  <span className="text-indigo-500 font-normal">({gscOpportunities.length})</span>
+                  {showGsc
+                    ? <ChevronUp className="h-4 w-4 text-indigo-500" />
+                    : <ChevronDown className="h-4 w-4 text-indigo-500" />
+                  }
+                </button>
+                {showGsc && (
+                  <div className="bg-white rounded-lg border border-indigo-200 overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-indigo-100 bg-indigo-50/60 text-xs text-gray-500 uppercase tracking-wide">
+                          <th className="px-4 py-2.5 text-left w-8">#</th>
+                          <th className="px-4 py-2.5 text-left">Título + Keyword</th>
+                          <th className="px-4 py-2.5 text-left w-28">Tipo</th>
+                          <th className="px-4 py-2.5 text-right w-20">Pos.</th>
+                          <th className="px-4 py-2.5 text-right w-24">Impr.</th>
+                          <th className="px-4 py-2.5 text-left w-36">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-indigo-50">
+                        {gscOpportunities.map((opp, idx) => {
+                          const typeStyles: Record<string, { label: string; cls: string }> = {
+                            quick_win      : { label: '⚡ Quick win',    cls: 'bg-yellow-100 text-yellow-800' },
+                            missing_content: { label: '📝 Faltante',     cls: 'bg-orange-100 text-orange-800' },
+                            brand_dependent: { label: '🏷️ Marca',        cls: 'bg-indigo-100 text-indigo-800' },
+                            bofu_gap       : { label: '🎯 Gap BOFU',      cls: 'bg-red-100 text-red-800' },
+                            update         : { label: '🔄 Actualizar',    cls: 'bg-blue-100 text-blue-800' },
+                          }
+                          const ts = typeStyles[opp.type] ?? { label: opp.type, cls: 'bg-gray-100 text-gray-700' }
+                          return (
+                            <tr key={opp.id} className="hover:bg-indigo-50/40 transition-colors">
+                              <td className="px-4 py-3 text-gray-400 tabular-nums text-xs">{idx + 1}</td>
+                              <td className="px-4 py-3">
+                                <span className="font-medium text-gray-900">{opp.titulo}</span>
+                                {opp.keyword && <p className="text-xs text-gray-400 mt-0.5">{opp.keyword}</p>}
+                                {opp.descripcion && <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{opp.descripcion}</p>}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${ts.cls}`}>{ts.label}</span>
+                              </td>
+                              <td className="px-4 py-3 text-right tabular-nums text-xs text-gray-500">
+                                {opp.current_position ? `${opp.current_position}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right tabular-nums text-xs text-gray-500">
+                                {opp.impressions ? opp.impressions.toLocaleString('es-ES') : '—'}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleCrearDesdeGsc(opp)}
+                                    className="flex items-center gap-0.5 text-xs text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded border border-indigo-200 hover:border-indigo-400 bg-white transition-colors"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    {opp.type === 'quick_win' || opp.type === 'update' ? 'Mejorar' : 'Crear'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDescartarGsc(opp.id)}
+                                    title="Descartar"
+                                    className="h-6 w-6 flex items-center justify-center rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ── Footer ──────────────────────────────────────── */}
             {mapItems.length > 0 && (
               <div className="flex items-center justify-between text-sm text-gray-500">
@@ -1022,60 +1171,86 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
       )}
 
       {/* ── Modal pedir contenidos ───────────────────────────── */}
-      {mostrarModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setMostrarModal(false) }}
-        >
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-1">
-              {esMasContenidos ? '¿Cuántos contenidos adicionales?' : '¿Cuántos contenidos necesitas?'}
-            </h2>
-            {esMasContenidos && (
-              <p className="text-sm text-gray-500 mb-4">
-                Ya tienes {mapItems.length} contenidos en el mapa.
-                El sistema no repetirá los existentes ni los rechazados.
-              </p>
-            )}
-            <div className="flex items-center gap-3 my-4">
-              <input
-                type="number" min={5} max={200} value={cantidadPedir}
-                onChange={(e) => setCantidadPedir(Math.max(5, parseInt(e.target.value) || 40))}
-                className="w-24 text-center text-xl font-bold border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <span className="text-gray-600">artículos</span>
-            </div>
-            {!esMasContenidos && (
-              <div className="text-sm text-gray-500 space-y-1 mb-5">
-                <p className="font-medium text-gray-700 mb-1">El sistema usará:</p>
-                {['Keywords con potencial', 'Contenido ya publicado', 'Artículos rechazados', 'Competencia', 'Distribución TOFU/MOFU/BOFU'].map((txt) => (
-                  <p key={txt} className="flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />{txt}
-                  </p>
-                ))}
+      {mostrarModal && (() => {
+        // GSC context banner data
+        const quickWins      = gscOpportunities.filter((o) => o.type === 'quick_win').length
+        const missingContent = gscOpportunities.filter((o) => o.type === 'missing_content').length
+        const hasGscContext  = gscOpportunities.length > 0
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) setMostrarModal(false) }}
+          >
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+              <h2 className="text-base font-semibold text-gray-900 mb-1">
+                {esMasContenidos ? '¿Cuántos contenidos adicionales?' : '¿Cuántos contenidos necesitas?'}
+              </h2>
+              {esMasContenidos && (
+                <p className="text-sm text-gray-500 mb-4">
+                  Ya tienes {mapItems.length} contenidos en el mapa.
+                  El sistema no repetirá los existentes ni los rechazados.
+                </p>
+              )}
+
+              {/* GSC context banner */}
+              {hasGscContext && (
+                <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-800 space-y-1">
+                  <p className="font-semibold text-indigo-700 mb-1.5">💡 Basado en tus datos de Google Search Console:</p>
+                  {quickWins > 0 && (
+                    <p className="flex items-center gap-1.5">
+                      <span className="text-yellow-600">⚡</span>
+                      {quickWins} quick win{quickWins !== 1 ? 's' : ''} detectado{quickWins !== 1 ? 's' : ''} (posición 6-20)
+                    </p>
+                  )}
+                  {missingContent > 0 && (
+                    <p className="flex items-center gap-1.5">
+                      <span>📝</span>
+                      {missingContent} keyword{missingContent !== 1 ? 's' : ''} sin contenido con impresiones
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 my-4">
+                <input
+                  type="number" min={5} max={200} value={cantidadPedir}
+                  onChange={(e) => setCantidadPedir(Math.max(5, parseInt(e.target.value) || 40))}
+                  className="w-24 text-center text-xl font-bold border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <span className="text-gray-600">artículos</span>
               </div>
-            )}
-            {errorGenerar && <p className="text-sm text-red-500 mb-3">{errorGenerar}</p>}
-            {generando && (
-              <p className="text-sm text-indigo-600 flex items-center gap-1.5 mb-3">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generando {cantidadPedir} artículos… (30-60 s)
-              </p>
-            )}
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => { setMostrarModal(false); setErrorGenerar(null) }}
-                disabled={generando} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 disabled:opacity-50">
-                Cancelar
-              </button>
-              <button onClick={handleGenerar} disabled={generando || !clienteId}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-50 flex items-center gap-1.5">
-                {generando && <Loader2 className="h-4 w-4 animate-spin" />}
-                {generando ? 'Generando…' : 'Generar'}
-              </button>
+              {!esMasContenidos && (
+                <div className="text-sm text-gray-500 space-y-1 mb-5">
+                  <p className="font-medium text-gray-700 mb-1">El sistema usará:</p>
+                  {['Keywords con potencial', 'Contenido ya publicado', 'Artículos rechazados', 'Competencia', 'Distribución TOFU/MOFU/BOFU'].map((txt) => (
+                    <p key={txt} className="flex items-center gap-1.5">
+                      <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />{txt}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {errorGenerar && <p className="text-sm text-red-500 mb-3">{errorGenerar}</p>}
+              {generando && (
+                <p className="text-sm text-indigo-600 flex items-center gap-1.5 mb-3">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Generando {cantidadPedir} artículos… (30-60 s)
+                </p>
+              )}
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => { setMostrarModal(false); setErrorGenerar(null) }}
+                  disabled={generando} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 disabled:opacity-50">
+                  Cancelar
+                </button>
+                <button onClick={handleGenerar} disabled={generando || !clienteId}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-50 flex items-center gap-1.5">
+                  {generando && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {generando ? 'Generando…' : 'Generar'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

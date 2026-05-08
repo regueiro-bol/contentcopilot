@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     .then(undefined, (e: unknown) => console.error('[mapa/unified] limpieza caducadas:', e))
 
   // ── Queries paralelas ────────────────────────────────────
-  const [mapsResult, opResult] = await Promise.allSettled([
+  const [mapsResult, opResult, gscOpResult] = await Promise.allSettled([
     // 1. IDs de content_maps para este cliente
     supabase
       .from('content_maps')
@@ -50,6 +50,15 @@ export async function GET(request: NextRequest) {
       .eq('activa', true)
       .or(`expires_at.is.null,expires_at.gt.${now}`)
       .order('created_at', { ascending: false }),
+
+    // 3. Oportunidades GSC activas
+    supabase
+      .from('content_opportunities')
+      .select('id, type, titulo, descripcion, keyword, cluster, current_position, impressions, clicks, priority, status, funnel_stage, fase')
+      .eq('client_id', client_id)
+      .eq('status', 'activa')
+      .order('impressions', { ascending: false })
+      .limit(10),
   ])
 
   // ── Obtener content_map_items vía los map IDs ────────────
@@ -109,7 +118,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const oportunidades = opResult.status === 'fulfilled' ? (opResult.value.data ?? []) : []
+  const oportunidades    = opResult.status    === 'fulfilled' ? (opResult.value.data    ?? []) : []
+  const gscOpportunities = gscOpResult.status === 'fulfilled' ? (gscOpResult.value.data ?? []) : []
 
   // ── Stats (sobre map items) ──────────────────────────────
   const stats = {
@@ -119,5 +129,5 @@ export async function GET(request: NextRequest) {
     rechazados: mapItems.filter((i) => i.validacion === 'rechazado').length,
   }
 
-  return NextResponse.json({ mapItems, oportunidades, stats })
+  return NextResponse.json({ mapItems, oportunidades, gscOpportunities, stats })
 }
