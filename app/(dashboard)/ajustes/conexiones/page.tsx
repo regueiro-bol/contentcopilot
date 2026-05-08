@@ -182,7 +182,9 @@ function ConexionesContent() {
   }
 
   // ── Conectar nueva cuenta ────────────────────────────────
-  function handleConnect() { window.location.href = '/api/auth/google' }
+  function handleConnect(withGMB = false) {
+    window.location.href = withGMB ? '/api/auth/google?gmb=true' : '/api/auth/google'
+  }
 
   // ── Formatear fecha ───────────────────────────────────────
   function formatDate(iso: string): string {
@@ -307,7 +309,7 @@ function ConexionesContent() {
                             size="sm"
                             variant="outline"
                             className="text-xs gap-1 shrink-0"
-                            onClick={handleConnect}
+                            onClick={() => handleConnect(true)}
                           >
                             <RefreshCw className="h-3 w-3" />
                             Reconectar con GMB
@@ -336,15 +338,24 @@ function ConexionesContent() {
         </Card>
       )}
 
-      {/* Botón conectar */}
-      <div className="flex items-center gap-3">
+      {/* Botones conectar */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button
-          onClick={handleConnect}
+          onClick={() => handleConnect(false)}
           disabled={accounts.length >= MAX_ACCOUNTS}
           className="gap-2"
         >
           <Plus className="h-4 w-4" />
           Conectar cuenta Google
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => handleConnect(true)}
+          disabled={accounts.length >= MAX_ACCOUNTS}
+          className="gap-2"
+        >
+          <MapPin className="h-4 w-4" />
+          Conectar con Google My Business
         </Button>
         {accounts.length >= MAX_ACCOUNTS && (
           <p className="text-xs text-gray-400">
@@ -352,6 +363,10 @@ function ConexionesContent() {
           </p>
         )}
       </div>
+      <p className="text-xs text-gray-400 -mt-1">
+        "Conectar cuenta Google" activa GSC y GA4. "Conectar con Google My Business" también activa
+        el acceso a reseñas y datos de tu ficha de negocio (requiere verificación de app por Google).
+      </p>
 
     </div>
   )

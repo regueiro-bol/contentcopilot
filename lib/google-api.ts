@@ -16,11 +16,14 @@ import { google } from 'googleapis'
 // Constantes
 // ─────────────────────────────────────────────────────────────
 
-const SCOPES = [
+const SCOPES_BASE = [
   'https://www.googleapis.com/auth/webmasters.readonly',   // GSC
   'https://www.googleapis.com/auth/analytics.readonly',     // GA4
   'https://www.googleapis.com/auth/userinfo.email',         // Email del usuario
-  'https://www.googleapis.com/auth/business.manage',        // Google My Business
+]
+
+const SCOPES_GMB = [
+  'https://www.googleapis.com/auth/business.manage',        // Google My Business (requiere verificación)
 ]
 
 // ─────────────────────────────────────────────────────────────
@@ -59,14 +62,16 @@ function getAuthenticatedClient(accessToken: string) {
 /**
  * Genera la URL de autorización OAuth.
  * @param accountHint — email para pre-seleccionar la cuenta Google
+ * @param includeGMB  — incluir scope business.manage (requiere verificación de app en Google)
  */
-export function getAuthUrl(accountHint?: string): string {
+export function getAuthUrl(accountHint?: string, includeGMB = false): string {
   const client = getOAuth2Client()
+  const scopes = includeGMB ? [...SCOPES_BASE, ...SCOPES_GMB] : SCOPES_BASE
 
   return client.generateAuthUrl({
     access_type : 'offline',
     prompt      : 'consent',    // Fuerza refresh_token en cada autorización
-    scope       : SCOPES,
+    scope       : scopes,
     ...(accountHint ? { login_hint: accountHint } : {}),
   })
 }
@@ -79,6 +84,7 @@ export async function exchangeCode(code: string): Promise<{
   access_token  : string
   refresh_token : string
   expiry_date   : number | null
+  scope         : string | null
 }> {
   const client = getOAuth2Client()
   const { tokens } = await client.getToken(code)
@@ -91,6 +97,7 @@ export async function exchangeCode(code: string): Promise<{
     access_token  : tokens.access_token  ?? '',
     refresh_token : tokens.refresh_token,
     expiry_date   : tokens.expiry_date   ?? null,
+    scope         : tokens.scope         ?? null,
   }
 }
 

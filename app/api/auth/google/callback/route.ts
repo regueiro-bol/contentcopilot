@@ -81,12 +81,9 @@ export async function GET(request: NextRequest) {
           token_expiry : tokens.expiry_date
             ? new Date(tokens.expiry_date).toISOString()
             : null,
-          scopes       : [
-            'webmasters.readonly',
-            'analytics.readonly',
-            'userinfo.email',
-            'business.manage',
-          ],
+          scopes       : tokens.scope
+            ? tokens.scope.split(' ').map((s) => s.split('/').pop() ?? s)
+            : ['webmasters.readonly', 'analytics.readonly', 'userinfo.email'],
           updated_at   : new Date().toISOString(),
         },
         { onConflict: 'email' },

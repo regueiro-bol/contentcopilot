@@ -16,8 +16,9 @@ export async function GET(request: NextRequest) {
     redirect('/sign-in')
   }
 
-  const hint    = request.nextUrl.searchParams.get('hint') ?? undefined
-  const authUrl = getAuthUrl(hint)
+  const hint       = request.nextUrl.searchParams.get('hint') ?? undefined
+  const includeGMB = request.nextUrl.searchParams.get('gmb') === 'true'
+  const authUrl    = getAuthUrl(hint, includeGMB)
 
   redirect(authUrl)
 }
