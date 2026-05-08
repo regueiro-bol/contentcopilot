@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type RefObject } from 'react'
 import { Loader2 } from 'lucide-react'
 
 function proximoLunesHabil(): string {
@@ -16,6 +16,8 @@ export interface DatePickerPopoverProps {
   saving?       : boolean
   position      : { top: number; left: number }
   confirmLabel? : string
+  /** Optional trigger element ref — clicks on it won't be treated as outside clicks */
+  triggerRef?   : RefObject<HTMLElement | null>
   onConfirm     : (date: string) => void
   onClose       : () => void
 }
@@ -25,29 +27,40 @@ export function DatePickerPopover({
   saving = false,
   position,
   confirmLabel = 'Añadir al calendario',
+  triggerRef,
   onConfirm,
   onClose,
 }: DatePickerPopoverProps) {
   const [fecha, setFecha] = useState(currentDate ?? proximoLunesHabil())
-  const ref = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  // Keep a stable ref to onClose to avoid effect re-runs
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
 
   // Sync if parent changes currentDate (e.g. reopening with existing date)
   useEffect(() => {
     setFecha(currentDate ?? proximoLunesHabil())
   }, [currentDate])
 
-  // Click-outside to close
+  // Click-outside — empty deps so we never re-subscribe on every render
   useEffect(() => {
-    function handleDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node
+      const insidePopover = popoverRef.current?.contains(target) ?? false
+      const insideTrigger = triggerRef?.current?.contains(target) ?? false
+      if (!insidePopover && !insideTrigger) {
+        onCloseRef.current()
+      }
     }
-    document.addEventListener('mousedown', handleDown)
-    return () => document.removeEventListener('mousedown', handleDown)
-  }, [onClose])
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div
-      ref={ref}
+      ref={popoverRef}
+      onClick={(e) => e.stopPropagation()}
       style={{ position: 'fixed', top: position.top, left: position.left, width: 284, zIndex: 9999 }}
       className="bg-white rounded-lg shadow-xl border border-gray-200 p-4"
     >

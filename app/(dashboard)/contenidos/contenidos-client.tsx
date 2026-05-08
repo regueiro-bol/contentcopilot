@@ -269,14 +269,14 @@ export default function ContenidosPageClient({ contenidos }: { contenidos: FilaC
                       <button
                         onClick={(e) => openDatePicker(e, c)}
                         className={fecha
-                          ? 'text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded transition-colors'
-                          : 'flex items-center gap-0.5 text-xs text-gray-300 hover:text-indigo-500 transition-colors'
+                          ? 'text-[10px] text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded transition-colors'
+                          : 'flex items-center gap-0.5 text-xs text-gray-600 hover:text-indigo-600 px-2 py-1 rounded border border-gray-200 hover:border-indigo-300 bg-white transition-colors'
                         }
                         title={fecha ? 'Cambiar fecha' : 'Planificar'}
                       >
                         {fecha
                           ? `📅 ${new Date(fecha + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`
-                          : <><CalendarPlus className="h-3 w-3" /> —</>
+                          : <><CalendarPlus className="h-3 w-3" /> Planificar</>
                         }
                       </button>
                     )
