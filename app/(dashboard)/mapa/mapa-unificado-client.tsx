@@ -322,12 +322,23 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
     })
   }, [mapItems, filtro, verRechazados, effectiveVal])
 
-  // oportunidades sorted by urgencia
-  const sortedOpItems = useMemo(() =>
-    [...opItems].sort((a, b) => {
+  // oportunidades: same validation filter as evergreen + sort by urgencia
+  const sortedOpItems = useMemo(() => {
+    const filtered = opItems.filter((item) => {
+      const v = effectiveVal(item)
+      if (!verRechazados && v === 'rechazado') return false
+      switch (filtro) {
+        case 'aprobados': return v === 'aprobado'
+        case 'revision' : return v === 'revision'
+        // tofu/mofu/bofu are evergreen-only; show all oportunidades in those views
+        default         : return true
+      }
+    })
+    return filtered.sort((a, b) => {
       const uo = (u?: string) => u === '24h' ? 0 : u === 'semana' ? 1 : u === 'mes' ? 2 : 3
       return uo(a.urgencia) - uo(b.urgencia)
-    }), [opItems])
+    })
+  }, [opItems, filtro, verRechazados, effectiveVal])
 
   // ─────────────────────────────────────────────────────────
   // Validación
@@ -821,7 +832,7 @@ export default function MapaUnificadoClient({ clientes }: { clientes: ClienteOpt
             </div>
 
             {/* ── SECCIÓN 2: Oportunidades de Actualidad ──────── */}
-            {opItems.length > 0 && (
+            {sortedOpItems.length > 0 && (
               <div className="mb-6">
                 <button
                   onClick={toggleOps}
