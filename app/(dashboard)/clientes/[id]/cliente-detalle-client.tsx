@@ -7,7 +7,11 @@ import {
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
   Loader2, Link2, Globe, AlertCircle, AlertTriangle, BarChart2,
   RefreshCw, Plug, RotateCcw, Megaphone, Lightbulb, Share2,
+  Search, TrendingUp, TrendingDown, Zap, Target,
 } from 'lucide-react'
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -428,10 +432,40 @@ function BrandAssetsTab({
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Analítica GA4
+// Tab: Analítica (GSC + GA4 unificado)
 // ---------------------------------------------------------------------------
 
-interface GA4PageMetric {
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface GSCData {
+  connected            : boolean
+  cached               : boolean
+  date                 : string
+  total_clicks         : number
+  total_impressions    : number
+  avg_ctr              : number
+  avg_position         : number
+  top_queries          : Array<{
+    query: string; clicks: number; impressions: number; ctr: number; position: number; type: string
+  }>
+  top_pages            : Array<{
+    page: string; clicks: number; impressions: number; ctr: number; position: number
+  }>
+  search_type_breakdown: { informacional: number; marca: number; transaccional: number; comparacional: number }
+  cluster_breakdown    : Array<{
+    cluster: string; articles: number; totalClicks: number; totalImpressions: number
+    avgPosition: number | null; hasBofu: boolean; status: string
+    items: Array<{ title: string; url: string; clicks: number; position: number }>
+  }>
+  daily_evolution      : Array<{ date: string; clicks: number; impressions: number; ctr: number; position: number }>
+  opportunities        : Array<{
+    id?: string; type: string; titulo: string; descripcion: string | null
+    keyword: string | null; cluster: string | null; current_position: number | null
+    impressions: number | null; priority: number
+  }>
+}
+
+interface GA4Metric {
   pagePath   : string
   sessions   : number
   pageViews  : number
@@ -440,13 +474,188 @@ interface GA4PageMetric {
   conversions: number
 }
 
-function GA4AnalyticsTab({ clienteId }: { clienteId: string }) {
-  const [metrics, setMetrics]   = useState<GA4PageMetric[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState<string | null>(null)
-  const [fecha, setFecha]       = useState<string | null>(null)
-  const [cached, setCached]     = useState(false)
+// ── Sub-component helpers ──────────────────────────────────────────────────
+
+const QUERY_TYPE_STYLES: Record<string, { label: string; cls: string; emoji: string }> = {
+  informacional: { label: 'Informacional', cls: 'bg-sky-100 text-sky-700',        emoji: '🔍' },
+  marca        : { label: 'Marca',         cls: 'bg-indigo-100 text-indigo-700',   emoji: '🏷️' },
+  transaccional: { label: 'Transaccional', cls: 'bg-emerald-100 text-emerald-700', emoji: '🛒' },
+  comparacional: { label: 'Comparacional', cls: 'bg-amber-100 text-amber-700',     emoji: '🔄' },
+}
+
+const OPP_TYPE_STYLES: Record<string, { label: string; cls: string }> = {
+  quick_win       : { label: '⚡ Quick win',         cls: 'bg-yellow-100 text-yellow-800' },
+  missing_content : { label: '📝 Contenido faltante', cls: 'bg-orange-100 text-orange-800' },
+  brand_dependent : { label: '🏷️ Dependencia marca',  cls: 'bg-indigo-100 text-indigo-800' },
+  bofu_gap        : { label: '🎯 Gap BOFU',           cls: 'bg-red-100 text-red-800' },
+  update          : { label: '🔄 Actualizar',         cls: 'bg-blue-100 text-blue-800' },
+}
+
+const CLUSTER_STATUS: Record<string, { label: string; cls: string }> = {
+  fuerte   : { label: '✅ Fuerte',    cls: 'bg-emerald-50 text-emerald-700' },
+  mejorable: { label: '⚠️ Mejorable', cls: 'bg-amber-50 text-amber-700' },
+  debil    : { label: '🔴 Débil',     cls: 'bg-red-50 text-red-700' },
+  sin_datos: { label: '—',            cls: 'bg-gray-50 text-gray-400' },
+}
+
+function StatCard({ label, value, sub, color = 'text-indigo-700' }: {
+  label: string; value: string; sub?: string; color?: string
+}) {
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <p className={`text-xl font-bold tabular-nums ${color}`}>{value}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+        {sub && <p className="text-[10px] text-gray-400 mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  )
+}
+
+function SearchTypeBreakdown({ data }: { data: GSCData['search_type_breakdown'] }) {
+  const entries: Array<{ key: string; pct: number }> = [
+    { key: 'informacional', pct: data.informacional },
+    { key: 'transaccional', pct: data.transaccional },
+    { key: 'marca',         pct: data.marca },
+    { key: 'comparacional', pct: data.comparacional },
+  ].sort((a, b) => b.pct - a.pct)
+
+  const lowTransaccional = data.transaccional < 20
+  const highMarca        = data.marca > 40
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+          <Search className="h-4 w-4 text-gray-400" /> Tipo de búsqueda
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2.5">
+          {entries.map(({ key, pct }) => {
+            const s = QUERY_TYPE_STYLES[key]
+            return (
+              <div key={key} className="flex items-center gap-2">
+                <span className="text-sm w-36 shrink-0">{s.emoji} {s.label}</span>
+                <div className="flex-1 bg-gray-100 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full transition-all ${
+                      key === 'transaccional' ? 'bg-emerald-500'
+                      : key === 'informacional' ? 'bg-sky-500'
+                      : key === 'marca'        ? 'bg-indigo-500'
+                      : 'bg-amber-500'
+                    }`}
+                    style={{ width: `${Math.max(pct, 2)}%` }}
+                  />
+                </div>
+                <span className="text-sm font-semibold tabular-nums w-10 text-right">{pct}%</span>
+              </div>
+            )
+          })}
+        </div>
+        {/* Insight automático */}
+        {(lowTransaccional || highMarca) && (
+          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+            <Lightbulb className="h-3.5 w-3.5 inline mr-1" />
+            {highMarca
+              ? `El ${data.marca}% del tráfico viene de búsquedas de marca. Diversifica con contenido evergreen.`
+              : `Solo el ${data.transaccional}% del tráfico es transaccional. Considera más contenido BOFU.`
+            }
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ClusterTable({ data }: { data: GSCData['cluster_breakdown'] }) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  if (data.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+          <Target className="h-4 w-4 text-gray-400" /> Rendimiento por cluster
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="text-left py-2 pr-3">Cluster</th>
+                <th className="text-right py-2 px-2">Arts.</th>
+                <th className="text-right py-2 px-2">Clicks</th>
+                <th className="text-right py-2 px-2">Pos. media</th>
+                <th className="text-left py-2 pl-2">Estado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {data.map((cl) => {
+                const st = CLUSTER_STATUS[cl.status] ?? CLUSTER_STATUS.sin_datos
+                const isOpen = expanded === cl.cluster
+                return (
+                  <>
+                    <tr
+                      key={cl.cluster}
+                      className="hover:bg-gray-50 cursor-pointer"
+                      onClick={() => setExpanded(isOpen ? null : cl.cluster)}
+                    >
+                      <td className="py-2.5 pr-3 font-medium text-gray-900 flex items-center gap-1">
+                        {isOpen
+                          ? <ChevronUp className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                        }
+                        {cl.cluster}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-gray-500 tabular-nums">{cl.articles}</td>
+                      <td className="py-2.5 px-2 text-right font-semibold tabular-nums">{cl.totalClicks.toLocaleString('es-ES')}</td>
+                      <td className="py-2.5 px-2 text-right text-gray-500 tabular-nums">
+                        {cl.avgPosition != null ? cl.avgPosition : '—'}
+                      </td>
+                      <td className="py-2.5 pl-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${st.cls}`}>{st.label}</span>
+                      </td>
+                    </tr>
+                    {isOpen && cl.items.length > 0 && (
+                      <tr key={`${cl.cluster}-expanded`}>
+                        <td colSpan={5} className="bg-gray-50 px-4 py-2">
+                          <table className="w-full text-xs">
+                            <tbody>
+                              {cl.items.map((item, i) => (
+                                <tr key={i} className="border-b border-gray-100 last:border-0">
+                                  <td className="py-1.5 pr-3 text-gray-700 truncate max-w-xs">{item.title}</td>
+                                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-500">{item.clicks} clicks</td>
+                                  <td className="py-1.5 pl-2 text-right tabular-nums text-gray-400">pos {item.position || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Main AnaliticaTab ──────────────────────────────────────────────────────
+
+function AnaliticaTab({ clienteId }: { clienteId: string }) {
+  const [gsc,        setGsc]        = useState<GSCData | null>(null)
+  const [ga4,        setGa4]        = useState<GA4Metric[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [chartMetric, setChartMetric] = useState<'clicks' | 'impressions' | 'position'>('clicks')
+  const [expandedClusters, setExpandedClusters] = useState<string | null>(null)
 
   async function cargar(force = false) {
     if (force) setRefreshing(true)
@@ -454,22 +663,15 @@ function GA4AnalyticsTab({ clienteId }: { clienteId: string }) {
     setError(null)
 
     try {
-      const url = `/api/google/ga4/${clienteId}${force ? '?force=true' : ''}`
-      const res = await fetch(url, { cache: 'no-store' })
-      const data = await res.json()
+      const [gscRes, ga4Res] = await Promise.all([
+        fetch(`/api/google/gsc/${clienteId}${force ? '?force=true' : ''}`, { cache: 'no-store' }),
+        fetch(`/api/google/ga4/${clienteId}${force  ? '?force=true' : ''}`, { cache: 'no-store' }),
+      ])
 
-      if (!res.ok) {
-        if (data.error === 'no_ga4') {
-          setError('no_ga4')
-        } else {
-          setError(data.error ?? 'Error cargando datos')
-        }
-        return
-      }
+      const [gscData, ga4Data] = await Promise.all([gscRes.json(), ga4Res.json()])
 
-      setMetrics(Array.isArray(data.metrics) ? data.metrics : [])
-      setFecha(data.fecha ?? null)
-      setCached(data.cached ?? false)
+      if (gscRes.ok && gscData.connected) setGsc(gscData as GSCData)
+      if (ga4Res.ok  && ga4Data.metrics)  setGa4(ga4Data.metrics as GA4Metric[])
     } catch {
       setError('Error de conexión')
     } finally {
@@ -486,154 +688,287 @@ function GA4AnalyticsTab({ clienteId }: { clienteId: string }) {
     return `${m}:${s.toString().padStart(2, '0')}`
   }
 
-  // Sin GA4 configurado
-  if (!loading && error === 'no_ga4') {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center">
-          <BarChart2 className="h-8 w-8 text-gray-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-gray-500">Google Analytics 4 no configurado</p>
-          <p className="text-xs text-gray-400 mt-1">
-            Vincula una propiedad GA4 en la sección{' '}
-            <span className="text-indigo-600 font-medium">Conexiones digitales</span>
-            {' '}de esta ficha.
-          </p>
-        </CardContent>
-      </Card>
-    )
-  }
-
   // Loading
   if (loading) {
     return (
       <Card>
         <CardContent className="py-12 text-center">
           <Loader2 className="h-6 w-6 animate-spin text-gray-400 mx-auto mb-2" />
-          <p className="text-sm text-gray-400">Cargando datos de Analytics...</p>
+          <p className="text-sm text-gray-400">Cargando datos de Analítica...</p>
         </CardContent>
       </Card>
     )
   }
 
-  // Error genérico
   if (error) {
     return (
       <Card>
         <CardContent className="py-8">
           <div className="flex items-center gap-2 text-sm text-red-600">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {error}
+            <AlertCircle className="h-4 w-4 shrink-0" />{error}
           </div>
         </CardContent>
       </Card>
     )
   }
 
-  // KPIs resumen
-  const totalSessions    = metrics.reduce((s, m) => s + m.sessions, 0)
-  const totalPageViews   = metrics.reduce((s, m) => s + m.pageViews, 0)
-  const avgDuration      = metrics.length > 0
-    ? metrics.reduce((s, m) => s + m.avgDuration * m.sessions, 0) / Math.max(totalSessions, 1)
+  if (!gsc && ga4.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <BarChart2 className="h-8 w-8 text-gray-300 mx-auto mb-3" />
+          <p className="text-sm font-medium text-gray-500">Sin datos de Analytics</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Conecta Google Search Console y GA4 en la pestaña{' '}
+            <span className="text-indigo-600 font-medium">Conexiones</span>.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // GA4 KPIs
+  const ga4Sessions  = ga4.reduce((s, m) => s + m.sessions, 0)
+  const ga4Views     = ga4.reduce((s, m) => s + m.pageViews, 0)
+  const ga4AvgDur    = ga4.length > 0
+    ? ga4.reduce((s, m) => s + m.avgDuration * m.sessions, 0) / Math.max(ga4Sessions, 1)
     : 0
-  const avgBounce        = metrics.length > 0
-    ? metrics.reduce((s, m) => s + m.bounceRate * m.sessions, 0) / Math.max(totalSessions, 1)
+  const ga4Bounce    = ga4.length > 0
+    ? ga4.reduce((s, m) => s + m.bounceRate * m.sessions, 0) / Math.max(ga4Sessions, 1)
     : 0
 
-  const top20 = metrics.slice(0, 20)
+  // Chart data: merge GSC daily evolution for GA4 sessions where possible
+  const chartData = (gsc?.daily_evolution ?? []).map((d) => ({
+    fecha      : d.date.slice(5), // MM-DD
+    Clicks     : d.clicks,
+    Impresiones: d.impressions,
+    Posición   : d.position,
+  }))
 
   return (
-    <div className="space-y-4">
-      {/* Header con fecha y botón actualizar */}
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-gray-400">
-          {fecha && (
-            <>
-              Datos del {new Date(fecha).toLocaleDateString('es-ES')}
-              {cached && <span className="ml-1 text-gray-300">(caché)</span>}
-            </>
-          )}
+          {gsc?.date && <>Datos del {new Date(gsc.date).toLocaleDateString('es-ES')} · últimos 30 días</>}
+          {gsc?.cached && <span className="ml-1 text-gray-300">(caché)</span>}
         </div>
         <Button
-          variant="outline"
-          size="sm"
-          onClick={() => cargar(true)}
-          disabled={refreshing}
+          variant="outline" size="sm"
+          onClick={() => cargar(true)} disabled={refreshing}
           className="text-xs gap-1.5"
         >
-          {refreshing
-            ? <Loader2 className="h-3 w-3 animate-spin" />
-            : <RefreshCw className="h-3 w-3" />
-          }
-          Actualizar datos
+          {refreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          Actualizar
         </Button>
       </div>
 
-      {/* KPIs */}
+      {/* ── Stats globales ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Sesiones', value: totalSessions.toLocaleString('es-ES'), color: 'text-indigo-700' },
-          { label: 'Páginas vistas', value: totalPageViews.toLocaleString('es-ES'), color: 'text-emerald-700' },
-          { label: 'Duración media', value: formatDuration(avgDuration), color: 'text-violet-700' },
-          { label: 'Tasa de rebote', value: `${(avgBounce * 100).toFixed(1)}%`, color: 'text-amber-700' },
-        ].map(({ label, value, color }) => (
-          <Card key={label}>
-            <CardContent className="p-3">
-              <p className={`text-xl font-bold ${color}`}>{value}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-            </CardContent>
-          </Card>
-        ))}
+        {gsc && <>
+          <StatCard label="Clicks orgánicos"  value={gsc.total_clicks.toLocaleString('es-ES')}       color="text-indigo-700" />
+          <StatCard label="Impresiones"        value={gsc.total_impressions.toLocaleString('es-ES')} color="text-sky-700" />
+          <StatCard
+            label="Posición media"
+            value={String(gsc.avg_position)}
+            sub={gsc.avg_position < 10 ? '✅ En primera página' : gsc.avg_position < 20 ? '⚠️ Segunda página' : '🔴 Tercera+ página'}
+            color={gsc.avg_position < 10 ? 'text-emerald-700' : gsc.avg_position < 20 ? 'text-amber-700' : 'text-red-700'}
+          />
+          <StatCard label="CTR medio" value={`${gsc.avg_ctr}%`} color="text-violet-700" />
+        </>}
+        {ga4Sessions > 0 && (
+          <StatCard label="Sesiones GA4 (90d)" value={ga4Sessions.toLocaleString('es-ES')} color="text-emerald-700" />
+        )}
       </div>
 
-      {/* Tabla top 20 */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold">Top 20 páginas por sesiones</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {top20.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-6">Sin datos de páginas</p>
-          ) : (
+      {/* ── Tipo de búsqueda ── */}
+      {gsc?.search_type_breakdown && (
+        <SearchTypeBreakdown data={gsc.search_type_breakdown} />
+      )}
+
+      {/* ── Rendimiento por cluster ── */}
+      {gsc?.cluster_breakdown && gsc.cluster_breakdown.length > 0 && (
+        <ClusterTable data={gsc.cluster_breakdown} />
+      )}
+
+      {/* ── Evolución (gráfico de línea) ── */}
+      {chartData.length > 1 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+                <TrendingUp className="h-4 w-4 text-gray-400" /> Evolución (últimos 30 días)
+              </CardTitle>
+              <div className="flex gap-1">
+                {(['clicks', 'impressions', 'position'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setChartMetric(m)}
+                    className={`text-xs px-2 py-0.5 rounded ${chartMetric === m ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                  >
+                    {m === 'clicks' ? 'Clicks' : m === 'impressions' ? 'Impresiones' : 'Posición'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="fecha" tick={{ fontSize: 10 }} tickLine={false} />
+                <YAxis tick={{ fontSize: 10 }} tickLine={false} reversed={chartMetric === 'position'} />
+                <Tooltip
+                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  formatter={(v) => [
+                    typeof v === 'number'
+                      ? (chartMetric === 'position' ? `${v} pos.` : v.toLocaleString('es-ES'))
+                      : String(v ?? ''),
+                    chartMetric === 'clicks' ? 'Clicks' : chartMetric === 'impressions' ? 'Impresiones' : 'Posición',
+                  ]}
+                />
+                <Line
+                  type="monotone"
+                  dataKey={chartMetric === 'clicks' ? 'Clicks' : chartMetric === 'impressions' ? 'Impresiones' : 'Posición'}
+                  stroke={chartMetric === 'clicks' ? '#6366f1' : chartMetric === 'impressions' ? '#0ea5e9' : '#f59e0b'}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Oportunidades detectadas ── */}
+      {gsc?.opportunities && gsc.opportunities.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+              <Zap className="h-4 w-4 text-amber-500" /> Oportunidades detectadas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {gsc.opportunities.map((opp, i) => {
+                const st = OPP_TYPE_STYLES[opp.type] ?? { label: opp.type, cls: 'bg-gray-100 text-gray-700' }
+                return (
+                  <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded shrink-0 ${st.cls}`}>{st.label}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900">{opp.titulo}</p>
+                      {opp.descripcion && <p className="text-xs text-gray-500 mt-0.5">{opp.descripcion}</p>}
+                      <div className="flex gap-3 mt-1 text-xs text-gray-400">
+                        {opp.keyword         && <span>🔑 {opp.keyword}</span>}
+                        {opp.impressions     && <span>👁 {opp.impressions.toLocaleString('es-ES')}</span>}
+                        {opp.current_position && <span>📍 pos {opp.current_position}</span>}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Top 20 queries ── */}
+      {gsc?.top_queries && gsc.top_queries.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+              <Search className="h-4 w-4 text-gray-400" /> Top queries orgánicas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-xs text-gray-500">
+                    <th className="text-left py-2 pr-3">Query</th>
+                    <th className="text-right py-2 px-2">Clicks</th>
+                    <th className="text-right py-2 px-2">Impr.</th>
+                    <th className="text-right py-2 px-2">CTR</th>
+                    <th className="text-right py-2 px-2">Pos.</th>
+                    <th className="text-left py-2 pl-2">Tipo</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {gsc.top_queries.slice(0, 20).map((q, i) => {
+                    const ts = QUERY_TYPE_STYLES[q.type]
+                    return (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="py-2 pr-3 text-gray-800 font-medium max-w-xs truncate">{q.query}</td>
+                        <td className="py-2 px-2 text-right tabular-nums font-semibold">{q.clicks.toLocaleString('es-ES')}</td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-500">{q.impressions.toLocaleString('es-ES')}</td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-500">{q.ctr}%</td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-500">{q.position}</td>
+                        <td className="py-2 pl-2">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${ts.cls}`}>
+                            {ts.emoji} {ts.label}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── GA4: Top páginas ── */}
+      {ga4.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+              <BarChart2 className="h-4 w-4 text-gray-400" /> Top páginas GA4 (90 días)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-xs text-gray-500">
                     <th className="text-left py-2 pr-3">Página</th>
                     <th className="text-right py-2 px-2">Sesiones</th>
-                    <th className="text-right py-2 px-2">Vistas</th>
                     <th className="text-right py-2 px-2">Duración</th>
                     <th className="text-right py-2 pl-2">Rebote</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {top20.map((m, i) => (
+                  {ga4.slice(0, 15).map((m, i) => (
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="py-2 pr-3 max-w-xs truncate text-gray-700 font-mono text-xs" title={m.pagePath}>
                         {m.pagePath}
                       </td>
-                      <td className="py-2 px-2 text-right font-semibold tabular-nums">
-                        {m.sessions.toLocaleString('es-ES')}
-                      </td>
-                      <td className="py-2 px-2 text-right text-gray-500 tabular-nums">
-                        {m.pageViews.toLocaleString('es-ES')}
-                      </td>
-                      <td className="py-2 px-2 text-right text-gray-500 tabular-nums">
-                        {formatDuration(m.avgDuration)}
-                      </td>
-                      <td className="py-2 pl-2 text-right text-gray-500 tabular-nums">
-                        {(m.bounceRate * 100).toFixed(1)}%
-                      </td>
+                      <td className="py-2 px-2 text-right font-semibold tabular-nums">{m.sessions.toLocaleString('es-ES')}</td>
+                      <td className="py-2 px-2 text-right text-gray-500 tabular-nums">{formatDuration(m.avgDuration)}</td>
+                      <td className="py-2 pl-2 text-right text-gray-500 tabular-nums">{(m.bounceRate * 100).toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* GA4 KPI cards — shown if GSC absent but GA4 present */}
+      {!gsc && ga4.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard label="Sesiones"       value={ga4Sessions.toLocaleString('es-ES')} color="text-indigo-700" />
+          <StatCard label="Páginas vistas" value={ga4Views.toLocaleString('es-ES')}    color="text-emerald-700" />
+          <StatCard label="Duración media" value={formatDuration(ga4AvgDur)}           color="text-violet-700" />
+          <StatCard label="Tasa de rebote" value={`${(ga4Bounce * 100).toFixed(1)}%`}  color="text-amber-700" />
+        </div>
+      )}
+
     </div>
   )
 }
+
 
 // ---------------------------------------------------------------------------
 // Sección: Conexiones digitales (Google)
@@ -1607,9 +1942,9 @@ export default function ClienteDetalleClient({
           </Tabs>
         </TabsContent>
 
-        {/* ── Tab 6: Analítica GA4 ── */}
+        {/* ── Tab 6: Analítica (GSC + GA4) ── */}
         <TabsContent value="analitica">
-          <GA4AnalyticsTab clienteId={cliente.id} />
+          <AnaliticaTab clienteId={cliente.id} />
         </TabsContent>
 
         {/* ── Tab 7: Publicidad (Google Ads + Meta) — solo ejecución y visualización ── */}

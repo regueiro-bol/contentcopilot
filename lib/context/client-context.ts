@@ -65,6 +65,26 @@ export interface ClientContext {
     fase_recomendada: string | null
     priority        : number | null
   }>
+
+  /** Latest GSC snapshot analytics — null if no GSC connected or no data */
+  analytics: {
+    topKeywords: Array<{
+      keyword : string
+      clicks  : number
+      position: number
+      type    : string
+    }>
+    strongClusters           : string[]
+    weakClusters             : string[]
+    searchTypeBreakdown: {
+      informacional: number
+      transaccional: number
+      marca         : number
+      comparacional : number
+    }
+    totalClicks    : number
+    avgPosition    : number
+  } | null
 }
 
 export interface ClientContextOptions {
@@ -76,6 +96,8 @@ export interface ClientContextOptions {
   includeBrand?      : boolean
   /** Include brand_assets rows (default: false — usually not needed in text prompts) */
   includeAssets?     : boolean
+  /** Include GSC analytics from latest snapshot (default: false) */
+  includeAnalytics?  : boolean
   /** Max pending map items to include (default: 10) */
   maxMapItems?       : number
   /** Max oportunidades from inspiracion to include (default: 5) */
@@ -99,6 +121,7 @@ export async function buildClientContext(
     includeMapItems    = true,
     includeBrand       = true,
     includeAssets      = false,
+    includeAnalytics   = false,
     maxMapItems        = 10,
     maxOportunidades   = 5,
   } = options
@@ -113,7 +136,7 @@ export async function buildClientContext(
   if (!cliente) return null
 
   // ── Optional parallel queries ────────────────────────────
-  const [brandResult, assetsResult, competitorsResult, inspiracionResult, mapItemsResult] =
+  const [brandResult, assetsResult, competitorsResult, inspiracionResult, mapItemsResult, analyticsResult] =
     await Promise.allSettled([
       // 1. brand_context — real columns: tone_of_voice, style_keywords, restrictions, raw_summary
       includeBrand
@@ -166,14 +189,26 @@ export async function buildClientContext(
             title: string; main_keyword: string; cluster: string | null
             funnel_stage: string | null; fase_recomendada: string | null; priority: number | null
           }>, error: null }),
+
+      // 6. Latest GSC snapshot for analytics context
+      includeAnalytics
+        ? supabase
+            .from('gsc_snapshots')
+            .select('total_clicks, avg_position, top_queries, cluster_breakdown, search_type_breakdown')
+            .eq('client_id', clientId)
+            .order('date', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
     ])
 
   // ── Safely extract results (failures → sensible defaults) ─
-  const brandData  = brandResult.status      === 'fulfilled' ? brandResult.value.data      : null
-  const assetsData = assetsResult.status     === 'fulfilled' ? assetsResult.value.data      : []
-  const compData   = competitorsResult.status === 'fulfilled' ? competitorsResult.value.data : []
-  const inspData   = inspiracionResult.status === 'fulfilled' ? inspiracionResult.value.data : null
-  const mapData    = mapItemsResult.status   === 'fulfilled' ? mapItemsResult.value.data    : []
+  const brandData     = brandResult.status       === 'fulfilled' ? brandResult.value.data      : null
+  const assetsData    = assetsResult.status      === 'fulfilled' ? assetsResult.value.data      : []
+  const compData      = competitorsResult.status === 'fulfilled' ? competitorsResult.value.data : []
+  const inspData      = inspiracionResult.status === 'fulfilled' ? inspiracionResult.value.data : null
+  const mapData       = mapItemsResult.status    === 'fulfilled' ? mapItemsResult.value.data    : []
+  const analyticsData = analyticsResult.status   === 'fulfilled' ? analyticsResult.value.data   : null
 
   // ── Parse inspiracion resultado ──────────────────────────
   let inspiracion: ClientContext['inspiracion'] = null
@@ -194,6 +229,38 @@ export async function buildClientContext(
         angulo : String(idea.angulo  ?? ''),
         formato: String(idea.formato ?? ''),
       })),
+    }
+  }
+
+  // ── Parse analytics ─────────────────────────────────────
+  let analytics: ClientContext['analytics'] = null
+  if (analyticsData) {
+    const snap = analyticsData as Record<string, unknown>
+    const rawQueries        = (snap.top_queries          as Array<Record<string, unknown>> | undefined) ?? []
+    const rawClusters       = (snap.cluster_breakdown    as Array<Record<string, unknown>> | undefined) ?? []
+    const rawBreakdown      = (snap.search_type_breakdown as Record<string, number>        | undefined) ?? {}
+
+    analytics = {
+      topKeywords: rawQueries.slice(0, 10).map((q) => ({
+        keyword : String(q.query    ?? ''),
+        clicks  : Number(q.clicks   ?? 0),
+        position: Number(q.position ?? 0),
+        type    : String(q.type     ?? 'informacional'),
+      })),
+      strongClusters: rawClusters
+        .filter((c) => c.status === 'fuerte')
+        .map((c) => String(c.cluster ?? '')),
+      weakClusters: rawClusters
+        .filter((c) => c.status === 'debil')
+        .map((c) => String(c.cluster ?? '')),
+      searchTypeBreakdown: {
+        informacional: rawBreakdown.informacional ?? 0,
+        transaccional: rawBreakdown.transaccional ?? 0,
+        marca         : rawBreakdown.marca         ?? 0,
+        comparacional : rawBreakdown.comparacional ?? 0,
+      },
+      totalClicks : Number(snap.total_clicks   ?? 0),
+      avgPosition : Number(snap.avg_position   ?? 0),
     }
   }
 
@@ -236,6 +303,8 @@ export async function buildClientContext(
     })),
 
     inspiracion,
+
+    analytics,
 
     pendingMapItems: (mapData ?? []).map((item) => {
       const i = item as {

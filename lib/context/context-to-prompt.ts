@@ -71,5 +71,40 @@ export function contextToPrompt(ctx: ClientContext): string {
     sections.push(`ARTÍCULOS PENDIENTES EN BANCO:\n${lines}`)
   }
 
+  // ── Analytics SEO (GSC snapshot) ─────────────────────────
+  if (ctx.analytics) {
+    const a = ctx.analytics
+    const analyticsLines: string[] = ['RENDIMIENTO SEO ACTUAL (GSC):']
+
+    analyticsLines.push(`  Clicks mensuales: ${a.totalClicks.toLocaleString('es-ES')} · Posición media: ${a.avgPosition}`)
+
+    if (a.topKeywords.length > 0) {
+      const top5 = a.topKeywords
+        .slice(0, 5)
+        .map((k) => `    · "${k.keyword}" — ${k.clicks} clicks, pos ${k.position} [${k.type}]`)
+        .join('\n')
+      analyticsLines.push(`  Top keywords:\n${top5}`)
+    }
+
+    if (a.strongClusters.length > 0) {
+      analyticsLines.push(`  Clusters fuertes (pos < 5): ${a.strongClusters.join(', ')}`)
+    }
+    if (a.weakClusters.length > 0) {
+      analyticsLines.push(`  Clusters débiles (pos > 15): ${a.weakClusters.join(', ')}`)
+    }
+
+    const b = a.searchTypeBreakdown
+    analyticsLines.push(`  Distribución búsquedas: ${b.informacional}% informacional · ${b.transaccional}% transaccional · ${b.marca}% marca`)
+
+    if (b.transaccional < 20) {
+      analyticsLines.push('  ⚠️  Tráfico transaccional bajo — priorizar contenido BOFU')
+    }
+    if (b.marca > 40) {
+      analyticsLines.push('  ⚠️  Alta dependencia de marca — diversificar con contenido evergreen')
+    }
+
+    sections.push(analyticsLines.join('\n'))
+  }
+
   return sections.join('\n\n')
 }

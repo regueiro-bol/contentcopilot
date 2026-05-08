@@ -42,6 +42,7 @@
     "react": "^18",
     "react-dom": "^18",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
     "satori": "^0.26.0",
     "sharp": "^0.34.5",
     "svix": "^1.92.2",
