@@ -506,6 +506,33 @@ function SeccionGenerica({ seccion, tipo }: { seccion: Seccion; tipo?: string })
 export default function BriefSEODisplay({ texto, className }: Props) {
   if (!texto?.trim()) return null
 
+  // Claude-generated briefs use "## 1. Title" numbered sections.
+  // The section-card renderer is designed for the old Dify ### format,
+  // so numbered-section briefs get rendered directly with ReactMarkdown.
+  const isNumberedSectionFormat = /^##\s+\d+\.\s/m.test(texto)
+  if (isNumberedSectionFormat) {
+    return (
+      <div
+        className={cn(
+          'prose prose-sm max-w-none text-gray-800',
+          '[&>h1]:text-lg [&>h1]:font-bold [&>h1]:mt-5 [&>h1]:mb-2 [&>h1]:text-gray-900',
+          '[&>h2]:text-base [&>h2]:font-bold [&>h2]:mt-5 [&>h2]:mb-2 [&>h2]:text-gray-800 [&>h2]:border-b [&>h2]:border-gray-100 [&>h2]:pb-1',
+          '[&>h3]:text-sm [&>h3]:font-semibold [&>h3]:mt-3 [&>h3]:mb-1.5 [&>h3]:text-gray-700',
+          '[&>ul]:list-disc [&>ul]:pl-5 [&>ul]:my-1.5',
+          '[&>ol]:list-decimal [&>ol]:pl-5 [&>ol]:my-1.5',
+          '[&>li]:my-0.5 [&>p]:leading-relaxed [&>p]:my-1.5',
+          '[&>table]:text-xs [&>table]:border-collapse [&>table]:w-full',
+          '[&>table>thead>tr>th]:bg-gray-50 [&>table>thead>tr>th]:border [&>table>thead>tr>th]:border-gray-200 [&>table>thead>tr>th]:px-2 [&>table>thead>tr>th]:py-1',
+          '[&>table>tbody>tr>td]:border [&>table>tbody>tr>td]:border-gray-200 [&>table>tbody>tr>td]:px-2 [&>table>tbody>tr>td]:py-1',
+          '[&>blockquote]:border-l-4 [&>blockquote]:border-indigo-200 [&>blockquote]:pl-4 [&>blockquote]:text-gray-600 [&>blockquote]:italic',
+          className,
+        )}
+      >
+        <ReactMarkdown>{texto}</ReactMarkdown>
+      </div>
+    )
+  }
+
   try {
     const { cabecera, secciones } = parsearSecciones(texto)
 

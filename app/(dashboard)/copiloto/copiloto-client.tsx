@@ -1101,18 +1101,14 @@ ${texto}`,
                                   <ReactMarkdown>{m.contenido}</ReactMarkdown>
                                 </div>
                               </div>
-                              {/* FIX 4 — botón visible para todos los mensajes > 40 palabras */}
-                              {m.contenido.trim().split(/\s+/).length > 40 && (
+                              {/* Añadir al borrador — visible para respuestas con contenido (>20 palabras) */}
+                              {m.contenido.trim().split(/\s+/).length > 20 && (
                                 <button
                                   onClick={() => handleInsertarEnEditor(m.contenido)}
-                                  className={`flex items-center gap-1.5 text-[11px] font-semibold rounded-lg px-2.5 py-1.5 transition-colors ${
-                                    esTextoRedactado(m.contenido)
-                                      ? 'text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100'
-                                      : 'text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100'
-                                  }`}
+                                  className="flex items-center gap-1.5 text-[11px] font-semibold rounded-lg px-2.5 py-1.5 transition-colors text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100"
                                 >
                                   <PlusCircle className="h-3 w-3" />
-                                  Insertar en editor
+                                  {esTextoRedactado(m.contenido) ? 'Añadir al borrador' : 'Insertar en borrador'}
                                 </button>
                               )}
                             </div>

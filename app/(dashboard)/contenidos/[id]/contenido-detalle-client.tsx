@@ -1278,7 +1278,9 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
               <span className="text-xs text-gray-500">{formatearFecha(contenido.fecha_entrega)}</span>
             )}
             {contenido.tamanyo_texto_min && contenido.tamanyo_texto_max && (
-              <span className="text-xs text-gray-500">{contenido.tamanyo_texto_min}–{contenido.tamanyo_texto_max} palabras</span>
+              <span className="text-xs text-gray-500 flex items-center gap-1">
+                📏 {contenido.tamanyo_texto_min}–{contenido.tamanyo_texto_max} palabras
+              </span>
             )}
           </div>
         </div>
@@ -1514,14 +1516,6 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                     <PenLine className="h-3.5 w-3.5" />Editar
                   </Button>
                 )}
-                {editingBrief && (
-                  <Button
-                    size="sm" variant="ghost" className="gap-1.5 text-gray-500"
-                    onClick={() => { setEditingBrief(false); setBriefDirty(false) }}
-                  >
-                    <X className="h-3.5 w-3.5" />Cancelar
-                  </Button>
-                )}
                 {contenido.brief && !editingBrief && (
                   <Button
                     size="sm" variant="outline" className="gap-1.5"
@@ -1552,23 +1546,30 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                       />
                     </div>
                   ))}
-                  {briefDirty && (
-                    <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
-                      {briefSaved && (
-                        <span className="text-xs text-emerald-600 flex items-center gap-1">
-                          ✓ Brief guardado
-                        </span>
-                      )}
-                      <Button
-                        size="sm" onClick={handleSaveBrief} disabled={briefSaving}
-                        className="gap-1.5"
-                      >
-                        {briefSaving
-                          ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Guardando…</>
-                          : 'Guardar cambios'}
-                      </Button>
-                    </div>
-                  )}
+                  {/* Sticky footer — always visible while in edit mode */}
+                  <div className="sticky bottom-0 bg-white border-t border-gray-100 py-3 flex items-center justify-end gap-3 mt-2">
+                    {briefSaved && (
+                      <span className="text-xs text-emerald-600 flex items-center gap-1 mr-auto">
+                        ✓ Brief guardado
+                      </span>
+                    )}
+                    <Button
+                      size="sm" variant="ghost"
+                      onClick={() => { setEditingBrief(false); setBriefDirty(false) }}
+                      className="text-gray-500"
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm" onClick={handleSaveBrief}
+                      disabled={!briefDirty || briefSaving}
+                      className="gap-1.5"
+                    >
+                      {briefSaving
+                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Guardando…</>
+                        : 'Guardar cambios'}
+                    </Button>
+                  </div>
                 </div>
               ) : (localBriefText || contenido.brief?.texto_generado) ? (
                 /* ── Brief generado por IA: renderizado visual ── */
