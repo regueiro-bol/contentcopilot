@@ -138,19 +138,20 @@ export async function POST(request: NextRequest) {
 
     // ── Sugerir meses basado en clusters ────────────────────
     let mesesSugeridos: 3 | 6 | 9 | 12
-    if      (totalClusters <= 4)  mesesSugeridos = 3
-    else if (totalClusters <= 10) mesesSugeridos = 6
-    else if (totalClusters <= 18) mesesSugeridos = 9
+    if      (totalClusters <= 3)  mesesSugeridos = 3
+    else if (totalClusters <= 8)  mesesSugeridos = 6
+    else if (totalClusters <= 15) mesesSugeridos = 9
     else                          mesesSugeridos = 12
 
     // ── Sugerir art/mes ──────────────────────────────────────
-    // Objetivo: cubrir todos los clusters con ~1.5 artículos promedio
-    const totalArtTarget = Math.ceil(totalClusters * 1.5)
+    // Objetivo: cubrir todos los clusters con ~3 artículos promedio
+    // (mínimo 100 artículos en total para proyectos con suficientes clusters)
+    const totalArtTarget = Math.ceil(totalClusters * 3)
     const artMesBruto    = Math.round(totalArtTarget / mesesSugeridos)
-    // Clamp 4-10, forzar par
-    let artMesSugerido = Math.max(4, Math.min(10, artMesBruto))
+    // Clamp 4-50, forzar par
+    let artMesSugerido = Math.max(4, Math.min(50, artMesBruto))
     if (artMesSugerido % 2 !== 0) artMesSugerido++
-    artMesSugerido = Math.min(10, artMesSugerido)
+    artMesSugerido = Math.min(50, artMesSugerido)
 
     const coberturaEstimada = mesesSugeridos * artMesSugerido
 

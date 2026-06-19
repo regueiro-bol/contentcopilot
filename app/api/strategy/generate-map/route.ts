@@ -12,10 +12,13 @@ export const maxDuration = 120
 // Constantes
 // ─────────────────────────────────────────────────────────────
 
-/** Máximo de clusters por llamada a Claude */
-const CLUSTER_BATCH_SIZE = 10
+/**
+ * Máximo de artículos por llamada a Claude.
+ * ~30 artículos × ~150 tokens/art ≈ 4 500 tokens de output → safe dentro de 8 192.
+ */
+const MAX_ARTICLES_PER_BATCH = 30
 
-/** Top N keywords por cluster en el prompt (reduce tokens) */
+/** Top N keywords por cluster en el prompt (reduce tokens de input) */
 const TOP_KW_PER_CLUSTER = 5
 
 // ─────────────────────────────────────────────────────────────
@@ -139,9 +142,11 @@ Responde ÚNICAMENTE con un JSON array de ${articulosParaEsteBatch} objetos:
  *
  * Body: {
  *   session_id         : string
+ *   total_articles?    : number  (10-200, control directo del tamaño del mapa)
  *   config: {
  *     meses            : number  (3 | 6 | 9 | 12)
- *     articulos_por_mes: number  (4 | 6 | 8 | 10)
+ *     articulos_por_mes: number  (referencia editorial — anulado por total_articles si viene)
+ *     distribucion?    : { tofu: number; mofu: number; bofu: number }
  *   }
  * }
  */
@@ -167,7 +172,7 @@ export async function POST(request: NextRequest) {
     const { client_id: bodyClientId, total_articles, exclude_keywords } = body
     const config       = body.config
     const meses        = Math.max(1, Math.min(24, config?.meses ?? 6))
-    const artMes       = Math.max(2, Math.min(20, config?.articulos_por_mes ?? 6))
+    const artMes       = Math.max(2, Math.min(100, config?.articulos_por_mes ?? 6))
     const totalMax     = total_articles
       ? Math.max(1, Math.min(200, total_articles))
       : meses * artMes
@@ -322,9 +327,11 @@ export async function POST(request: NextRequest) {
 
     // ── Asignar artículos a cada cluster ─────────────────────
     // Regla: cada cluster recibe mínimo 1 artículo.
-    // Clusters con ≥3 keywords pueden recibir artículos extra.
-    // Si hay más clusters que totalMax, solo usar los top por volumen.
-    const clustersToUse = allClusterSummaries.slice(0, totalMax)
+    // Clusters con ≥3 keywords pueden recibir artículos extra (fase 2).
+    // El sobrante se reparte round-robin entre todos los clusters.
+    // Usamos TODOS los clusters — totalMax controla solo el nº de artículos,
+    // nunca limita cuántos clusters participan.
+    const clustersToUse = allClusterSummaries
     let articulosRestantes = totalMax
 
     // Fase 1: 1 artículo por cluster
@@ -340,13 +347,13 @@ export async function POST(request: NextRequest) {
         .filter((c) => c.total_keywords >= 3)
         .sort((a, b) => b.total_keywords - a.total_keywords)
 
-      // Máximo de artículos extra por cluster = floor(total_keywords / 2), cap 4
+      // Máximo de artículos extra por cluster = floor(total_keywords / 2), cap 10
       let round = 0
       while (articulosRestantes > 0 && candidates.length > 0) {
         let assigned = false
         for (const c of candidates) {
           if (articulosRestantes <= 0) break
-          const maxForCluster = Math.min(4, Math.floor(c.total_keywords / 2))
+          const maxForCluster = Math.min(10, Math.floor(c.total_keywords / 2))
           if ((c.assigned_articles ?? 1) < 1 + maxForCluster) {
             c.assigned_articles = (c.assigned_articles ?? 1) + 1
             articulosRestantes--
@@ -395,10 +402,27 @@ export async function POST(request: NextRequest) {
 
     console.log(`[GenerateMap] content_map creado: ${map.id}`)
 
-    // ── Dividir clusters en batches de CLUSTER_BATCH_SIZE ────
+    // ── Dividir clusters en batches por número de artículos ──
+    // Agrupamos clusters hasta que la suma de artículos asignados supera
+    // MAX_ARTICLES_PER_BATCH — así cada llamada a Claude nunca excede el
+    // límite de output tokens (8 192) independientemente de cuántos clusters haya.
     const clusterBatches: ClusterSummary[][] = []
-    for (let i = 0; i < clustersToUse.length; i += CLUSTER_BATCH_SIZE) {
-      clusterBatches.push(clustersToUse.slice(i, i + CLUSTER_BATCH_SIZE))
+    {
+      let currentBatch: ClusterSummary[] = []
+      let currentBatchArts = 0
+
+      for (const cluster of clustersToUse) {
+        const arts = cluster.assigned_articles ?? 1
+        // Si el cluster solo no cabe en un batch vacío, lo ponemos solo
+        if (currentBatch.length > 0 && currentBatchArts + arts > MAX_ARTICLES_PER_BATCH) {
+          clusterBatches.push(currentBatch)
+          currentBatch     = []
+          currentBatchArts = 0
+        }
+        currentBatch.push(cluster)
+        currentBatchArts += arts
+      }
+      if (currentBatch.length > 0) clusterBatches.push(currentBatch)
     }
 
     let totalItemsInsertados = 0

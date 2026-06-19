@@ -96,6 +96,7 @@ export async function POST(request: NextRequest) {
     const {
       nombre        = '',
       cliente_id    = '',
+      proyecto_id   = null as string | null,
       tipo_proyecto = '',
       objetivos     = '',
       competidores  = [] as string[],
@@ -133,6 +134,7 @@ export async function POST(request: NextRequest) {
       .from('keyword_research_sessions')
       .insert({
         client_id   : cliente_id,
+        proyecto_id : proyecto_id ?? null,
         nombre      : nombre.trim(),
         status      : 'researching',
         seed_topics : seedsLimpios,

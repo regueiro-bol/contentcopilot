@@ -270,8 +270,10 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
 
   // ── Estado: generar nuevo mapa ─────────────────────────────
   const [mostrarConfig, setMostrarConfig]         = useState(false)
-  const [meses, setMeses]                         = useState<3 | 6 | 9 | 12>(6)
-  const [artMes, setArtMes]                       = useState(6)
+  const [meses, setMeses]                         = useState<1 | 3 | 6 | 9 | 12>(6)
+  const [totalArticulos, setTotalArticulos]       = useState(50)
+  // artMes se calcula automáticamente — es solo informativo para Claude (ritmo editorial)
+  const artMes = Math.max(2, Math.round(totalArticulos / meses))
   const [distribucion, setDistribucion]           = useState({ tofu: 40, mofu: 35, bofu: 25 })
   const [sugerencia, setSugerencia]                 = useState<SuggestResponse | null>(null)
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
@@ -503,8 +505,8 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
       setSugerencia(data)
       // Auto-aplicar sugerencia
       setMeses(data.suggested.meses)
-      setArtMes(data.suggested.articulos_por_mes)
       setDistribucion(data.suggested.distribucion)
+      setTotalArticulos(data.context.cobertura_estimada)
     } catch (e) {
       console.error('[SuggestConfig]', e)
       setErrorSugerencia(true)
@@ -516,8 +518,8 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   function aplicarSugerencia() {
     if (!sugerencia) return
     setMeses(sugerencia.suggested.meses)
-    setArtMes(sugerencia.suggested.articulos_por_mes)
     setDistribucion(sugerencia.suggested.distribucion)
+    setTotalArticulos(sugerencia.context.cobertura_estimada)
   }
 
   function handleDistChange(stage: 'tofu' | 'mofu' | 'bofu', rawValue: number) {
@@ -548,8 +550,9 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
-          session_id: session.id,
-          config    : { meses, articulos_por_mes: artMes, distribucion },
+          session_id    : session.id,
+          total_articles: totalArticulos,
+          config        : { meses, articulos_por_mes: artMes, distribucion },
         }),
       })
       const data = await res.json()
@@ -868,59 +871,79 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
               </div>
             )}
 
-            {/* Duración + Artículos / mes */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-gray-600">Duración del plan</p>
-                <div className="flex gap-1.5">
-                  {([3, 6, 9, 12] as const).map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setMeses(m)}
-                      className={cn(
-                        'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                        meses === m
-                          ? 'bg-violet-600 text-white border-violet-600'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400',
-                      )}
-                    >
-                      {m}m
-                    </button>
-                  ))}
+            {/* ── Total de artículos — control principal ──────── */}
+            <div className="rounded-lg border-2 border-violet-300 bg-white p-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-violet-900">Total de artículos a generar</p>
+                  <p className="text-[10px] text-violet-500 mt-0.5">Controla directamente el tamaño del mapa</p>
                 </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-gray-600">
-                  Artículos / mes
-                  <span className="ml-1.5 font-bold text-violet-700">{artMes}</span>
-                </p>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     type="button"
-                    onClick={() => setArtMes((v) => Math.max(2, v - 1))}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:border-violet-400 hover:text-violet-600 text-xs font-bold transition-colors"
+                    onClick={() => setTotalArticulos((v) => Math.max(10, v - 5))}
+                    className="flex h-7 w-7 items-center justify-center rounded-full border border-violet-300 bg-violet-50 text-violet-600 hover:bg-violet-100 font-bold transition-colors text-sm"
                   >
                     −
                   </button>
                   <input
-                    type="range"
-                    min={2}
-                    max={15}
-                    step={1}
-                    value={artMes}
-                    onChange={(e) => setArtMes(Number(e.target.value))}
-                    className="flex-1 h-1.5 appearance-none rounded-full bg-gray-200 accent-violet-600 cursor-pointer"
+                    type="number"
+                    min={10}
+                    max={200}
+                    step={5}
+                    value={totalArticulos}
+                    onChange={(e) => {
+                      const v = Math.max(10, Math.min(200, Number(e.target.value) || 10))
+                      setTotalArticulos(v)
+                    }}
+                    className="w-14 text-center text-xl font-bold text-violet-700 border border-violet-200 rounded-lg py-0.5 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-300 bg-white tabular-nums"
                   />
                   <button
                     type="button"
-                    onClick={() => setArtMes((v) => Math.min(15, v + 1))}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:border-violet-400 hover:text-violet-600 text-xs font-bold transition-colors"
+                    onClick={() => setTotalArticulos((v) => Math.min(200, v + 5))}
+                    className="flex h-7 w-7 items-center justify-center rounded-full border border-violet-300 bg-violet-50 text-violet-600 hover:bg-violet-100 font-bold transition-colors text-sm"
                   >
                     +
                   </button>
                 </div>
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={200}
+                step={5}
+                value={totalArticulos}
+                onChange={(e) => setTotalArticulos(Number(e.target.value))}
+                className="w-full h-2 appearance-none rounded-full bg-violet-100 accent-violet-600 cursor-pointer"
+              />
+              <div className="flex items-center justify-between text-[10px] text-violet-400">
+                <span>10</span>
+                <span className="text-violet-600 font-medium">
+                  ≈ {(totalArticulos / meses).toFixed(1)} art/mes durante {meses}m
+                </span>
+                <span>200</span>
+              </div>
+            </div>
+
+            {/* Duración del plan */}
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-gray-600">Duración del plan</p>
+              <div className="flex gap-1.5">
+                {([1, 3, 6, 9, 12] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMeses(m)}
+                    className={cn(
+                      'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
+                      meses === m
+                        ? 'bg-violet-600 text-white border-violet-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400',
+                    )}
+                  >
+                    {m}m
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -987,11 +1010,12 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
 
             {/* Resumen del plan */}
             <p className="text-xs text-violet-700 font-medium bg-violet-100 rounded-lg px-3 py-2">
-              Plan: {meses} meses × {artMes} art/mes ={' '}
-              <strong>hasta {meses * artMes} artículos</strong>
+              Se generarán{' '}
+              <strong>{totalArticulos} artículos</strong>{' '}
+              distribuidos en {meses} meses
               {sugerencia && (
                 <span className="ml-1.5 text-violet-500 font-normal">
-                  ({((meses * artMes) / sugerencia.context.total_clusters).toFixed(1)} art/cluster)
+                  ({(totalArticulos / sugerencia.context.total_clusters).toFixed(1)} art/cluster · {sugerencia.context.total_clusters} clusters)
                 </span>
               )}
             </p>

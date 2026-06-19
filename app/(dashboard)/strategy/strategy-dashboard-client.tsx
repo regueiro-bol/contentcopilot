@@ -19,6 +19,8 @@ import { formatearFecha, cn }                       from '@/lib/utils'
 // ─────────────────────────────────────────────────────────────
 
 interface ClienteOption  { id: string; nombre: string; sector: string | null }
+interface ProyectoOption { id: string; nombre: string }
+interface ProyectoStats  { total_keywords: number; total_clusters: number; total_banco: number }
 interface SesionResumen  {
   id: string; client_id: string; client_nombre: string; nombre: string
   status: string; created_at: string; total_keywords: number; num_clusters: number
@@ -52,7 +54,8 @@ interface Props {
 // Helpers estáticos
 // ─────────────────────────────────────────────────────────────
 
-const LS_KEY = 'strategy_cliente_id'
+const LS_KEY          = 'strategy_cliente_id'
+const LS_KEY_PROYECTO = 'strategy_proyecto_id'
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   draft       : { label: 'Borrador',     cls: 'bg-gray-100 text-gray-600'    },
@@ -107,17 +110,39 @@ export default function StrategyDashboardClient({
 }: Props) {
 
   // ── Cliente seleccionado ──────────────────────────────────
-  const [clienteId, setClienteId] = useState(() => {
-    if (typeof window === 'undefined') return ''
-    const saved = localStorage.getItem(LS_KEY)
-    return saved && clientes.some((c) => c.id === saved) ? saved : ''
-  })
+  // IMPORTANTE: inicializar siempre a '' para que el render inicial del cliente
+  // coincida con el HTML del servidor (evitar hydration mismatch).
+  // La restauración desde localStorage se hace en un useEffect de mount.
+  const [clienteId, setClienteId] = useState('')
   function handleClienteChange(id: string) {
     setClienteId(id)
+    // Al cambiar de cliente, limpiar proyecto
+    setProyectoId('')
+    setProyectos([])
+    setProyectoStats(null)
     if (id) localStorage.setItem(LS_KEY, id)
     else     localStorage.removeItem(LS_KEY)
+    localStorage.removeItem(LS_KEY_PROYECTO)
   }
   const clienteSeleccionado = clientes.find((c) => c.id === clienteId) ?? null
+
+  // ── Proyecto seleccionado ─────────────────────────────────
+  // También '' en el render inicial; se restaura en el useEffect([clienteId])
+  // cuando éste se dispara tras la restauración del clienteId.
+  const [proyectos,     setProyectos]     = useState<ProyectoOption[]>([])
+  const [proyectoId,    setProyectoId]    = useState('')
+  const [loadingProys,  setLoadingProys]  = useState(false)
+  const [proyectoStats, setProyectoStats] = useState<ProyectoStats | null>(null)
+  const [loadingStats,  setLoadingStats]  = useState(false)
+
+  const proyectoSeleccionado = proyectos.find((p) => p.id === proyectoId) ?? null
+
+  function handleProyectoChange(id: string) {
+    setProyectoId(id)
+    setProyectoStats(null)
+    if (id) localStorage.setItem(LS_KEY_PROYECTO, id)
+    else    localStorage.removeItem(LS_KEY_PROYECTO)
+  }
 
   // ── Estado de sesiones (archivado) — declarado aquí para evitar uso antes de declaración
   const [verArchivadas,   setVerArchivadas]   = useState(false)
@@ -163,6 +188,51 @@ export default function StrategyDashboardClient({
     estacionales: estacional.length,
     trending   : trending.length,
   }), [trending, estacional])
+
+  // ── Restaurar cliente desde localStorage (solo al montar) ──
+  // Separado del useState para que el render inicial sea idéntico al del servidor.
+  useEffect(() => {
+    const saved = localStorage.getItem(LS_KEY)
+    if (saved && clientes.some((c) => c.id === saved)) {
+      setClienteId(saved)
+    }
+    // clientes es estable (viene de props del servidor); solo necesitamos ejecutar esto una vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Cargar proyectos cuando cambia el cliente ─────────────
+  useEffect(() => {
+    if (!clienteId) { setProyectos([]); setProyectoId(''); setProyectoStats(null); return }
+    setLoadingProys(true)
+    fetch(`/api/pedidos/proyectos?cliente_id=${clienteId}`)
+      .then((r) => r.json())
+      .then(({ proyectos: data }: { proyectos: ProyectoOption[] }) => {
+        setProyectos(data ?? [])
+        const saved = localStorage.getItem(LS_KEY_PROYECTO)
+        if (saved && (data ?? []).some((p) => p.id === saved)) {
+          setProyectoId(saved)
+        } else if ((data ?? []).length === 1) {
+          // Auto-seleccionar si solo hay un proyecto
+          setProyectoId(data[0].id)
+          localStorage.setItem(LS_KEY_PROYECTO, data[0].id)
+        } else {
+          setProyectoId('')
+        }
+      })
+      .catch(() => { setProyectos([]); setProyectoId('') })
+      .finally(() => setLoadingProys(false))
+  }, [clienteId])
+
+  // ── Cargar KPIs del proyecto seleccionado ─────────────────
+  useEffect(() => {
+    if (!proyectoId) { setProyectoStats(null); return }
+    setLoadingStats(true)
+    fetch(`/api/strategy/project-stats?proyecto_id=${proyectoId}`)
+      .then((r) => r.json())
+      .then((data: ProyectoStats) => setProyectoStats(data))
+      .catch(() => setProyectoStats(null))
+      .finally(() => setLoadingStats(false))
+  }, [proyectoId])
 
   const fetchActualidad = useCallback(async (force = false) => {
     if (!clienteId) return
@@ -334,18 +404,24 @@ export default function StrategyDashboardClient({
   )
   const opsVisibles = actExpanded ? todasOps : todasOps.slice(0, 3)
 
-  // ── Datos evergreen del cliente ───────────────────────────
+  // ── Datos evergreen del cliente / proyecto ────────────────
+  // Si hay proyecto seleccionado, los KPIs vienen de project-stats (filtrados).
+  // Si solo hay cliente, se derivan de las sesiones del cliente (sin filtro de proyecto).
   const keywordsCliente = useMemo(
-    () => sesionesCliente.reduce((s, r) => s + r.total_keywords, 0),
-    [sesionesCliente],
+    () => proyectoStats?.total_keywords ?? sesionesCliente.reduce((s, r) => s + r.total_keywords, 0),
+    [proyectoStats, sesionesCliente],
   )
-  const mapasCount   = clienteId ? (mapasPorCliente[clienteId] ?? 0) : totalMapas
-  const bancoCount   = clienteId ? (bancoPorCliente[clienteId] ?? 0) : 0
-  const clustersCount = ultimaSesion?.num_clusters ?? 0
+  const mapasCount    = clienteId ? (mapasPorCliente[clienteId] ?? 0) : totalMapas
+  const bancoCount    = proyectoStats?.total_banco    ?? (clienteId ? (bancoPorCliente[clienteId] ?? 0) : 0)
+  const clustersCount = proyectoStats?.total_clusters ?? (ultimaSesion?.num_clusters ?? 0)
+
+  // Param de URL para propagar proyecto en todos los enlaces
+  const proyectoParam = proyectoId ? `&proyecto=${proyectoId}` : ''
+
   const mapasHref    = clienteId && mapasCount > 0
     ? mapasCount === 1 && mapaSessionPorCliente[clienteId]
       ? `/strategy/${mapaSessionPorCliente[clienteId]}/mapa`
-      : `/strategy/mapas?cliente=${clienteId}`
+      : `/strategy/mapas?cliente=${clienteId}${proyectoParam}`
     : undefined
 
   // Href del módulo Mapa: usa la sesión con mapa si existe, sino la última sesión con keywords
@@ -375,15 +451,16 @@ export default function StrategyDashboardClient({
           <p className="text-sm text-gray-500 mt-1">Investigación de keywords, clustering y planificación editorial basada en datos.</p>
         </div>
         <Button asChild className="gap-2 shrink-0 bg-indigo-600 hover:bg-indigo-700">
-          <Link href={clienteId ? `/strategy/nueva?cliente=${clienteId}` : '/strategy/nueva'}>
+          <Link href={clienteId ? `/strategy/nueva?cliente=${clienteId}${proyectoParam}` : '/strategy/nueva'}>
             <Plus className="h-4 w-4" /> Nueva Estrategia
           </Link>
         </Button>
       </div>
 
-      {/* ── SELECTOR CLIENTE ───────────────────────────────── */}
+      {/* ── SELECTOR CLIENTE + PROYECTO ────────────────────── */}
       <Card>
-        <CardContent className="p-4">
+        <CardContent className="p-4 space-y-3">
+          {/* Cliente */}
           <div className="flex items-center gap-3">
             <Users className="h-4 w-4 text-gray-400 shrink-0" />
             <select
@@ -397,6 +474,46 @@ export default function StrategyDashboardClient({
               ))}
             </select>
           </div>
+
+          {/* Proyecto — solo visible cuando hay cliente y proyectos */}
+          {clienteId && (loadingProys || proyectos.length > 0) && (
+            <div className="flex items-center gap-3 border-t border-gray-100 pt-3">
+              <div className="h-4 w-4 shrink-0 flex items-center justify-center">
+                {loadingProys
+                  ? <Loader2 className="h-3.5 w-3.5 text-gray-400 animate-spin" />
+                  : <span className="text-gray-300 text-xs font-bold ml-1">↳</span>
+                }
+              </div>
+              {!loadingProys && (
+                <div className="flex-1 flex items-center gap-2 flex-wrap">
+                  {proyectos.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleProyectoChange(proyectoId === p.id ? '' : p.id)}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
+                        proyectoId === p.id
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600',
+                      )}
+                    >
+                      {p.nombre}
+                    </button>
+                  ))}
+                  {proyectoId && (
+                    <button
+                      type="button"
+                      onClick={() => handleProyectoChange('')}
+                      className="text-[10px] text-gray-400 hover:text-gray-600 underline ml-1"
+                    >
+                      Ver todo el cliente
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -406,7 +523,12 @@ export default function StrategyDashboardClient({
           <p className="text-sm text-indigo-700">
             <span className="text-indigo-400 text-xs uppercase tracking-wide mr-2">Trabajando con:</span>
             <span className="font-semibold">{clienteSeleccionado.nombre}</span>
-            {clienteSeleccionado.sector && <span className="text-indigo-400 ml-1">· {clienteSeleccionado.sector}</span>}
+            {proyectoSeleccionado
+              ? <span className="text-indigo-600 ml-1 font-semibold">· {proyectoSeleccionado.nombre}</span>
+              : clienteSeleccionado.sector
+                ? <span className="text-indigo-400 ml-1">· {clienteSeleccionado.sector}</span>
+                : null
+            }
           </p>
         </div>
       )}
@@ -432,17 +554,23 @@ export default function StrategyDashboardClient({
             <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
               <BarChart3 className="h-3.5 w-3.5 text-indigo-500" /> Estrategia Evergreen
             </p>
-            <div className="space-y-2">
-              <StatRow icon={TrendingUp} iconCls="text-emerald-600 bg-emerald-50"
-                label="Keywords analizadas" value={keywordsCliente.toLocaleString('es-ES')} />
-              <StatRow icon={Layers} iconCls="text-violet-600 bg-violet-50"
-                label="Clusters" value={clustersCount} />
-              <StatRow icon={BookOpen} iconCls="text-indigo-600 bg-indigo-50"
-                label="En banco" value={bancoCount} />
-            </div>
+            {loadingStats ? (
+              <div className="flex items-center gap-2 text-xs text-gray-400 py-3">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando datos del proyecto…
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <StatRow icon={TrendingUp} iconCls="text-emerald-600 bg-emerald-50"
+                  label="Keywords analizadas" value={keywordsCliente.toLocaleString('es-ES')} />
+                <StatRow icon={Layers} iconCls="text-violet-600 bg-violet-50"
+                  label="Clusters" value={clustersCount} />
+                <StatRow icon={BookOpen} iconCls="text-indigo-600 bg-indigo-50"
+                  label="En banco" value={bancoCount} />
+              </div>
+            )}
             <div className="flex gap-2 pt-1">
               {bancoCount > 0 && (
-                <Link href={`/strategy/almacen?cliente=${clienteId}`}
+                <Link href={`/strategy/almacen?cliente=${clienteId}${proyectoParam}`}
                   className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5">
                   Ver banco <ChevronRight className="h-3 w-3" />
                 </Link>
@@ -526,7 +654,7 @@ export default function StrategyDashboardClient({
             locked={false}
             href={ultimaSesion
               ? `/strategy/${ultimaSesion.id}/keywords`
-              : clienteId ? `/strategy/nueva?cliente=${clienteId}` : '/strategy/nueva'}
+              : clienteId ? `/strategy/nueva?cliente=${clienteId}${proyectoParam}` : '/strategy/nueva'}
             subtitle={ultimaSesion ? `Última: ${formatearFecha(ultimaSesion.created_at)}` : 'Sin sesiones'}
           />
           <ModuleCard
