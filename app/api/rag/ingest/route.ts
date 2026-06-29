@@ -425,6 +425,41 @@ async function procesarZIPDocx(
   return { procesados, chunks_totales, errores }
 }
 
+/** TXT — texto plano, un único artículo */
+async function procesarTXT(
+  buffer     : Buffer,
+  nombre     : string,
+  proyectoId : string,
+  documentoId: string,
+): Promise<ResultadoProcesamiento> {
+  const errores: string[] = []
+  try {
+    const textoRaw = buffer.toString('utf-8').replace(/\r\n/g, '\n').trim()
+    if (!textoRaw || textoRaw.split(/\s+/).filter(Boolean).length < MIN_PALABRAS) {
+      return { procesados: 0, chunks_totales: 0, errores: ['Archivo de texto vacío o demasiado corto'] }
+    }
+    const lineas = textoRaw.split('\n').map((l) => l.trim()).filter(Boolean)
+    const titulo = lineas[0] || nombre
+    const cuerpo = lineas.length > 1 ? lineas.slice(1).join(' ').trim() : textoRaw
+    const chunks = dividirEnChunks(cuerpo || textoRaw)
+    if (chunks.length === 0) {
+      return { procesados: 0, chunks_totales: 0, errores: ['Sin chunks generados'] }
+    }
+    const articulo: ArticuloParseado = {
+      articulo_id: 'txt-0',
+      titulo,
+      contenido  : cuerpo,
+      metadatos  : { fuente: 'txt', nombre_archivo: nombre },
+    }
+    const resultado = await guardarChunks(proyectoId, documentoId, articulo, chunks)
+    errores.push(...resultado.errores)
+    return { procesados: 1, chunks_totales: resultado.guardados, errores }
+  } catch (err) {
+    errores.push(err instanceof Error ? err.message : String(err))
+    return { procesados: 0, chunks_totales: 0, errores }
+  }
+}
+
 // ─── Handler principal ────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -432,13 +467,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       proyecto_id      ?: string
       proyectoId       ?: string   // compatibilidad con llamadas anteriores
+      cliente_id       ?: string   // opcional, no requerido por el procesamiento
       documento_url    ?: string
       url              ?: string   // compatibilidad
       documento_nombre ?: string
       nombre           ?: string   // compatibilidad
       documento_id     ?: string
       documentoId      ?: string   // compatibilidad
-      tipo             ?: 'csv_wordpress' | 'docx' | 'zip_docx' | 'txt'
+      tipo             ?: 'csv_wordpress' | 'docx' | 'zip_docx' | 'txt' | 'documento'
     }
 
     // Normalizar nombres de campo (acepta ambas convenciones)
@@ -505,16 +541,20 @@ export async function POST(req: NextRequest) {
 
     const nombreLower = nombre.toLowerCase() || url.toLowerCase()
 
-    // Si viene `tipo` explícito lo respetamos; si no, lo deducimos del nombre
+    // Si viene `tipo` explícito (y no es el comodín 'documento') lo respetamos;
+    // si no, o si es 'documento', lo deducimos del nombre/url del archivo.
+    const tipoExplicito = (body.tipo && body.tipo !== 'documento') ? body.tipo : undefined
     const tipoDetectado: string =
-      body.tipo ??
+      tipoExplicito ??
       (nombreLower.endsWith('.csv')
         ? 'csv_wordpress'
         : nombreLower.endsWith('.zip')
           ? 'zip_docx'
           : nombreLower.endsWith('.docx') || nombreLower.endsWith('.doc')
             ? 'docx'
-            : 'desconocido')
+            : nombreLower.endsWith('.txt') || nombreLower.endsWith('.md')
+              ? 'txt'
+              : 'desconocido')
 
     console.log('[RAG] Tipo detectado:', tipoDetectado, '| Nombre:', nombre)
 
@@ -526,9 +566,11 @@ export async function POST(req: NextRequest) {
       resultado = await procesarDOCX(buffer, nombre, proyectoId, documentoId)
     } else if (tipoDetectado === 'zip_docx') {
       resultado = await procesarZIPDocx(buffer, proyectoId, documentoId)
+    } else if (tipoDetectado === 'txt') {
+      resultado = await procesarTXT(buffer, nombre, proyectoId, documentoId)
     } else {
       return NextResponse.json(
-        { error: `Tipo de archivo no soportado para RAG: ${nombre || url}. Usa CSV, DOCX o ZIP.` },
+        { error: `Tipo de archivo no soportado: ${nombre || url}. Formatos admitidos: CSV, DOCX, ZIP, TXT, MD.` },
         { status: 400 },
       )
     }

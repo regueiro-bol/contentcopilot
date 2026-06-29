@@ -1,11 +1,11 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useRef, useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronRight, Edit, Plus, FileText, Globe, FolderOpen,
   CheckCircle2, Upload, Sparkles, Trash2, ToggleLeft, ToggleRight,
-  ExternalLink, Brain, Loader2, Map, Radar, ArrowRight, Archive, AlertTriangle,
+  ExternalLink, Brain, Loader2, Map, Radar, ArrowRight, Archive, AlertTriangle, Zap,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -620,6 +620,34 @@ export default function ProyectoDetalleClient({
     return init
   })
   const [ragErrores,    setRagErrores]    = useState<Record<string, string>>({})
+
+  // Comprobar estado real en documentos_rag al montar (por si el JSONB está desactualizado)
+  useEffect(() => {
+    if (proyecto.documentos_subidos.length === 0) return
+    fetch(`/api/rag/status?proyecto_id=${proyecto.id}`)
+      .then((r) => r.json())
+      .then((chunksPorDoc: Record<string, number>) => {
+        setRagEstados((prev) => {
+          const next = { ...prev }
+          for (const [docId, count] of Object.entries(chunksPorDoc)) {
+            if (count > 0 && next[docId] !== 'procesando' && next[docId] !== 'eliminando') {
+              next[docId] = 'procesado'
+            }
+          }
+          return next
+        })
+        setRagChunks((prev) => {
+          const next = { ...prev }
+          for (const [docId, count] of Object.entries(chunksPorDoc)) {
+            if (count > 0) next[docId] = count
+          }
+          return next
+        })
+      })
+      .catch(() => { /* silent — JSONB values used as fallback */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proyecto.id])
+
   // Diálogo de confirmación compartido
   const [confirmDialog, setConfirmDialog] = useState<{
     tipo   : 'eliminar_rag' | 'eliminar_doc'
@@ -653,10 +681,11 @@ export default function ProyectoDetalleClient({
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
           proyecto_id      : proyecto.id,
+          cliente_id       : cliente.id,
           documento_id     : doc.id,
           documento_url    : doc.url,
           documento_nombre : doc.nombre,
-          tipo             : detectarTipo(doc.nombre, doc.url),
+          tipo             : 'documento',
         }),
       })
       const data = await res.json()
@@ -1102,8 +1131,6 @@ export default function ProyectoDetalleClient({
                       const ragEstado = ragEstados[doc.id]
                       const chunks    = ragChunks[doc.id]
                       const errorMsg  = ragErrores[doc.id]
-                      const esRagable = /\.(csv|docx|doc|zip)$/i.test(doc.nombre)
-                                     || /\.(csv|docx|doc|zip)(\?|$)/i.test(doc.url)
                       const ocupado   = ragEstado === 'procesando' || ragEstado === 'eliminando'
 
                       return (
@@ -1129,39 +1156,32 @@ export default function ProyectoDetalleClient({
                               </p>
 
                               {/* ── Badge estado RAG ── */}
-                              {esRagable && (
-                                <div className="mt-1.5">
-                                  {!ragEstado && (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-                                      Sin procesar
-                                    </span>
-                                  )}
-                                  {ragEstado === 'procesando' && (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 animate-pulse">
-                                      <Loader2 className="h-3 w-3 animate-spin" />Procesando…
-                                    </span>
-                                  )}
-                                  {ragEstado === 'eliminando' && (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700 animate-pulse">
-                                      <Loader2 className="h-3 w-3 animate-spin" />Eliminando…
-                                    </span>
-                                  )}
-                                  {ragEstado === 'procesado' && (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                                      <CheckCircle2 className="h-3 w-3" />
-                                      Procesado{chunks ? ` · ${chunks} chunks` : ''}
-                                    </span>
-                                  )}
-                                  {ragEstado === 'error' && (
-                                    <span
-                                      className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-600 cursor-help"
-                                      title={errorMsg}
-                                    >
-                                      Error — {errorMsg ? errorMsg.slice(0, 60) : 'intenta de nuevo'}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                              <div className="mt-1.5">
+                                {ragEstado === 'procesando' && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 animate-pulse">
+                                    <Loader2 className="h-3 w-3 animate-spin" />Procesando…
+                                  </span>
+                                )}
+                                {ragEstado === 'eliminando' && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700 animate-pulse">
+                                    <Loader2 className="h-3 w-3 animate-spin" />Eliminando…
+                                  </span>
+                                )}
+                                {ragEstado === 'procesado' && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Procesado{chunks ? ` · ${chunks} chunks` : ''}
+                                  </span>
+                                )}
+                                {ragEstado === 'error' && (
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-600 cursor-help"
+                                    title={errorMsg}
+                                  >
+                                    Error — {errorMsg ? errorMsg.slice(0, 60) : 'intenta de nuevo'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
 
@@ -1169,27 +1189,28 @@ export default function ProyectoDetalleClient({
                           <div className="flex items-center gap-1.5 shrink-0">
 
                             {/* BOTÓN 1 — Procesar / Reprocesar RAG */}
-                            {esRagable && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="gap-1.5 text-xs h-7 px-2.5"
-                                onClick={() => procesarParaRAG(doc)}
-                                disabled={ocupado}
-                                title="Vectorizar para búsqueda RAG"
-                              >
-                                {ragEstado === 'procesando' ? (
-                                  <><Loader2 className="h-3 w-3 animate-spin" />Procesando…</>
-                                ) : ragEstado === 'procesado' ? (
-                                  <><Brain className="h-3 w-3" />Reprocesar</>
-                                ) : (
-                                  <><Brain className="h-3 w-3" />Procesar RAG</>
-                                )}
-                              </Button>
-                            )}
+                            <Button
+                              size="sm"
+                              className={
+                                ragEstado === 'procesado'
+                                  ? 'gap-1.5 text-xs h-7 px-2.5 bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+                                  : 'gap-1.5 text-xs h-7 px-2.5 bg-blue-600 hover:bg-blue-700 text-white border-0'
+                              }
+                              onClick={() => procesarParaRAG(doc)}
+                              disabled={ocupado}
+                              title="Vectorizar para búsqueda RAG"
+                            >
+                              {ragEstado === 'procesando' ? (
+                                <><Loader2 className="h-3 w-3 animate-spin" />Procesando…</>
+                              ) : ragEstado === 'procesado' ? (
+                                <><Brain className="h-3 w-3" />Reprocesar</>
+                              ) : (
+                                <><Zap className="h-3 w-3" />Procesar</>
+                              )}
+                            </Button>
 
                             {/* BOTÓN 2 — Eliminar embeddings del RAG (solo si procesado) */}
-                            {esRagable && ragEstado === 'procesado' && (
+                            {ragEstado === 'procesado' && (
                               <Button
                                 variant="outline"
                                 size="sm"

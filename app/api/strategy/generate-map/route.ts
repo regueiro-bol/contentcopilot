@@ -76,6 +76,7 @@ function buildMapPrompt(
   batchIndex  : number,
   totalBatches: number,
   articulosParaEsteBatch: number,
+  proyectoContextStr?: string,
   clientContextStr?: string,
 ): string {
   // Generar instrucción explícita por cluster
@@ -90,11 +91,23 @@ function buildMapPrompt(
     2,
   )
 
-  const contextBlock = clientContextStr
+  // Bloque de proyecto — tiene prioridad sobre el contexto de cliente
+  const proyectoBlock = proyectoContextStr
+    ? `\n\nCONTEXTO DEL PROYECTO (máxima prioridad):\n${proyectoContextStr}\n`
+    : ''
+
+  // Bloque de cliente — contexto adicional de marca/analytics
+  const clienteBlock = clientContextStr
     ? `\n\nCONTEXTO DEL CLIENTE:\n${clientContextStr}\n`
     : ''
 
-  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".${contextBlock}
+  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".${proyectoBlock}${clienteBlock}
+
+RESTRICCIONES EDITORIALES OBLIGATORIAS:
+- Genera artículos coherentes con el proyecto y sus temáticas autorizadas.
+- NO incluyas artículos sobre empresas competidoras ni menciones marcas de la competencia en los títulos o keywords, a menos que el propio proyecto sea explícitamente comparativo.
+- Respeta las keywords prohibidas y temáticas vetadas indicadas en el contexto del proyecto.
+- Adapta el tono y enfoque al definido para este proyecto específico.
 
 Distribución objetivo del funnel: TOFU ${distribucion.tofu}% · MOFU ${distribucion.mofu}% · BOFU ${distribucion.bofu}%
 Ritmo estimado: ${artMes} artículos/mes
@@ -206,7 +219,7 @@ export async function POST(request: NextRequest) {
     // ── Cargar sesión + cliente ──────────────────────────────
     const { data: session } = await supabase
       .from('keyword_research_sessions')
-      .select('id, nombre, client_id')
+      .select('id, nombre, client_id, proyecto_id')
       .eq('id', session_id)
       .single()
 
@@ -222,6 +235,49 @@ export async function POST(request: NextRequest) {
 
     if (!cliente) {
       return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+    }
+
+    // ── Contexto del proyecto (si la sesión tiene proyecto_id) ──
+    // Este contexto tiene prioridad en el prompt para garantizar que
+    // Claude respete el tono, las temáticas y las restricciones del proyecto.
+    let proyectoContextStr: string | undefined
+    const proyectoId = (session as unknown as { proyecto_id: string | null }).proyecto_id
+
+    if (proyectoId) {
+      const [proyRes, clienteRestRes] = await Promise.all([
+        supabase
+          .from('proyectos')
+          .select('nombre, descripcion, tono_voz, keywords_objetivo, keywords_prohibidas, tematicas_autorizadas, tematicas_vetadas')
+          .eq('id', proyectoId)
+          .single(),
+        supabase
+          .from('clientes')
+          .select('restricciones_globales')
+          .eq('id', session.client_id)
+          .single(),
+      ])
+
+      const proy = proyRes.data
+      if (proy) {
+        const lines: string[] = []
+        lines.push(`Nombre del proyecto: ${proy.nombre}`)
+        if (proy.descripcion)
+          lines.push(`Descripción: ${proy.descripcion}`)
+        if (proy.tono_voz)
+          lines.push(`Tono de voz: ${proy.tono_voz}`)
+        const kwObj  = (proy.keywords_objetivo   as string[] | null) ?? []
+        const kwProh = (proy.keywords_prohibidas as string[] | null) ?? []
+        const temAut = (proy.tematicas_autorizadas as string[] | null) ?? []
+        const temVet = (proy.tematicas_vetadas    as string[] | null) ?? []
+        const restGlob = (clienteRestRes.data?.restricciones_globales as string[] | null) ?? []
+        if (kwObj.length  > 0) lines.push(`Keywords objetivo del proyecto: ${kwObj.join(', ')}`)
+        if (kwProh.length > 0) lines.push(`Keywords PROHIBIDAS: ${kwProh.join(', ')}`)
+        if (temAut.length > 0) lines.push(`Temáticas autorizadas: ${temAut.join(', ')}`)
+        if (temVet.length > 0) lines.push(`Temáticas VETADAS (no generar artículos sobre estas): ${temVet.join(', ')}`)
+        if (restGlob.length > 0) lines.push(`Restricciones globales del cliente: ${restGlob.join('. ')}`)
+        proyectoContextStr = lines.join('\n')
+        console.log(`[GenerateMap] Proyecto "${proy.nombre}" cargado — ${lines.length} líneas de contexto`)
+      }
     }
 
     // ── Build client context for prompt enrichment ───────────
@@ -451,6 +507,7 @@ export async function POST(request: NextRequest) {
               batchIdx,
               clusterBatches.length,
               articulosParaBatch,
+              proyectoContextStr,
               clientContextStr,
             ),
           }],

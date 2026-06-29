@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   Search,
   ChevronLeft,
+  ChevronDown,
   Save,
   TrendingUp,
   Layers,
@@ -68,21 +69,22 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   error       : { label: 'Error',        cls: 'bg-red-100 text-red-700' },
 }
 
-const INTENT_FILTERS = [
-  { value: '',               label: 'Todas' },
-  { value: 'informational',  label: 'Informacional' },
-  { value: 'transactional',  label: 'Transaccional' },
-  { value: 'commercial',     label: 'Comercial' },
-  { value: 'navigational',   label: 'Navegacional' },
+// FIX 2 — Multi-select intent pills; navigacional excluded by default
+const INTENT_PILLS = [
+  { value: 'informational', label: 'Informacional' },
+  { value: 'transactional', label: 'Transaccional' },
+  { value: 'commercial',    label: 'Comercial' },
+  { value: 'navigational',  label: 'Navegacional' },
 ]
+const DEFAULT_INTENTS = new Set<string>(['informational', 'transactional', 'commercial'])
 
 const DIFICULTAD_RANGES: { label: string; test: (kd: number | null) => boolean }[] = [
-  { label: 'Todas',      test: ()      => true },
-  { label: 'Muy fácil',  test: (kd)   => kd != null && kd < 20 },
-  { label: 'Fácil',      test: (kd)   => kd != null && kd >= 20 && kd < 40 },
-  { label: 'Media',      test: (kd)   => kd != null && kd >= 40 && kd < 60 },
-  { label: 'Difícil',    test: (kd)   => kd != null && kd >= 60 && kd < 80 },
-  { label: 'Muy difícil', test: (kd)  => kd != null && kd >= 80 },
+  { label: 'Todas',       test: ()   => true },
+  { label: 'Muy fácil',  test: (kd) => kd != null && kd < 20 },
+  { label: 'Fácil',      test: (kd) => kd != null && kd >= 20 && kd < 40 },
+  { label: 'Media',      test: (kd) => kd != null && kd >= 40 && kd < 60 },
+  { label: 'Difícil',    test: (kd) => kd != null && kd >= 60 && kd < 80 },
+  { label: 'Muy difícil', test: (kd) => kd != null && kd >= 80 },
 ]
 
 function DificultadBadge({ kd }: { kd: number | null }) {
@@ -116,9 +118,9 @@ function IntentBadge({ intent }: { intent: string | null }) {
 }
 
 const GSC_OPP_STYLES: Record<string, { label: string; cls: string }> = {
-  existing : { label: 'Existente', cls: 'bg-green-100 text-green-700'  },
-  quick_win: { label: 'Quick win', cls: 'bg-amber-100 text-amber-700'  },
-  new      : { label: 'Nueva',     cls: 'bg-blue-100 text-blue-700'   },
+  existing : { label: 'Existente', cls: 'bg-green-100 text-green-700' },
+  quick_win: { label: 'Quick win', cls: 'bg-amber-100 text-amber-700' },
+  new      : { label: 'Nueva',     cls: 'bg-blue-100 text-blue-700'  },
 }
 
 const GSC_FILTERS = [
@@ -139,20 +141,25 @@ function GSCBadge({ opportunity }: { opportunity: string | null }) {
   )
 }
 
-const ORIGEN_FILTERS = [
-  { value: '',           label: 'Todas' },
-  { value: 'dataforseo', label: 'DataForSEO' },
-  { value: 'competitor', label: 'Competidor' },
-]
-
+// FIX 4 — Red badge for competitor keywords
 function CompetitorBadge({ source }: { source: string | null }) {
   if (!source) return null
   return (
     <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-100 text-violet-700"
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-red-100 text-red-700"
       title={`Competidor: ${source}`}
     >
       Comp.
+    </span>
+  )
+}
+
+// FIX 4 — Blue badge for branded keywords (contain client name)
+function MarcaBadge({ keyword, clientName }: { keyword: string; clientName: string }) {
+  if (!clientName || !keyword.toLowerCase().includes(clientName.toLowerCase())) return null
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-blue-100 text-blue-700">
+      Marca
     </span>
   )
 }
@@ -162,9 +169,10 @@ function CompetitorBadge({ source }: { source: string | null }) {
 // ─────────────────────────────────────────────────────────────
 
 export default function KeywordsClient({ session, keywords: initialKeywords }: Props) {
-  // ── Estado de selección (local, persiste en guardado) ──────
+  // ── Estado de selección ────────────────────────────────────
+  // FIX 1 — competitor keywords auto-deselected on load
   const [incluidaMap, setIncluidaMap] = useState<Map<string, boolean>>(
-    () => new Map(initialKeywords.map((k) => [k.id, k.incluida])),
+    () => new Map(initialKeywords.map((k) => [k.id, k.competitor_source ? false : k.incluida])),
   )
   const [hayPendientes, setHayPendientes] = useState(false)
   const [guardando, setGuardando]         = useState(false)
@@ -173,28 +181,43 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
   const [, startTransition]               = useTransition()
 
   // ── Estado de filtros ──────────────────────────────────────
-  const [busqueda,          setBusqueda]          = useState('')
-  const [filtroIntent,      setFiltroIntent]      = useState('')
-  const [filtroDificultad,  setFiltroDificultad]  = useState('Todas')
-  const [filtroGSC,         setFiltroGSC]         = useState('')
-  const [filtroOrigen,      setFiltroOrigen]      = useState('')
+  const [busqueda,         setBusqueda]         = useState('')
+  // FIX 2 — multi-select Set; navigacional excluded by default
+  const [intentesActivos,  setIntentesActivos]  = useState<Set<string>>(() => new Set(DEFAULT_INTENTS))
+  const [filtroDificultad, setFiltroDificultad] = useState('Todas')
+  const [filtroGSC,        setFiltroGSC]        = useState('')
 
-  // ── Keywords filtradas ─────────────────────────────────────
+  // ── Keywords principales (sin competidores) ────────────────
   const keywordsFiltradas = useMemo(() => {
     const q = busqueda.toLowerCase().trim()
     const difRange = DIFICULTAD_RANGES.find((d) => d.label === filtroDificultad) ?? DIFICULTAD_RANGES[0]
     return initialKeywords.filter((k) => {
+      if (k.competitor_source) return false
       if (q && !k.keyword.toLowerCase().includes(q)) return false
-      if (filtroIntent && k.search_intent !== filtroIntent) return false
+      if (k.search_intent && !intentesActivos.has(k.search_intent)) return false
       if (filtroDificultad !== 'Todas' && !difRange.test(k.keyword_difficulty)) return false
       if (filtroGSC && k.gsc_opportunity !== filtroGSC) return false
-      if (filtroOrigen === 'competitor' && !k.competitor_source) return false
-      if (filtroOrigen === 'dataforseo' && k.competitor_source) return false
       return true
     })
-  }, [initialKeywords, busqueda, filtroIntent, filtroDificultad, filtroGSC, filtroOrigen])
+  }, [initialKeywords, busqueda, intentesActivos, filtroDificultad, filtroGSC])
+
+  // ── Keywords de competidores (filtradas por búsqueda) ──────
+  const competitorKeywords = useMemo(() => {
+    const q = busqueda.toLowerCase().trim()
+    return initialKeywords.filter((k) => {
+      if (!k.competitor_source) return false
+      if (q && !k.keyword.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [initialKeywords, busqueda])
 
   // ── Contadores ─────────────────────────────────────────────
+  const competidoresCount = useMemo(
+    () => initialKeywords.filter((k) => k.competitor_source).length,
+    [initialKeywords],
+  )
+  const disponiblesCount = initialKeywords.length - competidoresCount
+
   const totalIncluidas = useMemo(
     () => Array.from(incluidaMap.values()).filter(Boolean).length,
     [incluidaMap],
@@ -213,7 +236,7 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
     })
   }
 
-  // ── Toggle all visible ─────────────────────────────────────
+  // ── Toggle all visible (main list only) ───────────────────
   function handleToggleAll(incluir: boolean) {
     setIncluidaMap((prev) => {
       const next = new Map(prev)
@@ -224,13 +247,33 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
     setOkGuardado(false)
   }
 
+  // ── Toggle all competitors ─────────────────────────────────
+  function handleToggleAllCompetitors(incluir: boolean) {
+    setIncluidaMap((prev) => {
+      const next = new Map(prev)
+      competitorKeywords.forEach((k) => next.set(k.id, incluir))
+      return next
+    })
+    setHayPendientes(true)
+    setOkGuardado(false)
+  }
+
+  // ── Toggle intent pill ─────────────────────────────────────
+  function handleToggleIntent(value: string) {
+    setIntentesActivos((prev) => {
+      const next = new Set(prev)
+      if (next.has(value)) next.delete(value)
+      else                  next.add(value)
+      return next
+    })
+  }
+
   // ── Guardar selección ──────────────────────────────────────
   async function handleGuardar() {
     setGuardando(true)
     setErrorGuardado(null)
 
     try {
-      // Enviamos solo los cambios respecto al estado inicial
       const cambios: { id: string; incluida: boolean }[] = []
       for (const k of initialKeywords) {
         const nuevaIncluida = incluidaMap.get(k.id) ?? k.incluida
@@ -245,7 +288,6 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
         return
       }
 
-      // Batch PATCH
       const res = await fetch(`/api/strategy/keywords/batch`, {
         method : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -267,21 +309,29 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
     }
   }
 
-  // ── Reset filtros ──────────────────────────────────────────
+  // ── Reset filtros (vuelve al estado por defecto, no a "todo") ──
   function resetFiltros() {
     setBusqueda('')
-    setFiltroIntent('')
+    setIntentesActivos(new Set(DEFAULT_INTENTS))
     setFiltroDificultad('Todas')
     setFiltroGSC('')
-    setFiltroOrigen('')
   }
 
   const hayGSCData        = initialKeywords.some((k) => k.gsc_opportunity != null)
-  const hayCompetitorData = initialKeywords.some((k) => k.competitor_source != null)
-  const hayFiltros = busqueda !== '' || filtroIntent !== '' || filtroDificultad !== 'Todas' || filtroGSC !== '' || filtroOrigen !== ''
+  const hayCompetitorData = competidoresCount > 0
+
+  // hayFiltros: true when user deviates from the default state
+  const intentChanged = intentesActivos.size !== DEFAULT_INTENTS.size ||
+    Array.from(DEFAULT_INTENTS).some((i) => !intentesActivos.has(i))
+  const hayFiltros = busqueda !== '' || intentChanged || filtroDificultad !== 'Todas' || filtroGSC !== ''
 
   const { label: statusLabel, cls: statusCls } =
     STATUS_MAP[session.status] ?? { label: session.status, cls: 'bg-gray-100 text-gray-500' }
+
+  const clientName = session.client_nombre ?? ''
+
+  // colspan for empty state rows
+  const colCount = 6 + (hayGSCData ? 1 : 0)
 
   // ── Render ─────────────────────────────────────────────────
   return (
@@ -319,10 +369,10 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
       {/* KPIs rápidos */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Total keywords',   value: initialKeywords.length.toLocaleString('es-ES'), color: 'text-gray-700' },
-          { label: 'Incluidas',        value: totalIncluidas.toLocaleString('es-ES'),          color: 'text-green-700' },
-          { label: 'Con volumen',      value: initialKeywords.filter((k) => k.volume != null).length.toLocaleString('es-ES'), color: 'text-indigo-700' },
-          { label: 'Con intención',    value: initialKeywords.filter((k) => k.search_intent != null).length.toLocaleString('es-ES'), color: 'text-violet-700' },
+          { label: 'Total keywords', value: initialKeywords.length.toLocaleString('es-ES'),                                    color: 'text-gray-700'   },
+          { label: 'Incluidas',      value: totalIncluidas.toLocaleString('es-ES'),                                            color: 'text-green-700'  },
+          { label: 'Con volumen',    value: initialKeywords.filter((k) => k.volume != null).length.toLocaleString('es-ES'),    color: 'text-indigo-700' },
+          { label: 'Con intención',  value: initialKeywords.filter((k) => k.search_intent != null).length.toLocaleString('es-ES'), color: 'text-violet-700' },
         ].map(({ label, value, color }) => (
           <Card key={label}>
             <CardContent className="p-3">
@@ -347,25 +397,28 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
             />
           </div>
 
-          {/* Filtro intención */}
+          {/* FIX 2 — Filtro intención: multi-select, navigacional off por defecto */}
           <div className="space-y-1.5">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Intención de búsqueda</p>
             <div className="flex flex-wrap gap-1.5">
-              {INTENT_FILTERS.map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setFiltroIntent(value)}
-                  className={cn(
-                    'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                    filtroIntent === value
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+              {INTENT_PILLS.map(({ value, label }) => {
+                const active = intentesActivos.has(value)
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => handleToggleIntent(value)}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                      active
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-gray-400 border-gray-200 hover:border-indigo-400 line-through',
+                    )}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -391,7 +444,7 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
             </div>
           </div>
 
-          {/* Filtro GSC — solo visible si hay datos GSC */}
+          {/* Filtro GSC — solo si hay datos GSC */}
           {hayGSCData && (
             <div className="space-y-1.5">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Oportunidad GSC</p>
@@ -415,36 +468,28 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
             </div>
           )}
 
-          {/* Filtro Origen — solo visible si hay datos de competidores */}
-          {hayCompetitorData && (
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Origen</p>
-              <div className="flex flex-wrap gap-1.5">
-                {ORIGEN_FILTERS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setFiltroOrigen(value)}
-                    className={cn(
-                      'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
-                      filtroOrigen === value
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Resultado de filtro + reset */}
+          {/* FIX 3 — Resumen de filtrado */}
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
-              {hayFiltros
-                ? `${keywordsFiltradas.length} de ${initialKeywords.length} keywords`
-                : `${initialKeywords.length} keywords en total`}
+              {hayCompetitorData ? (
+                <>
+                  <span className="font-medium text-gray-700">
+                    {initialKeywords.length.toLocaleString('es-ES')} keywords
+                  </span>
+                  {' · '}
+                  <span className="text-red-500">
+                    {competidoresCount.toLocaleString('es-ES')} de competidores excluidas
+                  </span>
+                  {' · '}
+                  <span className="font-medium text-green-700">
+                    {disponiblesCount.toLocaleString('es-ES')} disponibles
+                  </span>
+                </>
+              ) : hayFiltros ? (
+                `${keywordsFiltradas.length} de ${initialKeywords.length} keywords`
+              ) : (
+                `${initialKeywords.length} keywords en total`
+              )}
             </p>
             {hayFiltros && (
               <button
@@ -453,29 +498,27 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                 className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
               >
                 <RotateCcw className="h-3 w-3" />
-                Limpiar filtros
+                Restablecer
               </button>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Tabla de keywords */}
+      {/* Tabla principal (sin competidores) */}
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="w-10 px-3 py-2.5 text-left">
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                      checked={keywordsFiltradas.length > 0 && keywordsFiltradas.every((k) => incluidaMap.get(k.id) ?? k.incluida)}
-                      onChange={(e) => handleToggleAll(e.target.checked)}
-                      title={keywordsFiltradas.every((k) => incluidaMap.get(k.id) ?? k.incluida) ? 'Desmarcar visibles' : 'Seleccionar visibles'}
-                    />
-                  </div>
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    checked={keywordsFiltradas.length > 0 && keywordsFiltradas.every((k) => incluidaMap.get(k.id) ?? k.incluida)}
+                    onChange={(e) => handleToggleAll(e.target.checked)}
+                    title={keywordsFiltradas.every((k) => incluidaMap.get(k.id) ?? k.incluida) ? 'Desmarcar visibles' : 'Seleccionar visibles'}
+                  />
                 </th>
                 <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Keyword</th>
                 <th className="px-3 py-2.5 text-right font-semibold text-gray-600 whitespace-nowrap">Volumen</th>
@@ -484,21 +527,18 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                 {hayGSCData && (
                   <th className="px-3 py-2.5 text-left font-semibold text-gray-600">GSC</th>
                 )}
-                {hayCompetitorData && (
-                  <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Origen</th>
-                )}
                 <th className="px-3 py-2.5 text-right font-semibold text-gray-600">CPC</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {keywordsFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={6 + (hayGSCData ? 1 : 0) + (hayCompetitorData ? 1 : 0)} className="px-3 py-12 text-center text-gray-400">
+                  <td colSpan={colCount} className="px-3 py-12 text-center text-gray-400">
                     <Search className="h-6 w-6 mx-auto mb-2 opacity-40" />
                     <p className="text-sm">No hay keywords que coincidan con los filtros</p>
                     {hayFiltros && (
                       <button type="button" onClick={resetFiltros} className="mt-2 text-xs text-indigo-600 hover:underline">
-                        Limpiar filtros
+                        Restablecer filtros
                       </button>
                     )}
                   </td>
@@ -509,10 +549,7 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                   return (
                     <tr
                       key={kw.id}
-                      className={cn(
-                        'transition-colors hover:bg-gray-50',
-                        !incluida && 'opacity-50',
-                      )}
+                      className={cn('transition-colors hover:bg-gray-50', !incluida && 'opacity-50')}
                     >
                       <td className="px-3 py-2">
                         <input
@@ -523,34 +560,23 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <span className={cn('font-medium', incluida ? 'text-gray-900' : 'text-gray-400 line-through')}>
-                          {kw.keyword}
-                        </span>
+                        {/* FIX 4 — MarcaBadge inline */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={cn('font-medium', incluida ? 'text-gray-900' : 'text-gray-400 line-through')}>
+                            {kw.keyword}
+                          </span>
+                          <MarcaBadge keyword={kw.keyword} clientName={clientName} />
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-sm tabular-nums">
-                        {kw.volume != null ? (
-                          <span className="font-semibold text-gray-800">
-                            {volumenLabel(kw.volume)}
-                          </span>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
+                        {kw.volume != null
+                          ? <span className="font-semibold text-gray-800">{volumenLabel(kw.volume)}</span>
+                          : <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="px-3 py-2">
-                        <DificultadBadge kd={kw.keyword_difficulty} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <IntentBadge intent={kw.search_intent} />
-                      </td>
+                      <td className="px-3 py-2"><DificultadBadge kd={kw.keyword_difficulty} /></td>
+                      <td className="px-3 py-2"><IntentBadge intent={kw.search_intent} /></td>
                       {hayGSCData && (
-                        <td className="px-3 py-2">
-                          <GSCBadge opportunity={kw.gsc_opportunity} />
-                        </td>
-                      )}
-                      {hayCompetitorData && (
-                        <td className="px-3 py-2">
-                          <CompetitorBadge source={kw.competitor_source} />
-                        </td>
+                        <td className="px-3 py-2"><GSCBadge opportunity={kw.gsc_opportunity} /></td>
                       )}
                       <td className="px-3 py-2 text-right font-mono text-xs text-gray-500">
                         {kw.cpc != null ? `€${kw.cpc.toFixed(2)}` : <span className="text-gray-300">—</span>}
@@ -564,11 +590,101 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
         </div>
       </Card>
 
+      {/* FIX 1 — Sección colapsada de keywords de competidores */}
+      {hayCompetitorData && (
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-100 transition-colors">
+            <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+            <span>
+              Keywords de competidores ({competitorKeywords.length.toLocaleString('es-ES')})
+            </span>
+            <span className="ml-auto text-[11px] font-normal text-red-400">
+              Excluidas por defecto · expandir para revisar
+            </span>
+          </summary>
+
+          <div className="mt-2">
+            <Card>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="w-10 px-3 py-2.5 text-left">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 rounded border-gray-300 text-red-500 focus:ring-red-400"
+                          checked={competitorKeywords.length > 0 && competitorKeywords.every((k) => incluidaMap.get(k.id))}
+                          onChange={(e) => handleToggleAllCompetitors(e.target.checked)}
+                          title="Seleccionar/deseleccionar todos los competidores"
+                        />
+                      </th>
+                      <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Keyword · Competidor</th>
+                      <th className="px-3 py-2.5 text-right font-semibold text-gray-600 whitespace-nowrap">Volumen</th>
+                      <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Dificultad</th>
+                      <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Intención</th>
+                      <th className="px-3 py-2.5 text-right font-semibold text-gray-600">CPC</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {competitorKeywords.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-8 text-center text-sm text-gray-400">
+                          No hay keywords de competidores que coincidan con la búsqueda
+                        </td>
+                      </tr>
+                    ) : (
+                      competitorKeywords.map((kw) => {
+                        const incluida = incluidaMap.get(kw.id) ?? false
+                        return (
+                          <tr
+                            key={kw.id}
+                            className={cn('transition-colors hover:bg-gray-50', !incluida && 'opacity-50')}
+                          >
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={incluida}
+                                onChange={() => handleToggle(kw.id)}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-red-500 focus:ring-red-400 cursor-pointer"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              {/* FIX 4 — Red Comp. badge in competitor section */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={cn('font-medium', incluida ? 'text-gray-900' : 'text-gray-400 line-through')}>
+                                  {kw.keyword}
+                                </span>
+                                <CompetitorBadge source={kw.competitor_source} />
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-sm tabular-nums">
+                              {kw.volume != null
+                                ? <span className="font-semibold text-gray-800">{volumenLabel(kw.volume)}</span>
+                                : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-3 py-2"><DificultadBadge kd={kw.keyword_difficulty} /></td>
+                            <td className="px-3 py-2"><IntentBadge intent={kw.search_intent} /></td>
+                            <td className="px-3 py-2 text-right font-mono text-xs text-gray-500">
+                              {kw.cpc != null ? `€${kw.cpc.toFixed(2)}` : <span className="text-gray-300">—</span>}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+        </details>
+      )}
+
       {/* Barra inferior flotante */}
       <div className="sticky bottom-4 z-10 flex items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-lg">
         <div className="flex items-center gap-3">
           <p className="text-sm text-gray-600">
-            <span className="font-bold text-gray-900">{totalIncluidas}</span> keyword{totalIncluidas !== 1 ? 's' : ''} seleccionada{totalIncluidas !== 1 ? 's' : ''}
+            <span className="font-bold text-gray-900">{totalIncluidas}</span>{' '}
+            keyword{totalIncluidas !== 1 ? 's' : ''} seleccionada{totalIncluidas !== 1 ? 's' : ''}
           </p>
           {hayPendientes && (
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
@@ -596,14 +712,11 @@ export default function KeywordsClient({ session, keywords: initialKeywords }: P
             disabled={!hayPendientes || guardando}
             className="gap-2"
           >
-            {guardando ? (
-              <TrendingUp className="h-4 w-4 animate-pulse" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
+            {guardando
+              ? <TrendingUp className="h-4 w-4 animate-pulse" />
+              : <Save className="h-4 w-4" />}
             {guardando ? 'Guardando...' : 'Guardar selección'}
           </Button>
-
           <Button size="sm" asChild className="gap-2">
             <Link href={`/strategy/${session.id}/clustering`}>
               <Layers className="h-4 w-4" />
