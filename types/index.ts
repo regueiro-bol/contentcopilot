@@ -87,6 +87,10 @@ export interface Proyecto {
   contacto_aprobacion_nombre?: string
   contacto_aprobacion_email?: string
 
+  // Extensión recomendada (fallback cuando el contenido no especifica la suya)
+  extension_min?: number | null
+  extension_max?: number | null
+
   // Base documental (RAG)
   documentos_subidos: DocumentoProyecto[]
   rag_ultima_actualizacion?: string
@@ -120,6 +124,8 @@ export interface BriefSEO {
   keywords_secundarias: string[]
   fuentes: string[]
   links_obligatorios: string[]
+  enlaces_internos?: Array<{ anchor: string; url: string }>
+  fuentes_competencia?: string[]
   formato_recomendado: string
   enfoque: string
   observaciones_seo: string

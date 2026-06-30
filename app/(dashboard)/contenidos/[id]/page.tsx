@@ -26,7 +26,7 @@ export default async function ContenidoDetallePage({
   ] = await Promise.all([
     supabase
       .from('proyectos')
-      .select('id, nombre, slug, cliente_id, modo_entrega, activo, created_at, descripcion, tono_voz, etiquetas_tono, keywords_objetivo, keywords_prohibidas, tematicas_autorizadas, tematicas_vetadas, perfil_lector, modo_creativo, documentos_subidos, rag_num_documentos, rag_ultima_actualizacion')
+      .select('id, nombre, slug, cliente_id, modo_entrega, activo, created_at, descripcion, tono_voz, etiquetas_tono, keywords_objetivo, keywords_prohibidas, tematicas_autorizadas, tematicas_vetadas, perfil_lector, modo_creativo, documentos_subidos, rag_num_documentos, rag_ultima_actualizacion, extension_min, extension_max')
       .eq('id', raw.proyecto_id)
       .single(),
     supabase

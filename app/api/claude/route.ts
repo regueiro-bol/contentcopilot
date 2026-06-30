@@ -11,7 +11,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { buildClientContext } from '@/lib/context/client-context'
 import { contextToPrompt } from '@/lib/context/context-to-prompt'
 
-const MODELO_CLAUDE = 'claude-sonnet-4-5'
+const MODELO_CLAUDE = 'claude-sonnet-4-6'
 
 const SISTEMA_COPILOTO_DEFAULT = `Eres ContentCopilot, un experto en copywriting y estrategia de contenido digital.
 Tu misión es ayudar a agencias de marketing a crear contenido de alta calidad para sus clientes.
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     // ── Modo JSON: respuesta completa sin streaming ───────────────────────────
     if (modo === 'json') {
-      const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 1024
+      const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 16000) : 1024
       const respuesta = await anthropic.messages.create({
         model     : MODELO_CLAUDE,
         max_tokens: maxTok,
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Modo streaming ────────────────────────────────────────────────────────
-    const maxTokStream = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 4096
+    const maxTokStream = typeof max_tokens === 'number' ? Math.min(max_tokens, 16000) : 4096
     const encoder = new TextEncoder()
 
     const stream = new ReadableStream({

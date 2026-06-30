@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -114,6 +115,13 @@ export default function PedidosPageClient({ pedidos }: Props) {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <Button
+            className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+            onClick={() => router.push('/pedidos/importar')}
+          >
+            <Sparkles className="h-4 w-4" />
+            Importar planning
+          </Button>
           <Button
             className="gap-2 bg-blue-600 hover:bg-blue-700"
             onClick={() => router.push('/pedidos/nuevo-docx')}

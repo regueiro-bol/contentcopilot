@@ -87,11 +87,18 @@ function EditConfiguracionModal({
   const [tonoVoz, setTonoVoz] = useState(proyecto.tono_voz)
   const [etiquetasCSV, setEtiquetasCSV] = useState(proyecto.etiquetas_tono.join(', '))
   const [modoCreativo, setModoCreativo] = useState(proyecto.modo_creativo)
+  const [extMin, setExtMin] = useState<string>(proyecto.extension_min != null ? String(proyecto.extension_min) : '')
+  const [extMax, setExtMax] = useState<string>(proyecto.extension_max != null ? String(proyecto.extension_max) : '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function handleGuardar() {
     if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
+    const parsedMin = extMin.trim() ? parseInt(extMin, 10) : null
+    const parsedMax = extMax.trim() ? parseInt(extMax, 10) : null
+    if (parsedMin !== null && parsedMax !== null && parsedMin >= parsedMax) {
+      setError('La extensión mínima debe ser menor que la máxima'); return
+    }
     setGuardando(true); setError(null)
     try {
       await actualizarConfiguracion(proyecto.id, clienteId, {
@@ -100,6 +107,8 @@ function EditConfiguracionModal({
         tono_voz: tonoVoz,
         etiquetas_tono: etiquetasCSV.split(',').map((s) => s.trim()).filter(Boolean),
         modo_creativo: modoCreativo,
+        extension_min: parsedMin,
+        extension_max: parsedMax,
       })
       router.refresh()
       onClose()
@@ -131,6 +140,31 @@ function EditConfiguracionModal({
             <Label>Etiquetas de tono</Label>
             <Input value={etiquetasCSV} onChange={(e) => setEtiquetasCSV(e.target.value)} placeholder="Cercano, directo, técnico, ..." />
             <p className="text-xs text-gray-400">Separadas por comas</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Extensión recomendada (palabras)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={100}
+                value={extMin}
+                onChange={(e) => setExtMin(e.target.value)}
+                placeholder="Mín (ej: 800)"
+                className="w-36"
+              />
+              <span className="text-gray-400 text-sm">–</span>
+              <Input
+                type="number"
+                min={100}
+                value={extMax}
+                onChange={(e) => setExtMax(e.target.value)}
+                placeholder="Máx (ej: 1200)"
+                className="w-36"
+              />
+            </div>
+            <p className="text-xs text-gray-400">
+              Se aplica cuando un contenido no especifica su propia extensión (ni en el Excel de importación ni en la carga manual). Si el contenido trae su propia extensión, esta se ignora y se usa la específica del contenido.
+            </p>
           </div>
           <div className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
             <div>
@@ -818,6 +852,15 @@ export default function ProyectoDetalleClient({
               <Field label="Etiquetas de tono">
                 <TagList items={proyecto.etiquetas_tono} color="bg-purple-50 text-purple-700" />
               </Field>
+              {(proyecto.extension_min != null || proyecto.extension_max != null) && (
+                <Field label="Extensión recomendada">
+                  {proyecto.extension_min != null && proyecto.extension_max != null
+                    ? `${proyecto.extension_min}–${proyecto.extension_max} palabras`
+                    : proyecto.extension_min != null
+                    ? `Mín. ${proyecto.extension_min} palabras`
+                    : `Máx. ${proyecto.extension_max} palabras`}
+                </Field>
+              )}
               <Separator />
               <div className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
                 <div>

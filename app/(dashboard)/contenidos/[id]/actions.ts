@@ -52,6 +52,21 @@ export async function actualizarTextoContenido(
   revalidatePath(path(id))
 }
 
+export async function guardarBorradorConBackup(
+  id: string,
+  textoAnterior: string,
+  textoNuevo: string,
+) {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('contenidos')
+    .update({ texto_anterior: textoAnterior || null, texto_contenido: textoNuevo })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(path(id))
+}
+
 export async function actualizarEntregaContenido(
   id: string,
   data: {

@@ -23,15 +23,22 @@ export type ContenidoCompleto = {
   notas_iniciales: string | null
   tamanyo_texto_min: number | null
   tamanyo_texto_max: number | null
+  enlaces_internos: Array<{ anchor: string; url: string }> | null
+  fuentes_competencia: string[] | null
   proyectos: {
     id: string
     nombre: string
     tono_voz: string
     keywords_objetivo: string[]
+    etiquetas_tono: string[] | null
+    perfil_lector: string | null
+    extension_min: number | null
+    extension_max: number | null
   } | null
   clientes: {
     id: string
     nombre: string
+    restricciones_globales: string[] | null
   } | null
 }
 
@@ -67,8 +74,9 @@ export async function cargarContenidoCompleto(id: string): Promise<ContenidoComp
       id, titulo, estado, proyecto_id, texto_contenido, brief,
       keyword_principal, notas_iniciales,
       tamanyo_texto_min, tamanyo_texto_max,
-      proyectos (id, nombre, tono_voz, keywords_objetivo),
-      clientes (id, nombre)
+      enlaces_internos, fuentes_competencia,
+      proyectos (id, nombre, tono_voz, keywords_objetivo, etiquetas_tono, perfil_lector, extension_min, extension_max),
+      clientes (id, nombre, restricciones_globales)
     `)
     .eq('id', id)
     .single()
@@ -82,6 +90,20 @@ export async function guardarTextoEnSupabase(id: string, texto: string): Promise
   const { error } = await supabase
     .from('contenidos')
     .update({ texto_contenido: texto })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+}
+
+export async function guardarBorradorConBackup(
+  id: string,
+  textoAnterior: string,
+  textoNuevo: string,
+): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('contenidos')
+    .update({ texto_anterior: textoAnterior || null, texto_contenido: textoNuevo })
     .eq('id', id)
 
   if (error) throw new Error(error.message)

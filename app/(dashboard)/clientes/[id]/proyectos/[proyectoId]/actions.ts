@@ -58,6 +58,8 @@ export async function actualizarConfiguracion(
     tono_voz: string
     etiquetas_tono: string[]
     modo_creativo: boolean
+    extension_min: number | null
+    extension_max: number | null
   },
 ) {
   const supabase = createAdminClient()
@@ -69,6 +71,8 @@ export async function actualizarConfiguracion(
       tono_voz: data.tono_voz.trim(),
       etiquetas_tono: data.etiquetas_tono,
       modo_creativo: data.modo_creativo,
+      extension_min: data.extension_min,
+      extension_max: data.extension_max,
     })
     .eq('id', proyectoId)
 

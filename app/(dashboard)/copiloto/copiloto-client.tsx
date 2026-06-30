@@ -6,7 +6,7 @@ import {
   Sparkles, Save, ChevronDown, ChevronUp,
   X, Send, Loader2, AlertCircle, CheckCircle2,
   Volume2, VolumeX, RotateCcw, Eye, EyeOff,
-  PlusCircle, FileSearch, CheckCheck, Edit2, User,
+  PlusCircle, FileSearch, CheckCheck, Edit2, User, Wand2,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ import InformeRevisionDashboard from '@/components/revisiones/InformeRevisionDas
 import {
   cargarContenidoCompleto,
   guardarTextoEnSupabase,
+  guardarBorradorConBackup,
   type ContenidoLista,
   type ContenidoCompleto,
 } from './actions'
@@ -135,11 +136,64 @@ Devuelve exactamente este JSON:
       "donde": "[sección o párrafo]"
     }
   ],
-  "enlaces_obligatorios": {
-    "incluidos": [número],
-    "total": [número]
+  "enlaces_internos_check": {
+    "total_requeridos": [número — 0 si no se proporcionaron enlaces],
+    "insertados": [número de anchors o variaciones muy cercanas encontradas en el texto],
+    "faltantes": [
+      {"anchor": "[texto ancla]", "url": "[url correspondiente]"}
+    ]
   }
 }`
+
+// ─── System prompt del Agente Redactor (borrador completo desde brief) ──────
+const SYSTEM_REDACTOR = `AGENTE REDACTOR COPILOTO — ContentCopilot
+
+Eres el Agente Redactor Copiloto de una agencia española de marketing de contenidos. Ahora estás en MODO BORRADOR AUTOMÁTICO.
+
+En este modo combinas tres capas de contexto en este orden de prioridad:
+1. Voz de marca del proyecto (siempre dominante)
+2. Brief SEO (estructura y keywords obligatorias)
+3. Perfil del autor (matices de estilo, subordinado a las dos anteriores)
+
+MODO BORRADOR AUTOMÁTICO — proceso:
+1. Lee el brief SEO completo del mensaje del usuario
+2. Genera el artículo completo respetando:
+   OBLIGATORIO: Reproduce EXACTAMENTE todos los H1, H2 y H3 del brief en el mismo orden. Ningún H puede faltar ni modificarse. Cada H debe tener contenido desarrollado debajo — nunca dejes un H vacío o con una sola frase. Si el brief tiene 4 H2 y 8 H3, el artículo debe tener exactamente 4 H2 y 8 H3 en ese orden exacto. Esto es una restricción absoluta — no es negociable.
+   - La keyword principal en los primeros 100 palabras
+   - Las keywords secundarias distribuidas de forma natural
+   - Los links obligatorios integrados en contexto
+   - El tono de voz de marca del proyecto
+   - La extensión objetivo ± 10%
+
+REGLA CRÍTICA — datos y estadísticas:
+- Cita siempre la fuente real entre paréntesis con año
+- Formato: "Según [organismo/estudio] ([año]),"
+- Si no conoces la fuente exacta, NO incluyas el dato
+- Nunca escribas "estudios demuestran" sin fuente concreta
+- Mínimo 2-3 datos con fuente por artículo
+
+Tras el borrador añade siempre:
+---
+Borrador generado — pendiente de revisión humana
+- Extensión: [X palabras]
+- Keywords usadas: [lista]
+- H's respetados: [sí/parcialmente]
+- Sugerencia: Revisa especialmente [el punto más débil]
+---
+
+INSTRUCCIÓN CRÍTICA SOBRE TONO DE VOZ:
+El bloque VOZ DE MARCA de arriba puede incluir ejemplos literales de fórmulas, frases o aperturas específicas que el cliente espera ver reflejadas en el texto.
+Si hay ejemplos textuales entre comillas en la voz de marca, ÚSALOS o adapta variaciones muy cercanas a ellos.
+No los ignores ni los sustituyas por fórmulas genéricas propias.
+
+RESTRICCIÓN SOBRE FUENTES EXTERNAS:
+Si las restricciones globales del cliente prohíben mencionar competidores o marcas externas, NO cites ni enlaces a fuentes externas (estudios, empresas, medios) salvo que sean estrictamente necesarias y no exista alternativa propia o neutra (ej: BOE, organismos oficiales del Estado).
+
+REGLAS GENERALES:
+1. NUNCA inventes datos, estadísticas o citas
+2. NUNCA cambies la estructura de H's definida por el SEO
+3. NUNCA ignores una restricción global del cliente
+4. Responde siempre en español`
 
 // ─── FIX 7 — plantilla de estructura desde el brief ──────────────────────────
 function construirPlantilla(brief: Record<string, unknown> | null | undefined, titulo: string): string {
@@ -197,6 +251,44 @@ function construirPlantilla(brief: Record<string, unknown> | null | undefined, t
 
     return `${nivel} ${textoH}\n\n[Escribe aquí...]\n`
   }).join('\n')
+}
+
+// ─── Fallback para contenidos sin texto_generado (p.ej. importados desde Excel) ─
+function construirBriefDesdeCampos(
+  brief: any,
+  titulo: string,
+  keyword: string | null | undefined,
+  extMin: number,
+  extMax: number,
+): string {
+  const partes: string[] = []
+
+  partes.push(`Keyword principal: ${keyword ?? 'No especificada'}`)
+  partes.push(`Título: ${titulo}`)
+
+  if (brief?.titulo_propuesto && brief.titulo_propuesto !== titulo) {
+    partes.push(`Title SEO propuesto: ${brief.titulo_propuesto}`)
+  }
+
+  if (brief?.description_propuesta) {
+    partes.push(`Meta description: ${brief.description_propuesta}`)
+  }
+
+  if (brief?.keywords_secundarias?.length) {
+    partes.push(`Keywords secundarias: ${(brief.keywords_secundarias as string[]).join(', ')}`)
+  }
+
+  if (brief?.estructura_h) {
+    partes.push(`\nESTRUCTURA DE H's OBLIGATORIA:\n${brief.estructura_h}`)
+  }
+
+  if (brief?.observaciones_seo) {
+    partes.push(`\nBRIEF EDITORIAL / ENFOQUE:\n${brief.observaciones_seo}`)
+  }
+
+  partes.push(`\nExtensión objetivo: ${extMin}-${extMax} palabras`)
+
+  return partes.join('\n')
 }
 
 // ─── FIX 1 — regex del bloque "Borrador generado" ────────────────────────────
@@ -354,6 +446,12 @@ export default function CopilotoClient({
   const [verTextoHumanizado, setVerTextoHumanizado]   = useState(false)
   const [resumenAbierto, setResumenAbierto]           = useState(false)
 
+  // ── Generación de borrador desde copiloto ────────────────────────────────
+  const [generandoBorradorCopiloto, setGenerandoBorradorCopiloto] = useState(false)
+  const [errorBorradorCopiloto, setErrorBorradorCopiloto]         = useState<string | null>(null)
+  const [showConfirmRegenerarCopiloto, setShowConfirmRegenerarCopiloto] = useState(false)
+  const [textoAnteriorCopiloto, setTextoAnteriorCopiloto]         = useState<string | null>(null)
+
   const palabras = texto.split(/\s+/).filter(s => s.length > 0).length
 
   // ── Auto-load contenido inicial desde URL param ──────────────────────────
@@ -371,7 +469,15 @@ export default function CopilotoClient({
   useEffect(() => {
     setVerFragmentos(false)
     setModoVista('editar')
+    setTextoAnteriorCopiloto(null)
   }, [contenidoId])
+
+  // ── Auto-clear undo state after 5 minutes ───────────────────────────────
+  useEffect(() => {
+    if (!textoAnteriorCopiloto) return
+    const t = setTimeout(() => setTextoAnteriorCopiloto(null), 5 * 60 * 1000)
+    return () => clearTimeout(t)
+  }, [textoAnteriorCopiloto])
 
   // ── Cargar contenido completo ────────────────────────────────────────────
   // FIX 1: extrae y separa el bloque "Borrador generado" si existe
@@ -419,11 +525,94 @@ export default function CopilotoClient({
     try {
       await guardarTextoEnSupabase(contenidoActual.id, texto)
       setGuardadoOk(true)
+      setTextoAnteriorCopiloto(null)
       setTimeout(() => setGuardadoOk(false), 2500)
     } catch {
       // handle silently
     } finally {
       setGuardando(false)
+    }
+  }
+
+  // ── Generación de borrador completo desde el copiloto ──────────────────
+  async function handleGenerarBorradorCopiloto(esRegeneracion = false) {
+    if (!contenidoActual) return
+    setGenerandoBorradorCopiloto(true)
+    setErrorBorradorCopiloto(null)
+    setShowConfirmRegenerarCopiloto(false)
+    const textoActual = texto
+
+    try {
+      const extMin = contenidoActual.tamanyo_texto_min ?? contenidoActual.proyectos?.extension_min ?? 1000
+      const extMax = contenidoActual.tamanyo_texto_max ?? contenidoActual.proyectos?.extension_max ?? 1500
+
+      const briefSeoBloque = (contenidoActual.brief as any)?.texto_generado?.trim()
+        ? (contenidoActual.brief as any).texto_generado.trim()
+        : construirBriefDesdeCampos(contenidoActual.brief, contenidoActual.titulo, contenidoActual.keyword_principal, extMin, extMax)
+
+      const enlacesInternos = contenidoActual.enlaces_internos
+        ?? ((contenidoActual.brief as any)?.enlaces_internos as Array<{anchor: string; url: string}> | undefined)
+      const fuentesComp = contenidoActual.fuentes_competencia
+        ?? ((contenidoActual.brief as any)?.fuentes_competencia as string[] | undefined)
+
+      const enlacesBloque = enlacesInternos?.length
+        ? `\nENLACES INTERNOS A INSERTAR (insertar de forma natural donde sea posible):\n${enlacesInternos.map((e) => `- "${e.anchor}" → ${e.url}`).join('\n')}\nNo fuerces la inserción si no encaja naturalmente en el texto.`
+        : ''
+      const fuentesBloque = fuentesComp?.length
+        ? `\nCONTEXTO COMPETENCIA (solo lectura, NUNCA citar ni enlazar en el texto):\n${fuentesComp.join('\n')}`
+        : ''
+
+      const userContent = `CLIENTE: ${contenidoActual.clientes?.nombre ?? 'No especificado'}
+PROYECTO: ${contenidoActual.proyectos?.nombre ?? 'No especificado'}
+VOZ DE MARCA: ${contenidoActual.proyectos?.tono_voz ?? 'No especificado'}
+ETIQUETAS DE TONO: ${contenidoActual.proyectos?.etiquetas_tono?.join(', ') ?? 'No especificadas'}
+KEYWORDS OBJETIVO DEL PROYECTO: ${contenidoActual.proyectos?.keywords_objetivo?.join(', ') ?? 'No especificadas'}
+PERFIL DE LECTOR: ${contenidoActual.proyectos?.perfil_lector ?? 'No especificado'}
+RESTRICCIONES GLOBALES: ${contenidoActual.clientes?.restricciones_globales?.join(', ') ?? 'Ninguna'}
+MODO CREATIVO: false${enlacesBloque}${fuentesBloque}
+
+BRIEF SEO COMPLETO:
+${briefSeoBloque}
+
+INSTRUCCIÓN: Genera el artículo completo en español siguiendo estrictamente el brief anterior.
+EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarrolla completamente todas las secciones previstas en el brief. No resumas, no acortes, no cortes secciones. Si vas corto de palabras, añade más ejemplos, datos, contexto y subsecciones hasta alcanzar el mínimo de ${extMin} palabras.
+VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escrito. Si son menos de ${extMin}, continúa añadiendo contenido hasta llegar a ${extMin}. Si son más de ${extMax}, reduce hasta quedar en ${extMax}.`
+
+      const tokensBase = extMax * 2.2
+      const tokensMargenEstructura = 500
+      const maxTokensBorrador = Math.min(Math.max(tokensBase + tokensMargenEstructura, 2000), 16000)
+
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system         : SYSTEM_REDACTOR,
+          messages       : [{ role: 'user', content: userContent }],
+          modo           : 'json',
+          max_tokens     : maxTokensBorrador,
+          proyecto_id    : contenidoActual.proyecto_id ?? null,
+          tipo_operacion : 'borrador',
+          agente         : 'claude_api',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con el agente redactor')
+      const textoBorrador: string = data.contenido ?? ''
+      if (!textoBorrador) throw new Error('El agente no devolvió contenido')
+
+      const { textoLimpio } = extraerNotasBorrador(textoBorrador)
+
+      setTexto(textoLimpio)
+      if (textoActual.trim()) {
+        await guardarBorradorConBackup(contenidoActual.id, textoActual, textoLimpio)
+        setTextoAnteriorCopiloto(textoActual)
+      } else {
+        await guardarTextoEnSupabase(contenidoActual.id, textoLimpio)
+      }
+    } catch (e) {
+      setErrorBorradorCopiloto(e instanceof Error ? e.message : 'Error inesperado al generar el borrador')
+    } finally {
+      setGenerandoBorradorCopiloto(false)
     }
   }
 
@@ -481,8 +670,8 @@ export default function CopilotoClient({
     const c = contenidoActual
     if (!c) return SYSTEM_COPILOTO
     // Use stored extension if available; fall back to a sensible default for older contenidos
-    const extMin = c.tamanyo_texto_min ?? 800
-    const extMax = c.tamanyo_texto_max ?? 1200
+    const extMin = c.tamanyo_texto_min ?? c.proyectos?.extension_min ?? 1000
+    const extMax = c.tamanyo_texto_max ?? c.proyectos?.extension_max ?? 1500
     return `${SYSTEM_COPILOTO}
 
 CONTEXTO ACTIVO DEL CONTENIDO:
@@ -592,6 +781,12 @@ Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible r
         ? ((contenidoActual.brief as any).texto_generado as string).substring(0, 1200)
         : null
 
+      const enlacesRevisor = (contenidoActual?.enlaces_internos
+        ?? (contenidoActual?.brief as any)?.enlaces_internos) as Array<{anchor: string; url: string}> | null | undefined
+      const enlacesTextoRevisor = enlacesRevisor?.length
+        ? enlacesRevisor.map((e) => `- "${e.anchor}" → ${e.url}`).join('\n')
+        : 'Ninguno'
+
       const res = await fetch('/api/claude', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -603,6 +798,9 @@ Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible r
 
 BRIEF SEO DEL ARTÍCULO:
 ${briefTexto ?? 'No disponible'}
+
+ENLACES INTERNOS QUE DEBÍAN INSERTARSE:
+${enlacesTextoRevisor}
 
 TEXTO DEL ARTÍCULO:
 ${texto}`,
@@ -830,6 +1028,22 @@ ${texto}`,
               </span>
             )}
 
+            {contenidoActual && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => texto.trim() ? setShowConfirmRegenerarCopiloto(true) : handleGenerarBorradorCopiloto()}
+                disabled={generandoBorradorCopiloto}
+                className="shrink-0 gap-1.5 h-8 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              >
+                {generandoBorradorCopiloto
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Wand2 className="h-3.5 w-3.5" />
+                }
+                {generandoBorradorCopiloto ? 'Generando…' : 'Generar borrador'}
+              </Button>
+            )}
+
             <Button
               size="sm"
               onClick={handleGuardar}
@@ -913,6 +1127,60 @@ ${texto}`,
               {cargandoContenido ? 'Cargando contenido...' : 'Selecciona un contenido para empezar a escribir'}
             </p>
           )}
+
+          {/* ── Confirmación regenerar ──────────────────────────────── */}
+          {showConfirmRegenerarCopiloto && (
+            <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex-wrap">
+              <p className="text-xs text-amber-800 flex-1">
+                ¿Regenerar el borrador? Se sustituirá el texto actual.
+              </p>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  onClick={() => handleGenerarBorradorCopiloto(true)}
+                  disabled={generandoBorradorCopiloto}
+                  className="h-7 bg-indigo-600 hover:bg-indigo-700 text-white gap-1 text-xs"
+                >
+                  <Wand2 className="h-3 w-3" />
+                  Sí, regenerar
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs"
+                  onClick={() => setShowConfirmRegenerarCopiloto(false)}
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Banner deshacer ─────────────────────────────────────── */}
+          {textoAnteriorCopiloto && !showConfirmRegenerarCopiloto && (
+            <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex-wrap">
+              <p className="text-xs text-green-800 flex-1">
+                Borrador regenerado. La versión anterior está disponible para recuperar.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  const prev = textoAnteriorCopiloto
+                  setTexto(prev)
+                  setTextoAnteriorCopiloto(null)
+                  if (contenidoActual) await guardarTextoEnSupabase(contenidoActual.id, prev)
+                }}
+                className="shrink-0 h-7 border-green-300 text-green-700 hover:bg-green-100 gap-1 text-xs"
+              >
+                ↩ Deshacer regeneración
+              </Button>
+            </div>
+          )}
+
+          {/* ── Error al generar ────────────────────────────────────── */}
+          {errorBorradorCopiloto && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {errorBorradorCopiloto}
+            </p>
+          )}
         </div>
 
         {/* ── Área de escritura ───────────────────────────────────────── */}
@@ -920,6 +1188,23 @@ ${texto}`,
           {cargandoContenido && (
             <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-20">
               <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+            </div>
+          )}
+
+          {generandoBorradorCopiloto && (
+            <div className="absolute inset-0 z-20 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+              <div className="h-16 w-16 rounded-2xl bg-indigo-100 flex items-center justify-center">
+                <Loader2 className="h-8 w-8 text-indigo-600 animate-spin" />
+              </div>
+              <div className="text-center">
+                <p className="text-base font-bold text-gray-900">Generando borrador completo…</p>
+                <p className="text-sm text-gray-500 mt-1">Puede tardar 30–60 segundos según la extensión</p>
+              </div>
+              <div className="flex gap-1.5 mt-2">
+                <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:0ms]" />
+                <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:150ms]" />
+                <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:300ms]" />
+              </div>
             </div>
           )}
 

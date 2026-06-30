@@ -9,6 +9,7 @@ import {
   Check,
   X,
   Minus,
+  Link2,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -58,9 +59,10 @@ interface InformeGEOSEO {
     estado: EstadoKeyword
     detalle?: string
   }
-  enlaces: {
-    incluidos: number
-    total: number
+  enlaces_internos_check?: {
+    total_requeridos: number
+    insertados: number
+    faltantes: Array<{ anchor: string; url: string }>
   }
   principios_geo: PrincipioGEO[]
   keywords_secundarias: KeywordSecundaria[]
@@ -279,7 +281,7 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
       </div>
 
       {/* ── ZONA 3: Datos rápidos ── */}
-      {(data.extension || data.keyword_principal || data.estructura_hs || data.enlaces) && (
+      {(data.extension || data.keyword_principal || data.estructura_hs) && (
         <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
           <div className="flex flex-wrap items-center gap-3">
 
@@ -323,18 +325,6 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
                 </div>
               )
             })()}
-
-            <span className="text-gray-200">|</span>
-
-            {/* Enlaces */}
-            {data.enlaces && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Enlaces</span>
-                <span className="text-xs font-semibold text-gray-800">
-                  {data.enlaces.incluidos}/{data.enlaces.total}
-                </span>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -388,6 +378,46 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
                 </span>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ── ZONA 5b: Enlaces internos check ── */}
+      {data.enlaces_internos_check && data.enlaces_internos_check.total_requeridos > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+            <Link2 className="h-3.5 w-3.5" />
+            Enlaces internos
+          </p>
+          <div className={`rounded-xl border p-3.5 ${
+            data.enlaces_internos_check.insertados === data.enlaces_internos_check.total_requeridos
+              ? 'border-emerald-200 bg-emerald-50'
+              : data.enlaces_internos_check.insertados > 0
+              ? 'border-amber-200 bg-amber-50'
+              : 'border-red-200 bg-red-50'
+          }`}>
+            <p className={`text-sm font-semibold ${
+              data.enlaces_internos_check.insertados === data.enlaces_internos_check.total_requeridos
+                ? 'text-emerald-700'
+                : data.enlaces_internos_check.insertados > 0
+                ? 'text-amber-700'
+                : 'text-red-700'
+            }`}>
+              {data.enlaces_internos_check.insertados}/{data.enlaces_internos_check.total_requeridos} enlaces insertados
+            </p>
+            {data.enlaces_internos_check.faltantes.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                {data.enlaces_internos_check.faltantes.map((e, i) => (
+                  <p key={i} className="text-xs text-amber-800 flex items-start gap-1.5">
+                    <span className="shrink-0 mt-0.5">⚠️</span>
+                    <span>
+                      Falta enlazar: <strong>&ldquo;{e.anchor}&rdquo;</strong>
+                      {e.url && <> → <span className="font-mono text-[10px] break-all">{e.url}</span></>}
+                    </span>
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

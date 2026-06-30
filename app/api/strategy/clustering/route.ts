@@ -144,26 +144,35 @@ export async function POST(request: NextRequest) {
         .join('\n')
 
       const response = await anthropic.messages.create({
-        model     : 'claude-sonnet-4-5',
-        max_tokens: 1500,
+        model     : 'claude-sonnet-4-6',
+        max_tokens: 4096,   // 50 kw × ~130 chars/entry ≈ 1625 tokens; 4096 deja margen amplio
         system    : SYSTEM_PROMPT,
         messages  : [{ role: 'user', content: buildUserPrompt(keywordsText, clientName) }],
       })
 
-      const rawText   = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'
+      const rawText    = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'
       const stopReason = response.stop_reason
       console.log(`[Clustering] Batch ${idx + 1} stop_reason: ${stopReason} | ${rawText.length} chars`)
+      console.log(`[Clustering] Batch ${idx + 1} raw (primeros 500): ${rawText.substring(0, 500)}`)
       if (stopReason === 'max_tokens') {
-        console.warn(`[Clustering] Batch ${idx + 1} — RESPUESTA TRUNCADA por max_tokens!`)
+        console.warn(`[Clustering] Batch ${idx + 1} — RESPUESTA TRUNCADA por max_tokens (aumentar max_tokens)`)
       }
 
       const match = rawText.match(/\[[\s\S]*\]/)
       if (!match) {
-        console.warn(`[Clustering] Batch ${idx + 1} — no se encontró JSON array`)
+        console.warn(`[Clustering] Batch ${idx + 1} — no se encontró JSON array en la respuesta`)
+        console.warn(`[Clustering] Batch ${idx + 1} texto completo:`, rawText)
         return []
       }
 
-      const parsed = JSON.parse(match[0]) as Record<string, unknown>[]
+      let parsed: Record<string, unknown>[]
+      try {
+        parsed = JSON.parse(match[0]) as Record<string, unknown>[]
+      } catch (parseErr) {
+        console.error(`[Clustering] Batch ${idx + 1} — error parseando JSON:`, parseErr)
+        console.error(`[Clustering] Batch ${idx + 1} JSON intentado (primeros 300):`, match[0].substring(0, 300))
+        return []
+      }
       const valid: ClusterResult[] = parsed
         .map((r) => ({
           keyword     : String(r.keyword     ?? '').trim(),

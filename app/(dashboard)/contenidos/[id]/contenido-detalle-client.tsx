@@ -20,6 +20,7 @@ import {
   actualizarTextoContenido,
   actualizarEntregaContenido,
   actualizarBriefContenido,
+  guardarBorradorConBackup,
   guardarRevision,
   devolverContenido,
   publicarContenido,
@@ -515,6 +516,44 @@ function EditarEntregaModal({
   )
 }
 
+// ─── Fallback para contenidos sin texto_generado (p.ej. importados desde Excel) ─
+function construirBriefDesdeCampos(
+  brief: any,
+  titulo: string,
+  keyword: string | null | undefined,
+  extMin: number,
+  extMax: number,
+): string {
+  const partes: string[] = []
+
+  partes.push(`Keyword principal: ${keyword ?? 'No especificada'}`)
+  partes.push(`Título: ${titulo}`)
+
+  if (brief?.titulo_propuesto && brief.titulo_propuesto !== titulo) {
+    partes.push(`Title SEO propuesto: ${brief.titulo_propuesto}`)
+  }
+
+  if (brief?.description_propuesta) {
+    partes.push(`Meta description: ${brief.description_propuesta}`)
+  }
+
+  if (brief?.keywords_secundarias?.length) {
+    partes.push(`Keywords secundarias: ${(brief.keywords_secundarias as string[]).join(', ')}`)
+  }
+
+  if (brief?.estructura_h) {
+    partes.push(`\nESTRUCTURA DE H's OBLIGATORIA:\n${brief.estructura_h}`)
+  }
+
+  if (brief?.observaciones_seo) {
+    partes.push(`\nBRIEF EDITORIAL / ENFOQUE:\n${brief.observaciones_seo}`)
+  }
+
+  partes.push(`\nExtensión objetivo: ${extMin}-${extMax} palabras`)
+
+  return partes.join('\n')
+}
+
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
@@ -551,6 +590,8 @@ export default function ContenidoDetalleClient({
   const [textoGuardado, setTextoGuardado] = useState(false)
   const [generandoBorrador, setGenerandoBorrador] = useState(false)
   const [errorBorrador, setErrorBorrador] = useState<string | null>(null)
+  const [showConfirmRegenerar, setShowConfirmRegenerar] = useState(false)
+  const [textoAnteriorLocal, setTextoAnteriorLocal] = useState<string | null>(null)
   const [modalEntrega, setModalEntrega] = useState(false)
   const [modalBrief, setModalBrief] = useState(false)
   const [modalRevisar, setModalRevisar] = useState(false)
@@ -677,6 +718,13 @@ export default function ContenidoDetalleClient({
   type ImagenGaleria = { id?: string; url: string; formato: string }
   const [galeriaImagenes, setGaleriaImagenes] = useState<ImagenGaleria[]>([])
 
+  // Auto-clear undo state after 5 minutes
+  useEffect(() => {
+    if (!textoAnteriorLocal) return
+    const t = setTimeout(() => setTextoAnteriorLocal(null), 5 * 60 * 1000)
+    return () => clearTimeout(t)
+  }, [textoAnteriorLocal])
+
   // Cargar imágenes guardadas al montar el componente
   useEffect(() => {
     async function cargarImagenesGuardadas() {
@@ -731,9 +779,11 @@ export default function ContenidoDetalleClient({
     } finally { setCambiandoEstado(false) }
   }
 
-  async function handleGenerarBorrador() {
+  async function handleGenerarBorrador(esRegeneracion = false) {
     setGenerandoBorrador(true)
     setErrorBorrador(null)
+    setShowConfirmRegenerar(false)
+    const textoActual = texto
 
     const SYSTEM_REDACTOR = `AGENTE REDACTOR COPILOTO — ContentCopilot
 
@@ -770,6 +820,14 @@ Borrador generado — pendiente de revisión humana
 - Sugerencia: Revisa especialmente [el punto más débil]
 ---
 
+INSTRUCCIÓN CRÍTICA SOBRE TONO DE VOZ:
+El bloque VOZ DE MARCA de arriba puede incluir ejemplos literales de fórmulas, frases o aperturas específicas que el cliente espera ver reflejadas en el texto.
+Si hay ejemplos textuales entre comillas en la voz de marca, ÚSALOS o adapta variaciones muy cercanas a ellos.
+No los ignores ni los sustituyas por fórmulas genéricas propias.
+
+RESTRICCIÓN SOBRE FUENTES EXTERNAS:
+Si las restricciones globales del cliente prohíben mencionar competidores o marcas externas, NO cites ni enlaces a fuentes externas (estudios, empresas, medios) salvo que sean estrictamente necesarias y no exista alternativa propia o neutra (ej: BOE, organismos oficiales del Estado).
+
 REGLAS GENERALES:
 1. NUNCA inventes datos, estadísticas o citas
 2. NUNCA cambies la estructura de H's definida por el SEO
@@ -777,14 +835,24 @@ REGLAS GENERALES:
 4. Responde siempre en español`
 
     try {
-      const extMin = contenido.tamanyo_texto_min ?? 800
-      const extMax = contenido.tamanyo_texto_max ?? 1200
+      const extMin = contenido.tamanyo_texto_min ?? proyecto?.extension_min ?? 1000
+      const extMax = contenido.tamanyo_texto_max ?? proyecto?.extension_max ?? 1500
 
       const briefSeoBloque = contenido.brief?.texto_generado?.trim()
         ? contenido.brief.texto_generado.trim()
-        : `Keyword principal: ${contenido.keyword_principal ?? 'No especificada'}
-Título: ${contenido.titulo}
-Extensión objetivo: ${extMin}-${extMax} palabras`
+        : construirBriefDesdeCampos(contenido.brief, contenido.titulo, contenido.keyword_principal, extMin, extMax)
+
+      const enlacesInternos = (contenido.brief as any)?.enlaces_internos as Array<{anchor: string; url: string}> | undefined
+        ?? (contenido as any).enlaces_internos as Array<{anchor: string; url: string}> | undefined
+      const fuentesComp = (contenido.brief as any)?.fuentes_competencia as string[] | undefined
+        ?? (contenido as any).fuentes_competencia as string[] | undefined
+
+      const enlacesBloque = enlacesInternos?.length
+        ? `\nENLACES INTERNOS A INSERTAR (insertar de forma natural donde sea posible):\n${enlacesInternos.map((e) => `- "${e.anchor}" → ${e.url}`).join('\n')}\nNo fuerces la inserción si no encaja naturalmente en el texto.`
+        : ''
+      const fuentesBloque = fuentesComp?.length
+        ? `\nCONTEXTO COMPETENCIA (solo lectura, NUNCA citar ni enlazar en el texto):\n${fuentesComp.join('\n')}`
+        : ''
 
       const userContent = `CLIENTE: ${cliente?.nombre ?? 'No especificado'}
 PROYECTO: ${proyecto?.nombre ?? 'No especificado'}
@@ -793,7 +861,7 @@ ETIQUETAS DE TONO: ${(proyecto as any)?.etiquetas_tono?.join(', ') ?? 'No especi
 KEYWORDS OBJETIVO DEL PROYECTO: ${proyecto?.keywords_objetivo?.join(', ') ?? 'No especificadas'}
 PERFIL DE LECTOR: ${(proyecto as any)?.perfil_lector ?? 'No especificado'}
 RESTRICCIONES GLOBALES: ${((cliente as any)?.restricciones_globales as string[] | undefined)?.join(', ') ?? 'Ninguna'}
-MODO CREATIVO: false
+MODO CREATIVO: false${enlacesBloque}${fuentesBloque}
 
 BRIEF SEO COMPLETO:
 ${briefSeoBloque}
@@ -802,8 +870,9 @@ INSTRUCCIÓN: Genera el artículo completo en español siguiendo estrictamente e
 EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarrolla completamente todas las secciones previstas en el brief. No resumas, no acortes, no cortes secciones. Si vas corto de palabras, añade más ejemplos, datos, contexto y subsecciones hasta alcanzar el mínimo de ${extMin} palabras.
 VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escrito. Si son menos de ${extMin}, continúa añadiendo contenido (más ejemplos, datos, contexto) hasta llegar a ${extMin}. Si son más de ${extMax}, reduce y condensa hasta quedar en ${extMax}. El artículo DEBE terminar entre ${extMin} y ${extMax} palabras.`
 
-      // Dynamic max_tokens based on target extension (1.8 tokens/word + headroom)
-      const maxTokensBorrador = Math.min(Math.ceil(extMax * 1.8), 10000)
+      const tokensBase = extMax * 2.2
+      const tokensMargenEstructura = 500
+      const maxTokensBorrador = Math.min(Math.max(tokensBase + tokensMargenEstructura, 2000), 16000)
 
       const res = await fetch('/api/claude', {
         method: 'POST',
@@ -824,9 +893,13 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
       const textoBorrador: string = data.contenido ?? ''
       if (!textoBorrador) throw new Error('El agente no devolvió contenido')
 
-      // FIX 1 — regex más agresiva: captura cualquier variante del bloque de notas
+      // Elimina el bloque "--- Borrador generado ---" del final.
+      // La regex anterior usaba [\s\S]*? entre el "---" y "Borrador generado",
+      // lo que hacía que cualquier "---" del artículo (separadores markdown)
+      // actuase como punto de corte si "Borrador generado" aparecía después.
+      // Ahora exigimos que "Borrador generado" sea la línea inmediatamente siguiente al "---".
       const limpiarTextoBorrador = (t: string): string => {
-        const indice = t.search(/\n?-{2,}\n[\s\S]*?[Bb]orrador\s+generado/i)
+        const indice = t.search(/\n?-{2,}\n[Bb]orrador\s+generado/i)
         if (indice > -1) return t.substring(0, indice).trim()
         return t.trim()
       }
@@ -835,12 +908,14 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
       setTexto(textoBorradorLimpio)
       setHeRevisado(false)
       setShowWelcome(false)
-      // Guardar automáticamente en Supabase (sin el bloque de notas)
-      await actualizarTextoContenido(contenido.id, textoBorradorLimpio)
-      // Actualizar badge de coste
+      if (textoActual.trim()) {
+        await guardarBorradorConBackup(contenido.id, textoActual, textoBorradorLimpio)
+        setTextoAnteriorLocal(textoActual)
+      } else {
+        await actualizarTextoContenido(contenido.id, textoBorradorLimpio)
+      }
       await refreshCoste()
-      // Abrir copiloto para revisar/editar el borrador generado
-      router.push(`/copiloto?contenido=${contenido.id}`)
+      if (!esRegeneracion) router.push(`/copiloto?contenido=${contenido.id}`)
     } catch (e) {
       setErrorBorrador(e instanceof Error ? e.message : 'Error inesperado al generar el borrador')
     } finally {
@@ -853,6 +928,7 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
     try {
       await actualizarTextoContenido(contenido.id, texto)
       setTextoGuardado(true)
+      setTextoAnteriorLocal(null)
       setTimeout(() => setTextoGuardado(false), 2000)
       router.refresh()
     } catch {
@@ -1653,7 +1729,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
                   {/* Modo 1: Generar borrador con IA */}
                   <button
-                    onClick={handleGenerarBorrador}
+                    onClick={() => handleGenerarBorrador()}
                     disabled={generandoBorrador}
                     className="group relative flex flex-col items-center text-center gap-3 rounded-2xl border-2 border-indigo-200 bg-indigo-50 px-5 py-7 hover:border-indigo-400 hover:bg-indigo-100 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   >
@@ -1722,7 +1798,23 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
             </Card>
           ) : (
           <>
-          <Card>
+          <Card className="relative overflow-hidden">
+            {generandoBorrador && (
+              <div className="absolute inset-0 z-20 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+                <div className="h-16 w-16 rounded-2xl bg-indigo-100 flex items-center justify-center">
+                  <Loader2 className="h-8 w-8 text-indigo-600 animate-spin" />
+                </div>
+                <div className="text-center">
+                  <p className="text-base font-bold text-gray-900">Generando borrador completo…</p>
+                  <p className="text-sm text-gray-500 mt-1">Puede tardar 30–60 segundos según la extensión</p>
+                </div>
+                <div className="flex gap-1.5 mt-2">
+                  <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:0ms]" />
+                  <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:150ms]" />
+                  <span className="h-2 w-2 rounded-full bg-indigo-400 animate-bounce [animation-delay:300ms]" />
+                </div>
+              </div>
+            )}
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-semibold">
                 Texto del artículo
@@ -1733,12 +1825,66 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                 )}
               </CardTitle>
               <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowConfirmRegenerar(true)}
+                  disabled={generandoBorrador}
+                  className="gap-1.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Generar borrador con IA
+                </Button>
                 {textoGuardado && <span className="text-xs text-green-600 font-medium">Guardado</span>}
                 <Button size="sm" onClick={handleGuardarTexto} disabled={guardandoTexto}>
                   {guardandoTexto ? 'Guardando...' : 'Guardar'}
                 </Button>
               </div>
             </CardHeader>
+            {showConfirmRegenerar && (
+              <div className="mx-6 mb-3 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 flex-wrap">
+                <p className="text-sm text-amber-800 flex-1">
+                  ¿Regenerar el borrador? Se sustituirá el texto actual. Esta acción no se puede deshacer.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => handleGenerarBorrador(true)}
+                    disabled={generandoBorrador}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+                  >
+                    <Wand2 className="h-3.5 w-3.5" />
+                    Sí, regenerar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowConfirmRegenerar(false)}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            )}
+            {textoAnteriorLocal && !showConfirmRegenerar && (
+              <div className="mx-6 mb-3 flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5 flex-wrap">
+                <p className="text-sm text-green-800 flex-1">
+                  Borrador regenerado. La versión anterior está disponible para recuperar.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    setTexto(textoAnteriorLocal)
+                    setTextoAnteriorLocal(null)
+                    await actualizarTextoContenido(contenido.id, textoAnteriorLocal)
+                  }}
+                  className="shrink-0 border-green-300 text-green-700 hover:bg-green-100 gap-1.5"
+                >
+                  ↩ Deshacer regeneración
+                </Button>
+              </div>
+            )}
             <CardContent>
               <textarea
                 value={texto}
