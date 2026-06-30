@@ -77,20 +77,38 @@ Eres el Agente Revisor GEO-SEO de una agencia española de marketing de contenid
 
 REGLA ABSOLUTA: Solo JSON. Sin texto, sin explicaciones, sin bloques de código markdown. Empieza con { y termina con }.
 
-EVALUACIÓN DE ESTRUCTURA H's — REGLA CRÍTICA:
-El texto del artículo usa formato markdown (##, ###).
-El brief usa formato texto (H2:, H3:).
-ESTOS SON EQUIVALENTES. NO son errores.
+REGLA ANTI-FALSOS POSITIVOS — CRÍTICA:
+El mensaje del usuario incluye un bloque "DATOS CLAVE DEL BRIEF". Antes de evaluar cualquier campo, consulta ese bloque.
+- Si el brief define keyword_principal y esa keyword aparece al menos 1 vez en el artículo, marca keyword_principal.estado "ok" o "atencion" según densidad — NUNCA "problema" por ausencia.
+- Si el brief define título SEO (title_seo) y meta description, estos existen aunque no aparezcan en el cuerpo del artículo. NO los marques como ausentes en mejoras_prioritarias.
+- Si el brief define estructura de H's (bloque "ESTRUCTURA DE H's DEFINIDA EN EL BRIEF"), sigue el PROCEDIMIENTO EXACTO descrito más abajo para evaluar la estructura.
+- Solo incluye una mejora_prioritaria cuando hay una discrepancia real entre lo pedido en el brief y lo entregado en el texto. No reportes como problema algo que ya está correctamente especificado en el brief.
+- Si el brief no está disponible (campo vacío o "No disponible"), evalúa el artículo de forma autónoma.
 
-Antes de comparar, convierte mentalmente:
-# = H1, ## = H2, ### = H3
+EVALUACIÓN DE ESTRUCTURA H's — PROCEDIMIENTO EXACTO:
+Extrae SOLO los encabezados del brief y del artículo. Ignora completamente el texto, párrafos y cualquier desarrollo escrito bajo cada encabezado.
 
-El campo estructura_hs.estado debe ser:
-- "respetada" si todos los H's del brief aparecen en el texto en el mismo orden (independientemente del formato)
-- "modificada" si algún H cambió de nivel o de posición
-- "incompleta" si falta algún H del brief
+PASO 1 — Lista los H's del brief (del bloque "ESTRUCTURA DE H's DEFINIDA EN EL BRIEF"):
+Normaliza el formato: "H1: Texto" = "# Texto" (nivel 1), "H2: Texto" = "## Texto" (nivel 2), "H3: Texto" = "### Texto" (nivel 3).
 
-NUNCA marques como "incompleta" o "modificada" por el hecho de que el texto use ## en lugar de H2: — son el mismo nivel.
+PASO 2 — Lista los H's del artículo:
+Recorre el TEXTO DEL ARTÍCULO y extrae en orden de aparición las líneas que empiezan por #, ## o ###.
+
+PASO 3 — Compara lista a lista, posición a posición:
+Para cada posición i, verifica: ¿el nivel coincide? ¿el texto del encabezado es equivalente? (se aceptan variaciones menores de mayúsculas/artículos).
+
+El campo estructura_hs.estado:
+- "respetada": todos los H's del brief aparecen en el artículo en el mismo orden y con el mismo nivel
+- "modificada": algún H cambió de nivel (H2→H3) o de posición relativa en el orden
+- "incompleta": falta al menos un H que estaba en el brief
+
+REGLAS ABSOLUTAS SOBRE H's:
+1. NO evalúes la calidad, extensión ni profundidad del texto desarrollado bajo cada encabezado — eso no es parte de la evaluación de estructura
+2. ## y H2: son IDÉNTICOS — nunca marques esto como error ni como diferencia
+3. Si no hay bloque "ESTRUCTURA DE H's DEFINIDA EN EL BRIEF", marca estado "respetada" y detalle "Sin estructura definida en el brief"
+
+CONTEO DE PALABRAS:
+El campo extension.palabras_actual debe usar EXACTAMENTE el número que se te proporciona en el mensaje del usuario como "EXTENSIÓN REAL VERIFICADA". NUNCA cuentes las palabras tú mismo — usa el dato proporcionado tal cual, sin reestimar ni redondear.
 
 Devuelve exactamente este JSON:
 {
@@ -771,21 +789,48 @@ Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible r
 
   // ── Revisar todo — migrado de Dify a Claude API ──────────────────────────
   async function handleRevisarTodo() {
+    console.log('[REVISOR DEBUG] handleRevisarTodo DISPARADA — texto.length:', texto.length)
     if (!texto.trim()) return
     setTabActiva('informe')
     setTextoRevision('')
     setFechaRevision('')
     setCargandoRevision(true)
     try {
-      const briefTexto = contenidoActual?.brief && (contenidoActual.brief as any).texto_generado
-        ? ((contenidoActual.brief as any).texto_generado as string).substring(0, 1200)
-        : null
+      const brief = contenidoActual?.brief as any
+      const extMin = contenidoActual?.tamanyo_texto_min ?? contenidoActual?.proyectos?.extension_min ?? null
+      const extMax = contenidoActual?.tamanyo_texto_max ?? contenidoActual?.proyectos?.extension_max ?? null
+      const keywordPrincipal = contenidoActual?.keyword_principal ?? brief?.keyword_principal ?? null
+      const tituloPropuesto  = brief?.titulo_propuesto ?? contenidoActual?.titulo ?? null
+      const descPropuesta    = brief?.description_propuesta ?? null
+      const estructuraH      = brief?.estructura_h ?? null
+      const kwsSecundarias   = (brief?.keywords_secundarias as string[] | undefined) ?? []
+
+      const datosClaveBloque = [
+        keywordPrincipal ? `Keyword principal: ${keywordPrincipal}` : null,
+        tituloPropuesto  ? `Title SEO propuesto: ${tituloPropuesto}` : null,
+        descPropuesta    ? `Meta description propuesta: ${descPropuesta}` : null,
+        kwsSecundarias.length ? `Keywords secundarias: ${kwsSecundarias.join(', ')}` : null,
+        (extMin != null && extMax != null) ? `Extensión objetivo: ${extMin}–${extMax} palabras` : null,
+        estructuraH ? `\nESTRUCTURA DE H's DEFINIDA EN EL BRIEF:\n${estructuraH}` : null,
+      ].filter(Boolean).join('\n') || 'No disponible'
+
+      const textoGenerado = brief?.texto_generado?.trim() ?? null
 
       const enlacesRevisor = (contenidoActual?.enlaces_internos
-        ?? (contenidoActual?.brief as any)?.enlaces_internos) as Array<{anchor: string; url: string}> | null | undefined
+        ?? brief?.enlaces_internos) as Array<{anchor: string; url: string}> | null | undefined
       const enlacesTextoRevisor = enlacesRevisor?.length
         ? enlacesRevisor.map((e) => `- "${e.anchor}" → ${e.url}`).join('\n')
         : 'Ninguno'
+
+      const palabras = texto.split(/\s+/).filter(s => s.length > 0).length
+
+      console.log('[REVISOR DEBUG] datosClaveBloque completo:', datosClaveBloque)
+      console.log('[REVISOR DEBUG] estructura_h incluida:', datosClaveBloque.includes('ESTRUCTURA'))
+      console.log('[REVISOR DEBUG] brief?.estructura_h raw:', (contenidoActual?.brief as any)?.estructura_h)
+      console.log('[REVISOR DEBUG] palabras calculadas por frontend:', palabras)
+      console.log('[REVISOR DEBUG] texto enviado al revisor, longitud caracteres:', texto.length)
+      console.log('[REVISOR DEBUG] texto enviado al revisor, primeras 100 chars:', texto.substring(0, 100))
+      console.log('[REVISOR DEBUG] texto enviado al revisor, últimas 200 chars:', texto.substring(texto.length - 200))
 
       const res = await fetch('/api/claude', {
         method : 'POST',
@@ -796,8 +841,11 @@ Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible r
             role   : 'user',
             content: `Analiza este artículo y devuelve el informe JSON.
 
-BRIEF SEO DEL ARTÍCULO:
-${briefTexto ?? 'No disponible'}
+EXTENSIÓN REAL VERIFICADA: ${palabras} palabras (este dato es exacto, calculado por código — úsalo directamente en el campo extension.palabras_actual, NO recuentes ni reestimes)
+
+DATOS CLAVE DEL BRIEF (úsalos como referencia para evaluar el artículo):
+${datosClaveBloque}
+${textoGenerado ? `\nBRIEF SEO DETALLADO:\n${textoGenerado}` : ''}
 
 ENLACES INTERNOS QUE DEBÍAN INSERTARSE:
 ${enlacesTextoRevisor}
@@ -806,7 +854,7 @@ TEXTO DEL ARTÍCULO:
 ${texto}`,
           }],
           modo          : 'json',
-          max_tokens    : 2000,
+          max_tokens    : 3000,
           proyecto_id   : contenidoActual?.proyecto_id ?? contenidoActual?.proyectos?.id ?? null,
           contenido_id  : contenidoId || null,
           tipo_operacion: 'revision',
