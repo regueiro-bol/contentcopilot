@@ -11,6 +11,7 @@ import {
   Minus,
   Link2,
 } from 'lucide-react'
+import { calcularPuntuaciones } from '@/lib/revisor-scoring'
 
 // ---------------------------------------------------------------------------
 // Tipos del informe JSON del Agente Revisor GEO-SEO
@@ -19,6 +20,7 @@ type EstadoGEO = 'ok' | 'mejorable' | 'ausente' | 'problema' | 'no_aplica'
 type EstadoKeyword = 'ok' | 'atencion' | 'problema'
 type EstadoExtension = 'ok' | 'corto' | 'largo'
 type EstadoKeywordSec = 'presente' | 'parcial' | 'ausente'
+type EstadoEstructura = 'respetada' | 'modificada' | 'incompleta'
 type Prioridad = 'alta' | 'media' | 'baja'
 type Veredicto = 'listo_para_publicar' | 'revision_menor' | 'revision_necesaria'
 
@@ -43,10 +45,12 @@ interface MejoraPrioritaria {
 
 interface InformeGEOSEO {
   veredicto: Veredicto
-  resumen_ejecutivo: string
-  puntuacion_seo: number
-  puntuacion_geo: number
-  puntuacion_total: number
+  resumen: string
+  // Puntuaciones: se calculan por código (lib/revisor-scoring). Opcionales aquí
+  // porque el JSON de Claude ya no las incluye — el dashboard las deriva.
+  puntuacion_seo?: number
+  puntuacion_geo?: number
+  puntuacion_total?: number
   extension: {
     palabras_actual: number
     estado: EstadoExtension
@@ -56,7 +60,9 @@ interface InformeGEOSEO {
     estado: EstadoKeyword
   }
   estructura_hs: {
-    estado: EstadoKeyword
+    estado: EstadoEstructura
+    h1_duplicado?: boolean
+    jerarquia_correcta?: boolean
     detalle?: string
   }
   enlaces_internos_check?: {
@@ -147,6 +153,20 @@ function estadoKeywordConfig(estado: EstadoKeyword) {
   }
 }
 
+// FIX 2 — el badge de estructura depende SOLO de estructura_hs.estado.
+// Los flags h1_duplicado / jerarquia_correcta se muestran como avisos aparte.
+function estadoEstructuraConfig(estado: EstadoEstructura) {
+  switch (estado) {
+    case 'respetada':
+      return { bg: 'bg-emerald-100 text-emerald-700', label: 'OK' }
+    case 'modificada':
+      return { bg: 'bg-amber-100 text-amber-700', label: 'Modificada' }
+    case 'incompleta':
+    default:
+      return { bg: 'bg-red-100 text-red-600', label: 'Incompleta' }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Sub-componentes
 // ---------------------------------------------------------------------------
@@ -218,6 +238,10 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
     )
   }
 
+  // ── Puntuaciones calculadas por código (FIX 1) ──
+  // Claude ya no puntúa: derivamos SEO/GEO/TOTAL de sus evaluaciones cualitativas.
+  const puntuaciones = calcularPuntuaciones(data)
+
   // ── Cabecera veredicto ──
   const veredictoConfig = {
     listo_para_publicar: {
@@ -255,30 +279,99 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
           <p className={`text-xl font-bold ${veredictoConfig.text} leading-tight`}>
             {veredictoConfig.label}
           </p>
-          {data.resumen_ejecutivo && (
+          {data.resumen && (
             <p className={`mt-1.5 text-sm ${veredictoConfig.text} opacity-90 leading-relaxed max-w-2xl`}>
-              {data.resumen_ejecutivo}
+              {data.resumen}
             </p>
           )}
         </div>
       </div>
 
-      {/* ── ZONA 2: Puntuaciones ── */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: 'SEO', valor: data.puntuacion_seo },
-          { label: 'GEO', valor: data.puntuacion_geo },
-          { label: 'Puntuación total', valor: data.puntuacion_total },
-        ].map(({ label, valor }) => (
-          <div key={label} className="rounded-xl border border-gray-200 bg-white p-4 text-center">
-            <p className={`text-4xl font-extrabold ${colorPuntuacion(valor)} leading-none`}>
-              {valor}
-            </p>
-            <BarraProgreso valor={valor} color={bgBarPuntuacion(valor)} />
-            <p className="text-xs font-semibold text-gray-500 mt-2 uppercase tracking-wide">{label}</p>
+      {/* ── ZONA 2: Puntuaciones (calculadas por código) ── */}
+      {(() => {
+        const seoDesgloseTxt = puntuaciones.desgloseSeo
+          .map((d) => `${d.label}: ${d.puntos}/${d.max}${d.detalle ? ` (${d.detalle})` : ''}`)
+          .join('\n')
+        const cards = [
+          {
+            label: 'SEO',
+            valor: puntuaciones.seo,
+            caption: `${puntuaciones.desgloseSeo.filter((d) => d.puntos === d.max).length}/${puntuaciones.desgloseSeo.length} checks al máximo`,
+            tooltip: `SEO ${puntuaciones.seo}/100\n${seoDesgloseTxt}`,
+          },
+          {
+            label: 'GEO',
+            valor: puntuaciones.geo,
+            caption: `${puntuaciones.desgloseGeo.ok}/${puntuaciones.desgloseGeo.aplican} principios OK`,
+            tooltip: `GEO ${puntuaciones.geo}: ${puntuaciones.desgloseGeo.texto}`,
+          },
+          {
+            label: 'Puntuación total',
+            valor: puntuaciones.total,
+            caption: '(SEO + GEO) / 2',
+            tooltip: `Total ${puntuaciones.total}: media de SEO (${puntuaciones.seo}) y GEO (${puntuaciones.geo})`,
+          },
+        ]
+        return (
+          <div className="grid grid-cols-3 gap-4">
+            {cards.map(({ label, valor, caption, tooltip }) => (
+              <div
+                key={label}
+                title={tooltip}
+                className="rounded-xl border border-gray-200 bg-white p-4 text-center cursor-help"
+              >
+                <p className={`text-4xl font-extrabold ${colorPuntuacion(valor)} leading-none`}>
+                  {valor}
+                </p>
+                <BarraProgreso valor={valor} color={bgBarPuntuacion(valor)} />
+                <p className="text-xs font-semibold text-gray-500 mt-2 uppercase tracking-wide">{label}</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">{caption}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        )
+      })()}
+
+      {/* ── ZONA 2b: Desglose de cómo se calcularon las puntuaciones ── */}
+      <details className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm">
+        <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide select-none">
+          Cómo se calcularon las puntuaciones
+        </summary>
+        <div className="mt-3 space-y-3">
+          {/* SEO */}
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-1.5">
+              SEO {puntuaciones.seo}/100
+            </p>
+            <ul className="space-y-0.5">
+              {puntuaciones.desgloseSeo.map((d) => (
+                <li key={d.label} className="flex items-center justify-between gap-3 text-xs text-gray-600">
+                  <span>
+                    {d.label}
+                    {d.detalle && <span className="text-gray-400"> — {d.detalle}</span>}
+                  </span>
+                  <span className={`font-mono font-semibold ${d.puntos === d.max ? 'text-emerald-600' : d.puntos === 0 ? 'text-red-500' : 'text-amber-500'}`}>
+                    {d.puntos}/{d.max}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {/* GEO */}
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-1">
+              GEO {puntuaciones.geo}/100
+            </p>
+            <p className="text-xs text-gray-600">
+              {puntuaciones.desgloseGeo.texto}
+            </p>
+          </div>
+          {/* Total */}
+          <p className="text-xs text-gray-500">
+            Total = (SEO {puntuaciones.seo} + GEO {puntuaciones.geo}) / 2 = {puntuaciones.total}
+          </p>
+        </div>
+      </details>
 
       {/* ── ZONA 3: Datos rápidos ── */}
       {(data.extension || data.keyword_principal || data.estructura_hs) && (
@@ -315,9 +408,9 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
 
             <span className="text-gray-200">|</span>
 
-            {/* Estructura H's */}
+            {/* Estructura H's — badge depende SOLO de estado (FIX 2) */}
             {data.estructura_hs && (() => {
-              const cfg = estadoKeywordConfig(data.estructura_hs.estado)
+              const cfg = estadoEstructuraConfig(data.estructura_hs.estado)
               return (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-500">Estructura H&apos;s</span>
@@ -326,6 +419,22 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
               )
             })()}
           </div>
+
+          {/* Avisos secundarios de estructura — separados del badge principal (FIX 2) */}
+          {data.estructura_hs && (data.estructura_hs.h1_duplicado === true || data.estructura_hs.jerarquia_correcta === false) && (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              {data.estructura_hs.h1_duplicado === true && (
+                <span className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" /> H1 duplicado detectado
+                </span>
+              )}
+              {data.estructura_hs.jerarquia_correcta === false && (
+                <span className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Jerarquía con saltos
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { colorEstadoContenido, etiquetaEstadoContenido } from '@/lib/utils'
 import InformeRevisionDashboard from '@/components/revisiones/InformeRevisionDashboard'
+import { calcularPuntuaciones } from '@/lib/revisor-scoring'
 import {
   cargarContenidoCompleto,
   guardarTextoEnSupabase,
@@ -71,24 +72,35 @@ interface FragmentoCopiloto {
 }
 
 // ─── System prompt del Revisor GEO-SEO (migrado de Dify) ────────────────────
-const SYSTEM_REVISOR = `Responde ÚNICAMENTE con un objeto JSON válido y nada más. Ni una sola palabra antes ni después del JSON. No uses bloques de código markdown ni backticks. Tu respuesta debe empezar con { y terminar con }.
+function buildSystemRevisor(estructuraBrief?: string | null): string {
+  const estructura = (estructuraBrief ?? '').trim()
+  const bloqueEstructura = estructura
+    ? `ESTRUCTURA DE H's DEFINIDA EN EL BRIEF (esta es la referencia para el PASO 1 — úsala tal cual):
+${estructura}`
+    : `No se ha definido estructura de H's en el brief. Aplica directamente la REGLA ABSOLUTA #3 (estado "respetada").`
+
+  return `Responde ÚNICAMENTE con un objeto JSON válido y nada más. Ni una sola palabra antes ni después del JSON. No uses bloques de código markdown ni backticks. Tu respuesta debe empezar con { y terminar con }.
 
 Eres el Agente Revisor GEO-SEO de una agencia española de marketing de contenidos. Analizas artículos y devuelves un informe de calidad SEO y GEO.
 
 REGLA ABSOLUTA: Solo JSON. Sin texto, sin explicaciones, sin bloques de código markdown. Empieza con { y termina con }.
 
+NO CALCULES PUNTUACIONES: Tu trabajo es EVALUAR cada ítem cualitativamente (estados "ok" / "mejorable" / "ausente"…). Las notas numéricas SEO, GEO y TOTAL las calcula el sistema por código a partir de tus evaluaciones. NO devuelvas ningún campo de puntuación numérica.
+
 REGLA ANTI-FALSOS POSITIVOS — CRÍTICA:
 El mensaje del usuario incluye un bloque "DATOS CLAVE DEL BRIEF". Antes de evaluar cualquier campo, consulta ese bloque.
 - Si el brief define keyword_principal y esa keyword aparece al menos 1 vez en el artículo, marca keyword_principal.estado "ok" o "atencion" según densidad — NUNCA "problema" por ausencia.
 - Si el brief define título SEO (title_seo) y meta description, estos existen aunque no aparezcan en el cuerpo del artículo. NO los marques como ausentes en mejoras_prioritarias.
-- Si el brief define estructura de H's (bloque "ESTRUCTURA DE H's DEFINIDA EN EL BRIEF"), sigue el PROCEDIMIENTO EXACTO descrito más abajo para evaluar la estructura.
+- Para evaluar la estructura de H's, usa la ESTRUCTURA DE H's incluida más abajo en ESTE prompt (sección "EVALUACIÓN DE ESTRUCTURA H's") y sigue el PROCEDIMIENTO EXACTO.
 - Solo incluye una mejora_prioritaria cuando hay una discrepancia real entre lo pedido en el brief y lo entregado en el texto. No reportes como problema algo que ya está correctamente especificado en el brief.
 - Si el brief no está disponible (campo vacío o "No disponible"), evalúa el artículo de forma autónoma.
 
 EVALUACIÓN DE ESTRUCTURA H's — PROCEDIMIENTO EXACTO:
+${bloqueEstructura}
+
 Extrae SOLO los encabezados del brief y del artículo. Ignora completamente el texto, párrafos y cualquier desarrollo escrito bajo cada encabezado.
 
-PASO 1 — Lista los H's del brief (del bloque "ESTRUCTURA DE H's DEFINIDA EN EL BRIEF"):
+PASO 1 — Lista los H's del brief (de la ESTRUCTURA DE H's mostrada justo arriba en este prompt):
 Normaliza el formato: "H1: Texto" = "# Texto" (nivel 1), "H2: Texto" = "## Texto" (nivel 2), "H3: Texto" = "### Texto" (nivel 3).
 
 PASO 2 — Lista los H's del artículo:
@@ -102,19 +114,26 @@ El campo estructura_hs.estado:
 - "modificada": algún H cambió de nivel (H2→H3) o de posición relativa en el orden
 - "incompleta": falta al menos un H que estaba en el brief
 
+Además, evalúa dos señales independientes del estado anterior:
+- estructura_hs.h1_duplicado: true si el artículo contiene MÁS DE UN encabezado de nivel 1 (líneas que empiezan por "# "). false en caso normal (0 o 1 H1).
+- estructura_hs.jerarquia_correcta: true si los niveles de encabezado no dan saltos hacia abajo (p.ej. pasar de un H2 directamente a un H4 sin H3 intermedio es un salto → false). true si la jerarquía es limpia.
+
 REGLAS ABSOLUTAS SOBRE H's:
 1. NO evalúes la calidad, extensión ni profundidad del texto desarrollado bajo cada encabezado — eso no es parte de la evaluación de estructura
 2. ## y H2: son IDÉNTICOS — nunca marques esto como error ni como diferencia
-3. Si no hay bloque "ESTRUCTURA DE H's DEFINIDA EN EL BRIEF", marca estado "respetada" y detalle "Sin estructura definida en el brief"
+3. Si no se definió estructura de H's en el brief, marca estado "respetada" y detalle "Sin estructura definida en el brief"
+
+EVALUACIÓN DE TITLE SEO Y META DESCRIPTION:
+Consulta "Title SEO propuesto" y "Meta description propuesta" en el bloque DATOS CLAVE DEL BRIEF.
+- estado "ok": existe y está bien optimizado (longitud adecuada e incluye la keyword principal)
+- estado "mejorable": existe pero es flojo (demasiado largo/corto o sin keyword)
+- estado "ausente": no se definió en el brief ni puede derivarse del artículo
 
 CONTEO DE PALABRAS:
 El campo extension.palabras_actual debe usar EXACTAMENTE el número que se te proporciona en el mensaje del usuario como "EXTENSIÓN REAL VERIFICADA". NUNCA cuentes las palabras tú mismo — usa el dato proporcionado tal cual, sin reestimar ni redondear.
 
 Devuelve exactamente este JSON:
 {
-  "puntuacion_seo": [número 0-100],
-  "puntuacion_geo": [número 0-100],
-  "puntuacion_total": [media de los dos],
   "veredicto": "listo_para_publicar" | "revision_menor" | "revision_necesaria",
   "resumen": "[3-4 frases del estado general]",
   "extension": {
@@ -129,11 +148,21 @@ Devuelve exactamente este JSON:
     "en_primer_parrafo": true | false,
     "estado": "ok" | "atencion" | "problema"
   },
+  "title_seo": {
+    "estado": "ok" | "mejorable" | "ausente",
+    "detalle": "[una frase]"
+  },
+  "meta_description": {
+    "estado": "ok" | "mejorable" | "ausente",
+    "detalle": "[una frase]"
+  },
   "keywords_secundarias": [
     {"keyword": "[texto]", "estado": "presente" | "ausente" | "parcial"}
   ],
   "estructura_hs": {
     "estado": "respetada" | "modificada" | "incompleta",
+    "h1_duplicado": true | false,
+    "jerarquia_correcta": true | false,
     "detalle": "[descripción breve]"
   },
   "principios_geo": [
@@ -162,6 +191,7 @@ Devuelve exactamente este JSON:
     ]
   }
 }`
+}
 
 // ─── System prompt del Agente Redactor (borrador completo desde brief) ──────
 const SYSTEM_REDACTOR = `AGENTE REDACTOR COPILOTO — ContentCopilot
@@ -811,7 +841,8 @@ Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible r
         descPropuesta    ? `Meta description propuesta: ${descPropuesta}` : null,
         kwsSecundarias.length ? `Keywords secundarias: ${kwsSecundarias.join(', ')}` : null,
         (extMin != null && extMax != null) ? `Extensión objetivo: ${extMin}–${extMax} palabras` : null,
-        estructuraH ? `\nESTRUCTURA DE H's DEFINIDA EN EL BRIEF:\n${estructuraH}` : null,
+        // FIX 3 — la estructura de H's ya no va aquí: se interpola dentro del
+        // system prompt (buildSystemRevisor) junto al procedimiento de evaluación.
       ].filter(Boolean).join('\n') || 'No disponible'
 
       const textoGenerado = brief?.texto_generado?.trim() ?? null
@@ -836,7 +867,7 @@ Nunca cortes una frase o sección a mitad. Si el texto es largo, es preferible r
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
-          system  : SYSTEM_REVISOR,
+          system  : buildSystemRevisor(estructuraH),
           messages: [{
             role   : 'user',
             content: `Analiza este artículo y devuelve el informe JSON.
@@ -882,6 +913,14 @@ ${texto}`,
 
       const jsonLimpio = limpiarJSON(contenidoRaw)
       const informe    = JSON.parse(jsonLimpio)   // lanza si no es JSON válido
+
+      // FIX 1 — las puntuaciones se calculan por código de forma determinista a
+      // partir de las evaluaciones cualitativas de Claude (nunca las inventa Claude).
+      const puntuaciones = calcularPuntuaciones(informe)
+      informe.puntuacion_seo   = puntuaciones.seo
+      informe.puntuacion_geo   = puntuaciones.geo
+      informe.puntuacion_total = puntuaciones.total
+
       setTextoRevision(JSON.stringify(informe))
       setFechaRevision(new Date().toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }))
     } catch (e) {
