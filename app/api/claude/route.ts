@@ -117,9 +117,12 @@ export async function POST(request: NextRequest) {
     const tipoOp: TipoOperacion = (tipo_operacion as TipoOperacion) ?? 'copiloto'
     const agenteId: string = agente ?? 'claude_api'
 
+    // ── Normalizar max_tokens (puede llegar como string, float o undefined) ──────
+    const maxTok = Math.min(Math.max(Math.floor(Number(max_tokens)) || 4000, 1), 8000)
+    console.log('[/api/claude] max_tokens recibido:', max_tokens, typeof max_tokens, '→ maxTok:', maxTok)
+
     // ── Modo JSON: respuesta completa sin streaming ───────────────────────────
     if (modo === 'json') {
-      const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 1024
       const respuesta = await anthropic.messages.create({
         model     : MODELO_CLAUDE,
         max_tokens: maxTok,
@@ -147,7 +150,6 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Modo streaming ────────────────────────────────────────────────────────
-    const maxTokStream = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 4096
     const encoder = new TextEncoder()
 
     const stream = new ReadableStream({
@@ -155,7 +157,7 @@ export async function POST(request: NextRequest) {
         try {
           const streamAnthropic = anthropic.messages.stream({
             model     : MODELO_CLAUDE,
-            max_tokens: maxTokStream,
+            max_tokens: maxTok,
             system    : systemPrompt,
             messages  : mensajesResueltos,
           })
