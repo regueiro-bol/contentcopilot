@@ -1062,8 +1062,20 @@ BRIEF SEO COMPLETO:
 ${briefSeoBloque}
 
 INSTRUCCIÓN: Genera el artículo completo en español siguiendo estrictamente el brief anterior.
-EXTENSIÓN OBLIGATORIA: DEBE tener entre ${extMin} y ${extMax} palabras. Desarrolla completamente todas las secciones previstas en el brief. No resumas, no acortes, no cortes secciones. Si vas corto de palabras, añade más ejemplos, datos, contexto y subsecciones hasta alcanzar el mínimo de ${extMin} palabras.
-VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escrito. Si son menos de ${extMin}, continúa añadiendo contenido (más ejemplos, datos, contexto) hasta llegar a ${extMin}. Si son más de ${extMax}, reduce y condensa hasta quedar en ${extMax}. El artículo DEBE terminar entre ${extMin} y ${extMax} palabras.`
+
+PLANIFICACIÓN PREVIA (hazla mentalmente antes de escribir):
+Tienes un presupuesto de ${extMin}–${extMax} palabras. Repártelo entre las secciones del brief: calcula cuántas palabras corresponden a cada H2 antes de empezar a escribir. Esto evita que unas secciones crezcan y otras queden sin espacio.
+
+TECHO ABSOLUTO — ${extMax} PALABRAS:
+${extMax} palabras es el límite innegociable. No puede superarse bajo ningún criterio: ni por complejidad del tema, ni por número de secciones, ni para "completar" ideas. Si al terminar una sección detectas que te estás acercando al techo, cierra esa sección y las siguientes de forma más concisa.
+
+SUELO MÍNIMO — ${extMin} PALABRAS:
+El artículo debe superar ${extMin} palabras. Si una sección queda desarrollada con suficiente profundidad, no la alargues artificialmente: pasa a la siguiente para distribuir el presupuesto.
+
+VERIFICACIÓN FINAL (en este orden):
+1. ¿Supera ${extMax} palabras? Si sí, elimina o condensa hasta quedar por debajo. El techo no es negociable.
+2. ¿Supera ${extMin} palabras? Si no, añade profundidad real (datos, ejemplos concretos) en las secciones más débiles.
+El artículo DEBE terminar entre ${extMin} y ${extMax} palabras.`
 
       const tokensBase = extMax * 2.2
       const tokensMargenEstructura = 500
