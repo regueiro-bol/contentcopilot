@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { fal } from '@fal-ai/client'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { downloadFromDrive } from '@/lib/google-drive'
-import { composeCreative } from '@/lib/ad-creatives/compose'
+import { composeCreativeCanvas } from '@/lib/ad-creatives/compose-canvas'
 import { ensureAdCreativesBucket, uploadAdCreative } from '@/lib/ad-creatives/storage'
 
 export const maxDuration = 120
@@ -144,12 +144,13 @@ export async function POST(
 
   // Recuperar copy del creative
   const copy = (creative.copy ?? {}) as {
-    headline?: string; body?: string; cta?: string
+    headline?: string; subheadline?: string; body?: string; cta?: string
     tagline?: string; caption?: string
   }
-  const headline = copy.headline ?? (creative.brief as string)
-  const body     = copy.body ?? copy.caption
-  const cta      = copy.cta
+  const headline    = copy.headline ?? (creative.brief as string)
+  const subheadline = copy.subheadline ?? null
+  const body        = copy.body ?? null
+  const cta         = copy.cta ?? null
 
   // Seleccionar modelo
   const modelKey: FalModelKey =
@@ -212,9 +213,10 @@ export async function POST(
   let finalImageUrl: string | null = bgUrl
 
   try {
-    const composedBuffer = await composeCreative({
+    const composedBuffer = await composeCreativeCanvas({
       backgroundImageUrl: bgUrl,
       headline,
+      subheadline,
       body,
       cta,
       logoBuffer,

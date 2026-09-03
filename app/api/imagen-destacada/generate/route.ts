@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fal } from '@fal-ai/client'
-import { calcularCosteFluxUSD, guardarRegistroCoste } from '@/lib/costes'
+import { guardarRegistroCoste } from '@/lib/costes'
+import { generateImage } from '@/lib/fal-image'
 
 export const maxDuration = 60
 
-const FAL_MODEL = 'fal-ai/flux-pro/v1.1-ultra'
-
-// Mapeo de formato → aspect_ratio de FAL.ai
+// Mapeo de formato → aspect canónico
 const ASPECTO: Record<string, string> = {
   '1200x630':  '16:9',
   '1200x800':  '3:2',
@@ -14,59 +12,50 @@ const ASPECTO: Record<string, string> = {
 }
 
 export async function POST(req: NextRequest) {
-  fal.config({ credentials: process.env.FAL_KEY ?? process.env.FAL_API_KEY ?? '' })
   try {
     const {
       prompt,
       formato     = '1200x630',
       variantes   = 1,
       contenido_id,
+      modelo_id,
     } = await req.json() as {
       prompt        : string
       formato?      : string
       variantes?    : number
       contenido_id? : string
+      modelo_id?    : string
     }
 
     if (!prompt?.trim()) {
       return NextResponse.json({ error: 'El prompt es obligatorio' }, { status: 400 })
     }
 
-    const aspect_ratio = ASPECTO[formato] ?? '16:9'
+    const aspect = ASPECTO[formato] ?? '16:9'
     const count = Math.min(Math.max(1, variantes), 3)
 
-    // Generación en paralelo de todas las variantes
-    const promesas = Array.from({ length: count }, () =>
-      fal.subscribe(FAL_MODEL, {
-        input: {
-          prompt          : prompt.trim(),
-          aspect_ratio,
-          num_images      : 1,
-          output_format   : 'jpeg',
-          safety_tolerance: '4',
-          enhance_prompt  : true,
-        },
-      })
+    // Generación en paralelo de todas las variantes — vía helper central.
+    // Si no se pasa modelo_id, generateImage usa el default ('flux-ultra').
+    const resultados = await Promise.all(
+      Array.from({ length: count }, () => generateImage(prompt, { modelo_id, aspect })),
     )
-
-    const resultados = await Promise.all(promesas)
-    const urls = resultados
-      .map((r) => (r.data as any)?.images?.[0]?.url)
-      .filter(Boolean) as string[]
+    const exitosos = resultados.filter((r) => r.url)
+    const urls = exitosos.map((r) => r.url) as string[]
 
     if (urls.length === 0) {
       return NextResponse.json({ error: 'No se generaron imágenes' }, { status: 500 })
     }
 
-    // ── Registrar coste FLUX (fire & forget) ──────────────────────────────────
+    // ── Registrar coste por modelo (fire & forget) ────────────────────────────
+    // tipo_operacion 'imagen_ia' + agente 'fal' (genéricos: abarca FLUX/Seedream/Imagen).
     guardarRegistroCoste({
       contenido_id  : contenido_id ?? null,
-      tipo_operacion: 'imagen_flux',
-      agente        : 'fal_flux',
-      modelo        : FAL_MODEL,
+      tipo_operacion: 'imagen_ia',
+      agente        : 'fal',
+      modelo        : exitosos[0].endpoint,   // modelo realmente usado
       unidades      : urls.length,
-      coste_usd     : calcularCosteFluxUSD(urls.length),
-      metadatos     : { formato, aspect_ratio },
+      coste_usd     : exitosos.reduce((s, r) => s + r.costeUsd, 0),
+      metadatos     : { formato, aspect, modelo_id: exitosos[0].modeloId },
     }).catch((e) => console.error('[Costes] Error imagen destacada:', e))
 
     return NextResponse.json({ urls })

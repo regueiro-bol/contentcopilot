@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { fal } from '@fal-ai/client'
-import sharp from 'sharp'
 import path from 'path'
 import fs from 'fs/promises'
 import { exec } from 'child_process'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { guardarRegistroCoste } from '@/lib/costes'
+import { aplicarOverlayTextoCanvas, type PosicionTexto } from '@/lib/video/text-overlay'
+import { familiaDeFuente, FUENTE_DEFAULT_ID } from '@/lib/video/fonts'
 
 // ── Configuración Vercel ──────────────────────────────────────────────────────
 export const maxDuration = 120
@@ -18,6 +19,7 @@ interface Slide {
   imagen_prompt    : string
   texto_principal  : string
   texto_secundario?: string
+  posicion_texto?  : PosicionTexto   // default 'centro'
 }
 
 interface RequestBody {
@@ -26,148 +28,13 @@ interface RequestBody {
   tipo          : 'reel' | 'story'
   slides        : Slide[]
   duracion_slide: number
+  fuente_id?    : string   // id del catálogo lib/video/fonts.ts — default 'dejavu'
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
-/**
- * Aplica gradiente oscuro inferior + texto superpuesto sobre una imagen 9:16.
- * Usa Sharp con SVG composite — no requiere fuentes del sistema.
- */
-/**
- * Aplica gradiente + textos sobre la imagen usando PNGs intermedios por capa.
- *
- * Enfoque por capas independientes en lugar de un único SVG con coordenadas
- * absolutas, que tiene bugs de posicionamiento en librsvg/Sharp en macOS ARM64:
- *
- *   1. gradiente PNG (1080×1920, transparente arriba, opaco abajo)
- *   2. textoPrincipal PNG (1080×200, texto relativo dentro del tile)
- *   3. textoSecundario PNG (1080×80, texto relativo dentro del tile)  ← opcional
- *
- * Cada tile SVG usa coordenadas RELATIVAS a su propio canvas pequeño
- * (y=150 dentro de un 200px de alto = 75% desde arriba), y luego Sharp
- * los posiciona con `top` en la imagen 1920px.
- */
-async function aplicarOverlayTexto(
-  imageBuf       : Buffer,
-  textoPrincipal : string,
-  textoSecundario?: string,
-  slideIndex     : number = 0,
-): Promise<Buffer> {
-  const W = 1080
-  const H = 1920
-
-  const palabras          = textoPrincipal.trim().split(/\s+/).length
-  const fontSizePrincipal = palabras > 6 ? 56 : 76
-
-  const principal  = escapeXml(textoPrincipal.trim())
-  const secundario = textoSecundario ? escapeXml(textoSecundario.trim()) : ''
-
-  // ── 1. Gradiente oscuro inferior (sin texto — evita el bug de coordenadas) ─
-  const gradienteSVG = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#000" stop-opacity="0"/>
-      <stop offset="38%"  stop-color="#000" stop-opacity="0.55"/>
-      <stop offset="100%" stop-color="#000" stop-opacity="0.90"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="${Math.round(H * 0.38)}" width="${W}" height="${Math.round(H * 0.62)}" fill="url(#g)"/>
-</svg>`
-  const gradienteBuffer = Buffer.from(gradienteSVG)
-
-  // ── 2. Tile PNG para texto_principal (1080×200) ───────────────────────────
-  //    Texto posicionado en y=150 dentro del tile (baseline a 50px del fondo)
-  const TILE_P_H = 200
-  const TILE_P_Y = 150    // baseline dentro del tile
-
-  const tilePrincipalSVG = `<svg width="${W}" height="${TILE_P_H}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <filter id="s">
-      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000" flood-opacity="0.95"/>
-    </filter>
-  </defs>
-  <text
-    x="540" y="${TILE_P_Y}"
-    font-family="Arial,Helvetica,sans-serif"
-    font-size="${fontSizePrincipal}"
-    font-weight="bold"
-    fill="#ffffff"
-    text-anchor="middle"
-    filter="url(#s)"
-  >${principal}</text>
-</svg>`
-
-  const textoPrincipalImg = await sharp({
-    create: { width: W, height: TILE_P_H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-  })
-    .composite([{ input: Buffer.from(tilePrincipalSVG), top: 0, left: 0 }])
-    .png()
-    .toBuffer()
-
-  // ── 3. Tile PNG para texto_secundario (1080×80), opcional ─────────────────
-  //    Texto posicionado en y=55 dentro del tile
-  const TILE_S_H = 80
-  const TILE_S_Y = 55     // baseline dentro del tile
-
-  let textoSecundarioImg: Buffer | null = null
-  if (secundario) {
-    const tileSecSVG = `<svg width="${W}" height="${TILE_S_H}" xmlns="http://www.w3.org/2000/svg">
-  <text
-    x="540" y="${TILE_S_Y}"
-    font-family="Arial,Helvetica,sans-serif"
-    font-size="38"
-    font-weight="400"
-    fill="#dde0e8"
-    text-anchor="middle"
-  >${secundario}</text>
-</svg>`
-
-    textoSecundarioImg = await sharp({
-      create: { width: W, height: TILE_S_H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-    })
-      .composite([{ input: Buffer.from(tileSecSVG), top: 0, left: 0 }])
-      .png()
-      .toBuffer()
-  }
-
-  // ── 4. Composite final ────────────────────────────────────────────────────
-  //
-  //  Posición `top` de cada tile en la imagen 1920px:
-  //    texto_principal:  1920 - 200 - 40 = 1680  (tile de 200px termina a 40px del fondo)
-  //    texto_secundario: 1920 - 80       = 1840  (tile de 80px termina pegado al fondo)
-  //
-  const topPrincipal   = H - TILE_P_H - 40   // 1680
-  const topSecundario  = H - TILE_S_H         // 1840
-
-  console.log(
-    `[VIDEO SVG] Slide ${slideIndex} — principal: top=${topPrincipal} fs=${fontSizePrincipal}px "${principal}"`,
-    secundario ? `| sec: top=${topSecundario} "${secundario}"` : '| sin secundario',
-  )
-
-  const composites: Parameters<ReturnType<typeof sharp>['composite']>[0] = [
-    { input: gradienteBuffer,   top: 0,            left: 0 },
-    { input: textoPrincipalImg, top: topPrincipal, left: 0 },
-  ]
-  if (textoSecundarioImg) {
-    composites.push({ input: textoSecundarioImg, top: topSecundario, left: 0 })
-  }
-
-  return sharp(imageBuf)
-    .resize(W, H, { fit: 'cover', position: 'centre' })
-    .composite(composites)
-    .png()
-    .toBuffer()
-}
+// La composición de texto vive en lib/video/text-overlay.ts (@napi-rs/canvas).
+// La versión anterior (Sharp + SVG) está en aplicarOverlayTexto.sharp.ts.bak
+// para comparar durante la migración.
 
 /**
  * Compone el vídeo MP4 a partir de imágenes PNG con transiciones xfade.
@@ -323,7 +190,11 @@ export async function POST(req: NextRequest) {
 
   console.log('[VIDEO] Body:', JSON.stringify(body).substring(0, 200))
 
-  const { contenido_id, cliente_id, tipo, slides, duracion_slide } = body
+  const { contenido_id, cliente_id, tipo, slides, duracion_slide, fuente_id } = body
+  // Familia canvas de la fuente pedida — familiaDeFuente cae a DejaVu si el id
+  // no existe en el catálogo, y el overlay tiene su propio fallback si el
+  // registro de la fuente falló
+  const fontFamily = familiaDeFuente(fuente_id ?? FUENTE_DEFAULT_ID)
 
   // ── Validaciones ──────────────────────────────────────────────────────────
   if (!contenido_id || !cliente_id) {
@@ -387,13 +258,20 @@ export async function POST(req: NextRequest) {
     )
 
     // ── 2. Descargar + overlay de texto → PNG ───────────────────────────────
-    console.log('[VIDEO] Aplicando overlays de texto con Sharp…')
+    console.log('[VIDEO] Aplicando overlays de texto con canvas…')
 
     for (const { slide, imageUrl, index } of imageResults) {
       const imgRes   = await fetch(imageUrl)
       const imgBuf   = Buffer.from(await imgRes.arrayBuffer())
       console.log(`[VIDEO] Slide ${index + 1} descargada (${imgBuf.byteLength} bytes), aplicando overlay…`)
-      const composed = await aplicarOverlayTexto(imgBuf, slide.texto_principal, slide.texto_secundario, index)
+      const composed = await aplicarOverlayTextoCanvas(
+        imgBuf,
+        slide.texto_principal,
+        slide.texto_secundario,
+        slide.posicion_texto ?? 'centro',
+        index,
+        fontFamily,
+      )
       const slidePath = path.join(tmpDir, `slide_${index}.png`)
       await fs.writeFile(slidePath, composed)
       slidePaths.push(slidePath)
@@ -434,8 +312,10 @@ export async function POST(req: NextRequest) {
           slides: slides.map((s) => ({
             texto_principal : s.texto_principal,
             texto_secundario: s.texto_secundario ?? null,
+            posicion_texto  : s.posicion_texto ?? 'centro',
           })),
           duracion_slide,
+          fuente_id: fuente_id ?? FUENTE_DEFAULT_ID,
         },
       })
       .select('id')

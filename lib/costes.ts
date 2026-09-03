@@ -68,8 +68,10 @@ export type TipoOperacion =
   | 'revision'              // revisión GEO-SEO
   | 'brief_seo'             // generación de brief SEO
   | 'prompt_imagen'         // generación de prompt de imagen
+  | 'concepto_social'       // concepto de campaña social desde el artículo
   | 'rag_embedding'         // embeddings para el índice RAG
-  | 'imagen_flux'           // imagen destacada con FLUX
+  | 'imagen_ia'             // imagen destacada con IA (FLUX/Seedream/Imagen) — selector de modelo
+  | 'imagen_flux'           // (histórico) imagen destacada con FLUX antes del selector
   | 'ad_creative'           // pieza social con FLUX
   | 'video_reel'            // reel generado con FLUX + FFmpeg
   | 'video_story'           // story generado con FLUX + FFmpeg

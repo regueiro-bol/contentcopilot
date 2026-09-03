@@ -11,16 +11,21 @@ const nextConfig = {
   experimental: {
     // sharp necesita ser tratado como paquete externo en Vercel
     // para que use los binarios nativos del runtime en lugar de bundlearse
-    serverComponentsExternalPackages: ['sharp', 'fluent-ffmpeg', '@ffmpeg-installer/ffmpeg', 'exceljs', '@resvg/resvg-js'],
+    serverComponentsExternalPackages: ['sharp', 'fluent-ffmpeg', '@ffmpeg-installer/ffmpeg', 'exceljs', '@resvg/resvg-js', '@napi-rs/canvas'],
     // Permite subidas de hasta 50 MB en Server Actions y Route Handlers
     serverActions: {
       bodySizeLimit: '52mb',
     },
     // Incluye el binario estático de ffmpeg en el bundle serverless
-    // de las rutas de generación de vídeo.
+    // de las rutas de generación de vídeo, y las fuentes TTF que
+    // @napi-rs/canvas registra en runtime (Vercel no tiene fuentes de sistema).
     outputFileTracingIncludes: {
       'app/api/videos/**': [
         './node_modules/@ffmpeg-installer/**',
+      ],
+      'app/api/video/**': [
+        './node_modules/@ffmpeg-installer/**',
+        './public/fonts/**',
       ],
     },
   },

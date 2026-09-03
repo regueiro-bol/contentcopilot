@@ -457,7 +457,7 @@ export default function CostesDashboard({ data }: { data: CostesDashboardData })
                             {item.tokens.toLocaleString('es-ES')} tokens
                           </p>
                         )}
-                        {['imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(item.tipo) && (
+                        {['imagen_ia', 'imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(item.tipo) && (
                           <p className="text-[10px] text-gray-400 mt-0.5">
                             {item.unidades} imágen{item.unidades !== 1 ? 'es' : ''}
                           </p>

@@ -1,10 +1,12 @@
 /**
  * POST /api/brand-assets/process-brandbook
  *
- * Descarga el brand book aprobado del cliente desde Drive,
- * lo procesa con Claude (visión de documento PDF) para extraer
- * colores, tipografías, tono de voz y restricciones,
- * y guarda/actualiza el resultado en brand_context.
+ * Descarga TODOS los brand books activos del cliente desde Drive,
+ * procesa cada uno con IA (visión de documento PDF) y fusiona los
+ * resultados en un único brand_context:
+ *   · colors / typography / style_keywords → unión deduplicada
+ *   · restrictions → concatenación deduplicada
+ *   · tone_of_voice / raw_summary → síntesis final con Claude si hay >1 doc
  *
  * Body: { client_id: string }
  *
@@ -25,29 +27,66 @@ import type { DocumentBlockParam, TextBlockParam } from '@anthropic-ai/sdk/resou
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// Procesar varios PDFs secuencialmente + síntesis puede superar el timeout
+// por defecto de Vercel (60 s)
+export const maxDuration = 300
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Tipos internos
+// Tipos y fusión multi-documento — lib/brand/merge-brand-context.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface ColorEntry {
-  name: string
-  hex: string
-  role?: string  // e.g. "primary", "secondary", "accent", "neutral"
-}
+import {
+  mergeExtractions,
+  type ExtractedBrandContext,
+  type DocExtraction,
+} from '@/lib/brand/merge-brand-context'
 
-interface FontEntry {
-  name: string
-  role?: string  // e.g. "headings", "body", "accent"
-  weights?: string[]
-}
+/**
+ * Sintetiza un único tono de voz y resumen a partir de los análisis de N
+ * manuales del mismo cliente. Si la llamada falla, el handler conserva la
+ * concatenación del merge.
+ */
+async function synthesizeToneAndSummary(
+  docs: DocExtraction[],
+): Promise<{ tone_of_voice: string; raw_summary: string }> {
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-interface ExtractedBrandContext {
-  colors: ColorEntry[]
-  typography: FontEntry[]
-  tone_of_voice: string
-  style_keywords: string[]
-  restrictions: string
-  raw_summary: string
+  const analisis = docs.map((d, i) =>
+    `MANUAL ${i + 1}: "${d.file_name}"
+Tono de voz: ${d.extracted.tone_of_voice || '(no extraído)'}
+Resumen: ${d.extracted.raw_summary || '(no extraído)'}`
+  ).join('\n\n')
+
+  const message = await anthropic.messages.create({
+    model: 'claude-opus-4-5',
+    max_tokens: 1024,
+    system: 'Eres un experto en identidad de marca. Responde EXCLUSIVAMENTE con un objeto JSON válido, sin markdown ni texto adicional.',
+    messages: [{
+      role: 'user',
+      content: `Estos son los análisis de ${docs.length} manuales de marca del mismo cliente. Sintetiza un único tono de voz y resumen de marca coherente que integre todos, señalando si algún manual es específico de un ámbito (redes sociales, producto...).
+
+${analisis}
+
+Devuelve exactamente este JSON:
+{
+  "tone_of_voice": "Tono de voz unificado, 2-4 oraciones, accionable para un copywriter",
+  "raw_summary": "Resumen de marca unificado, 3-5 oraciones"
+}`,
+    }],
+  })
+
+  const textBlock = message.content.find((b) => b.type === 'text')
+  if (!textBlock || textBlock.type !== 'text') throw new Error('Claude no devolvió texto en la síntesis')
+  const raw = textBlock.text.trim()
+  const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? null
+  const parsed = JSON.parse(jsonMatch ? jsonMatch[1].trim() : raw) as { tone_of_voice?: string; raw_summary?: string }
+  if (!parsed.tone_of_voice?.trim() && !parsed.raw_summary?.trim()) {
+    throw new Error('Síntesis vacía')
+  }
+  return {
+    tone_of_voice: parsed.tone_of_voice?.trim() ?? '',
+    raw_summary  : parsed.raw_summary?.trim() ?? '',
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,17 +342,20 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Preferir el aprobado; si no hay ninguno, usar el primero disponible
-  const brandBook = brandBookAssets.find((a) => a.approved) ?? brandBookAssets[0]
+  // Procesar TODOS los aprobados; si no hay ninguno aprobado, todos los activos
+  const aprobados = brandBookAssets.filter((a) => a.approved && a.drive_file_id)
+  const aProcesar = aprobados.length > 0
+    ? aprobados
+    : brandBookAssets.filter((a) => a.drive_file_id)
 
-  if (!brandBook.drive_file_id) {
+  if (aProcesar.length === 0) {
     return NextResponse.json(
-      { error: 'El brand book no tiene un ID de fichero en Drive' },
+      { error: 'Ningún brand book tiene un ID de fichero en Drive' },
       { status: 422 },
     )
   }
 
-  // ── 4. Descargar el PDF desde Drive ────────────────────────────────────────
+  // ── 4. Configurar Drive ────────────────────────────────────────────────────
   let drive: drive_v3.Drive
   try {
     drive = buildDriveClient()
@@ -324,75 +366,93 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  let pdfBuffer: Buffer
-  try {
-    pdfBuffer = await downloadDriveFileAsBuffer(drive, brandBook.drive_file_id, brandBook.mime_type)
-  } catch (err) {
-    return NextResponse.json(
-      { error: `Error descargando el brand book desde Drive: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 502 },
-    )
-  }
-
-  if (pdfBuffer.length === 0) {
-    return NextResponse.json(
-      { error: 'El fichero descargado de Drive está vacío' },
-      { status: 422 },
-    )
-  }
-
+  // ── 5. Descargar y procesar cada documento secuencialmente ────────────────
   // Límite conservador. Gemini 2.5 Flash acepta hasta 2 GB vía inlineData
   // (base64), pero el tamaño razonable para un brand book es 100 MB.
   const MAX_PDF_BYTES = 100 * 1024 * 1024
-  if (pdfBuffer.length > MAX_PDF_BYTES) {
+
+  const extracciones: DocExtraction[] = []
+  const fallos: Array<{ file_name: string; error: string }> = []
+  let totalKb = 0
+
+  for (const asset of aProcesar) {
+    const fileName = asset.file_name ?? asset.drive_file_id!
+    try {
+      const pdfBuffer = await downloadDriveFileAsBuffer(drive, asset.drive_file_id!, asset.mime_type)
+      if (pdfBuffer.length === 0) throw new Error('el fichero descargado de Drive está vacío')
+      if (pdfBuffer.length > MAX_PDF_BYTES) {
+        throw new Error(
+          `pesa ${(pdfBuffer.length / 1024 / 1024).toFixed(1)} MB (máximo 100 MB) — comprime el PDF`,
+        )
+      }
+      totalKb += Math.round(pdfBuffer.length / 1024)
+
+      // Gemini 2.5 Flash primero, Claude como fallback (solo acepta ≤ 32 MB)
+      let extracted: ExtractedBrandContext
+      let modelUsed = 'gemini-2.5-flash'
+      try {
+        extracted = await extractBrandContextWithGemini(pdfBuffer)
+      } catch (geminiErr) {
+        console.warn(
+          `[process-brandbook] Gemini falló con "${fileName}", intentando con Claude:`,
+          geminiErr instanceof Error ? geminiErr.message : geminiErr,
+        )
+        if (pdfBuffer.length > 32 * 1024 * 1024) {
+          throw new Error(
+            `Gemini falló y el fallback de Claude no acepta PDFs > 32 MB. ` +
+            `Gemini: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)}`,
+          )
+        }
+        extracted = await extractBrandContextWithClaude(pdfBuffer)
+        modelUsed = 'claude-opus-4-5'
+      }
+
+      extracciones.push({
+        drive_file_id: asset.drive_file_id!,
+        file_name    : fileName,
+        model        : modelUsed,
+        extracted,
+      })
+      console.log(`[process-brandbook] "${fileName}" procesado con ${modelUsed}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[process-brandbook] Error procesando "${fileName}":`, msg)
+      fallos.push({ file_name: fileName, error: msg })
+    }
+  }
+
+  if (extracciones.length === 0) {
     return NextResponse.json(
       {
         error:
-          `El brand book pesa ${(pdfBuffer.length / 1024 / 1024).toFixed(1)} MB. ` +
-          `El máximo soportado es 100 MB. Comprime el PDF antes de volver a procesarlo.`,
+          `No se pudo procesar ningún brand book. ` +
+          fallos.map((f) => `"${f.file_name}": ${f.error}`).join(' · '),
       },
-      { status: 413 },
+      { status: 500 },
     )
   }
 
-  // ── 5. Procesar con IA (Gemini 2.5 Flash primero, Claude como fallback) ──
-  let extracted: ExtractedBrandContext
-  let modelUsed = 'gemini-2.5-flash'
-  try {
-    extracted = await extractBrandContextWithGemini(pdfBuffer)
-  } catch (geminiErr) {
-    console.warn(
-      '[process-brandbook] Gemini falló, intentando con Claude:',
-      geminiErr instanceof Error ? geminiErr.message : geminiErr,
-    )
-    // Claude solo acepta hasta 32 MB
-    if (pdfBuffer.length > 32 * 1024 * 1024) {
-      return NextResponse.json(
-        {
-          error:
-            `Gemini no pudo procesar el PDF y el fallback de Claude no acepta PDFs > 32 MB. ` +
-            `Error original: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)}`,
-        },
-        { status: 500 },
-      )
-    }
+  // ── 6. Fusionar resultados ─────────────────────────────────────────────────
+  const merged = mergeExtractions(extracciones)
+
+  // Tono y resumen: con más de un documento, síntesis final con Claude.
+  // Si la síntesis falla, se conserva la concatenación del merge.
+  if (extracciones.length > 1) {
     try {
-      extracted = await extractBrandContextWithClaude(pdfBuffer)
-      modelUsed = 'claude-opus-4-5'
-    } catch (claudeErr) {
-      return NextResponse.json(
-        {
-          error:
-            `Error procesando el brand book con IA. ` +
-            `Gemini: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)}. ` +
-            `Claude: ${claudeErr instanceof Error ? claudeErr.message : String(claudeErr)}.`,
-        },
-        { status: 500 },
+      const sintesis = await synthesizeToneAndSummary(extracciones)
+      if (sintesis.tone_of_voice) merged.tone_of_voice = sintesis.tone_of_voice
+      if (sintesis.raw_summary)   merged.raw_summary   = sintesis.raw_summary
+    } catch (err) {
+      console.warn(
+        '[process-brandbook] Síntesis de tono/resumen falló, se conserva la concatenación:',
+        err instanceof Error ? err.message : err,
       )
     }
   }
 
-  // ── 6. Guardar en brand_context (UPSERT por client_id) ────────────────────
+  const modelosUsados = Array.from(new Set(extracciones.map((e) => e.model))).join(', ')
+
+  // ── 7. Guardar en brand_context (UPSERT por client_id) ────────────────────
   const now = new Date().toISOString()
 
   const { data: contextData, error: upsertError } = await supabase
@@ -400,14 +460,21 @@ export async function POST(request: NextRequest) {
     .upsert(
       {
         client_id:      clientId,
-        colors:         extracted.colors,
-        typography:     extracted.typography,
-        tone_of_voice:  extracted.tone_of_voice,
-        style_keywords: extracted.style_keywords,
-        restrictions:   extracted.restrictions,
-        raw_summary:    extracted.raw_summary,
+        colors:         merged.colors,
+        typography:     merged.typography,
+        tone_of_voice:  merged.tone_of_voice,
+        style_keywords: merged.style_keywords,
+        restrictions:   merged.restrictions,
+        raw_summary:    merged.raw_summary,
         processed_at:   now,
-        source_file_id: brandBook.drive_file_id,
+        // Compatibilidad: source_file_id apunta al primero; la lista completa
+        // va en source_files
+        source_file_id: extracciones[0].drive_file_id,
+        source_files:   extracciones.map((e) => ({
+          drive_file_id: e.drive_file_id,
+          file_name    : e.file_name,
+        })),
+        model:          modelosUsados,
         updated_at:     now,
       },
       {
@@ -433,11 +500,13 @@ export async function POST(request: NextRequest) {
     success: true,
     context: contextData,
     stats: {
-      colors:         extracted.colors.length,
-      typography:     extracted.typography.length,
-      style_keywords: extracted.style_keywords.length,
-      pdf_size_kb:    Math.round(pdfBuffer.length / 1024),
-      model:          modelUsed,
+      documentos:     extracciones.length,
+      fallos,
+      colors:         merged.colors.length,
+      typography:     merged.typography.length,
+      style_keywords: merged.style_keywords.length,
+      pdf_size_kb:    totalKb,
+      model:          modelosUsados,
     },
   })
 }

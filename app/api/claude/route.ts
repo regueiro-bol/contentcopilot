@@ -11,6 +11,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { buildClientContext } from '@/lib/context/client-context'
 import { contextToPrompt } from '@/lib/context/context-to-prompt'
 
+export const maxDuration = 300
+
 const MODELO_CLAUDE = 'claude-sonnet-4-6'
 
 const SISTEMA_COPILOTO_DEFAULT = `Eres ContentCopilot, un experto en copywriting y estrategia de contenido digital.
@@ -31,16 +33,16 @@ Cuando generes contenido, hazlo directamente sin explicaciones previas a menos q
  *   agente          string?  — identificador del agente (default: 'claude_api')
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
-  if (!userId) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
-
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  })
-
   try {
+    const { userId } = await auth().catch(() => ({ userId: null as string | null }))
+    if (!userId) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    })
+
     const body = await request.json()
     const {
       // Accept both naming conventions: new (messages/system) and legacy (mensajes/sistema)
@@ -52,6 +54,8 @@ export async function POST(request: NextRequest) {
       max_tokens,
       proyecto_id,
       client_id,
+      // 'brand_only' → contexto ligero (solo bloque MARCA, sin mapa/analytics/GMB/inspiración)
+      context_scope,
       // Trazabilidad de costes
       contenido_id,
       tipo_operacion,
@@ -93,13 +97,16 @@ export async function POST(request: NextRequest) {
 
     // ── Inyección contexto cliente ────────────────────────────────────────────
     if (typeof client_id === 'string' && client_id.trim()) {
-      const supabase   = createAdminClient()
+      const supabase = createAdminClient()
+      // 'brand_only': contexto ligero — solo el bloque MARCA (tono, estilo,
+      // restricciones). El resto de llamadas mantiene el contexto completo.
+      const brandOnly  = context_scope === 'brand_only'
       const clientCtx  = await buildClientContext(supabase, client_id.trim(), {
-        includeMapItems   : true,
-        includeInspiracion: true,
+        includeMapItems   : !brandOnly,
+        includeInspiracion: !brandOnly,
         includeBrand      : true,
-        includeAnalytics  : true,
-        includeGMB        : true,
+        includeAnalytics  : !brandOnly,
+        includeGMB        : !brandOnly,
       })
       if (clientCtx) {
         systemPrompt = `${systemPrompt}\n\n${contextToPrompt(clientCtx)}`
@@ -112,7 +119,7 @@ export async function POST(request: NextRequest) {
 
     // ── Modo JSON: respuesta completa sin streaming ───────────────────────────
     if (modo === 'json') {
-      const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 16000) : 1024
+      const maxTok = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 1024
       const respuesta = await anthropic.messages.create({
         model     : MODELO_CLAUDE,
         max_tokens: maxTok,
@@ -140,7 +147,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Modo streaming ────────────────────────────────────────────────────────
-    const maxTokStream = typeof max_tokens === 'number' ? Math.min(max_tokens, 16000) : 4096
+    const maxTokStream = typeof max_tokens === 'number' ? Math.min(max_tokens, 8000) : 4096
     const encoder = new TextEncoder()
 
     const stream = new ReadableStream({
@@ -200,7 +207,10 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error('Error en /api/claude:', error)
-    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
+    console.error('[/api/claude] Error:', error instanceof Error ? error.stack : error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    )
   }
 }

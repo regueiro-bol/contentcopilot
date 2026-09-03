@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -268,6 +268,11 @@ function exportarCSV(items: MapItem[]) {
 export default function MapaClient({ session, clientId, map, items }: Props) {
   const router = useRouter()
 
+  // Congelar clientId al montar — un router.refresh() transitorio puede devolver
+  // clientId=null desde el server component, lo que deshabilita todos los botones.
+  // Con esta copia estable, los botones no se ven afectados por re-renders externos.
+  const [stableClientId] = useState<string | null>(() => clientId)
+
   // ── Estado: generar nuevo mapa ─────────────────────────────
   const [mostrarConfig, setMostrarConfig]         = useState(false)
   const [meses, setMeses]                         = useState<1 | 3 | 6 | 9 | 12>(6)
@@ -282,11 +287,95 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   const [errorGen, setErrorGen]                   = useState<string | null>(null)
 
   // ── Estado: crear pedidos desde mapa ───────────────────────
-  // Tracks: map_item_id → contenido_id (cuando se crea exitosamente)
-  const [pedidosCreados, setPedidosCreados] = useState<Record<string, string>>({})
-  const [creandoPedido, setCreandoPedido]   = useState<string | null>(null)
-  const [errorPedidoId, setErrorPedidoId]   = useState<string | null>(null) // qué item falló
-  const [errorPedidoMsg, setErrorPedidoMsg] = useState<string | null>(null)
+  // IDs cuya generación está en curso (persiste en BD, se recupera con polling)
+  const [pedidosEnCurso, setPedidosEnCurso] = useState<Set<string>>(
+    () => new Set(items.filter(i => i.pedido_estado === 'generando').map(i => i.id)),
+  )
+  // Mensajes de error por ID (filas en estado 'error')
+  const [erroresPedido, setErroresPedido] = useState<Record<string, string>>(
+    () => Object.fromEntries(
+      items
+        .filter(i => i.pedido_estado === 'error' && i.pedido_error_msg)
+        .map(i => [i.id, i.pedido_error_msg!]),
+    ),
+  )
+  // Contenidos creados — inicializado con los que ya tienen contenido_id en BD
+  const [contenidosPorItem, setContenidosPorItem] = useState<Record<string, string>>(
+    () => Object.fromEntries(
+      items.filter(i => i.contenido_id).map(i => [i.id, i.contenido_id!]),
+    ),
+  )
+
+  // ── Polling de estado de pedidos ────────────────────────────
+  // Mientras haya filas en generación, consulta el endpoint ligero cada 5s.
+  // Para cuando no queda ninguna en curso. No hace window.reload().
+  const TIMEOUT_PEDIDO_MS = 10 * 60 * 1000 // 10 min
+
+  useEffect(() => {
+    if (!map || pedidosEnCurso.size === 0) return
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/strategy/mapa/${map.id}/pedidos-estado`)
+        if (!res.ok) return
+        const { items: polled } = await res.json() as {
+          items: Array<{
+            id               : string
+            pedido_estado    : string
+            pedido_error_msg : string | null
+            contenido_id     : string | null
+            pedido_iniciado_at: string | null
+          }>
+        }
+        const ahora = Date.now()
+
+        setPedidosEnCurso(prev => {
+          const next = new Set(prev)
+          for (const row of polled) {
+            if (!prev.has(row.id)) continue
+            if (row.pedido_estado === 'listo' || row.pedido_estado === 'error') {
+              next.delete(row.id)
+            } else if (row.pedido_estado === 'generando' && row.pedido_iniciado_at) {
+              const elapsed = ahora - new Date(row.pedido_iniciado_at).getTime()
+              if (elapsed > TIMEOUT_PEDIDO_MS) next.delete(row.id)
+            }
+          }
+          return next
+        })
+
+        setErroresPedido(prev => {
+          const next = { ...prev }
+          for (const row of polled) {
+            if (row.pedido_estado === 'error' && row.pedido_error_msg) {
+              next[row.id] = row.pedido_error_msg
+            } else if (row.pedido_estado === 'generando' && row.pedido_iniciado_at) {
+              const elapsed = ahora - new Date(row.pedido_iniciado_at).getTime()
+              if (elapsed > TIMEOUT_PEDIDO_MS) {
+                next[row.id] = 'Tiempo de espera agotado (>10 min). Pulsa Reintentar.'
+              }
+            }
+          }
+          return next
+        })
+
+        setContenidosPorItem(prev => {
+          const next = { ...prev }
+          for (const row of polled) {
+            if (row.pedido_estado === 'listo' && row.contenido_id) {
+              next[row.id] = row.contenido_id
+            }
+          }
+          return next
+        })
+      } catch {
+        // Silenciar errores de red — el siguiente tick reintentará
+      }
+    }
+
+    const interval = setInterval(poll, 5000)
+    return () => clearInterval(interval)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidosEnCurso.size, map?.id])
 
   // ── Estado: gap analysis ────────────────────────────────────
   const [analizandoGaps, setAnalizandoGaps] = useState(false)
@@ -364,17 +453,19 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   }
 
   async function handleCrearPedido(item: MapItem) {
-    if (!clientId || creandoPedido) return // evitar clicks simultáneos
-    setCreandoPedido(item.id)
-    setErrorPedidoId(null)
-    setErrorPedidoMsg(null)
+    if (!stableClientId || pedidosEnCurso.has(item.id)) return
+
+    // Actualización optimista: el botón cambia a "Generando…" inmediatamente
+    setPedidosEnCurso(prev => { const s = new Set(prev); s.add(item.id); return s })
+    setErroresPedido(prev => { const next = { ...prev }; delete next[item.id]; return next })
+
     try {
       const res = await fetch('/api/pedidos/desde-mapa', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
           map_item_id         : item.id,
-          client_id           : clientId,
+          client_id           : stableClientId,
           titulo              : item.title,
           keyword_principal   : item.main_keyword,
           keywords_secundarias: item.secondary_keywords,
@@ -384,14 +475,37 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
           }),
         }),
       })
+
+      const ct = res.headers.get('content-type') ?? ''
+      if (!ct.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(`Error del servidor (${res.status}): ${text.substring(0, 200)}`)
+      }
+
       const data = await res.json()
+
+      if (res.status === 409) {
+        // Ya está generando en otro proceso — el polling actualizará cuando termine
+        return
+      }
       if (!res.ok) throw new Error(data.error ?? 'Error creando pedido')
-      setPedidosCreados((prev) => ({ ...prev, [item.id]: data.contenido_id as string }))
+
+      // La ruta devuelve contenido_id cuando ya existía (duplicado de slug)
+      // o cuando el proceso fue tan rápido que terminó antes del primer poll.
+      // En el flujo normal, el brief tarda ~60-120s, así que el contenido_id
+      // llegará via polling cuando la ruta lo marque 'listo'.
+      if (data.contenido_id && data.ok) {
+        setContenidosPorItem(prev => ({ ...prev, [item.id]: data.contenido_id as string }))
+        setPedidosEnCurso(prev => { const next = new Set(prev); next.delete(item.id); return next })
+      }
+      // Si no viene contenido_id aún (flujo normal, Claude en progreso):
+      // el polling detectará el cambio a 'listo' y actualizará el estado.
     } catch (e) {
-      setErrorPedidoId(item.id)
-      setErrorPedidoMsg(e instanceof Error ? e.message : 'Error desconocido')
-    } finally {
-      setCreandoPedido(null)
+      setPedidosEnCurso(prev => { const next = new Set(prev); next.delete(item.id); return next })
+      setErroresPedido(prev => ({
+        ...prev,
+        [item.id]: e instanceof Error ? e.message : 'Error desconocido',
+      }))
     }
   }
 
@@ -442,12 +556,12 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
       if (filtroTipo !== 'todos' && (i.tipo_articulo ?? 'nuevo') !== filtroTipo) return false
       if (filtroValidacion !== 'todos' && (i.validacion ?? 'propuesto') !== filtroValidacion) return false
       if (filtroPrioridad !== 'todos' && String(i.prioridad_final ?? i.priority) !== filtroPrioridad) return false
-      const tienePedido = !!(pedidosCreados[i.id] ?? i.contenido_id)
+      const tienePedido = !!(contenidosPorItem[i.id])
       if (filtroPedido === 'con_pedido'  && !tienePedido) return false
       if (filtroPedido === 'sin_pedido'  &&  tienePedido) return false
       return true
     })
-  }, [itemsMerged, filtroTipo, filtroValidacion, filtroPrioridad, filtroPedido, pedidosCreados])
+  }, [itemsMerged, filtroTipo, filtroValidacion, filtroPrioridad, filtroPedido, contenidosPorItem])
 
   // ── Agrupar por fase ───────────────────────────────────────
   const faseGroups: [string, MapItem[]][] = useMemo(() => {
@@ -482,7 +596,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
   const totalMejoras       = itemsMerged.filter((i) => i.tipo_articulo === 'mejora').length
   const totalActualizacion = itemsMerged.filter((i) => i.tipo_articulo === 'actualizacion').length
   const totalValidados     = itemsMerged.filter((i) => (i.validacion ?? 'propuesto') !== 'propuesto').length
-  const totalConPedido     = itemsMerged.filter((i) => !!(pedidosCreados[i.id] ?? i.contenido_id)).length
+  const totalConPedido     = itemsMerged.filter((i) => !!(contenidosPorItem[i.id])).length
 
   // ── Acción: sugerir configuración ────────────────────────
   async function fetchSugerencia() {
@@ -555,6 +669,13 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
           config        : { meses, articulos_por_mes: artMes, distribucion },
         }),
       })
+
+      const contentType = res.headers.get('content-type') ?? ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(`Error del servidor (${res.status}): ${text.substring(0, 300)}`)
+      }
+
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error generando mapa')
       router.refresh()
@@ -598,7 +719,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                 variant="outline"
                 size="sm"
                 onClick={handleAnalizarGaps}
-                disabled={analizandoGaps || !clientId || !map}
+                disabled={analizandoGaps || !stableClientId || !map}
                 className="gap-2 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
               >
                 {analizandoGaps
@@ -1140,7 +1261,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">P</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 hidden md:table-cell">Redactor</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 hidden md:table-cell">Validación</th>
-                          <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">Acción</th>
+                          {stableClientId && <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">Acción</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
@@ -1245,10 +1366,13 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-3 text-center">
+                            {stableClientId && <td className="px-3 py-3 text-center">
                               {(() => {
-                                // Comprobar si ya tiene contenido (original o recién creado)
-                                const contenidoId = pedidosCreados[item.id] ?? item.contenido_id
+                                const contenidoId = contenidosPorItem[item.id]
+                                const enCurso     = pedidosEnCurso.has(item.id)
+                                const errorMsg    = erroresPedido[item.id]
+                                const isUpdate    = item.content_status === 'existing_content'
+
                                 if (contenidoId) {
                                   return (
                                     <Link
@@ -1260,22 +1384,38 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                                     </Link>
                                   )
                                 }
-                                if (creandoPedido === item.id) {
+
+                                if (enCurso) {
                                   return (
-                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 bg-gray-100 px-2 py-1.5 rounded-lg">
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg">
                                       <Loader2 className="h-3 w-3 animate-spin" />
-                                      Creando...
+                                      Generando…
                                     </span>
                                   )
                                 }
-                                const isUpdate = item.content_status === 'existing_content'
+
+                                if (errorMsg) {
+                                  return (
+                                    <div className="space-y-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCrearPedido(item)}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                                      >
+                                        <Plus className="h-3 w-3" />
+                                        Reintentar
+                                      </button>
+                                      <p className="text-[10px] text-red-500 leading-tight max-w-[120px]">{errorMsg}</p>
+                                    </div>
+                                  )
+                                }
+
                                 return (
                                   <button
                                     type="button"
                                     onClick={() => handleCrearPedido(item)}
-                                    disabled={!clientId || creandoPedido !== null}
                                     className={cn(
-                                      'inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50',
+                                      'inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer',
                                       isUpdate
                                         ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
                                         : 'text-gray-600 bg-gray-100 hover:bg-gray-200',
@@ -1286,10 +1426,7 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                                   </button>
                                 )
                               })()}
-                              {errorPedidoId === item.id && errorPedidoMsg && (
-                                <p className="text-[10px] text-red-500 mt-1">{errorPedidoMsg}</p>
-                              )}
-                            </td>
+                            </td>}
                           </tr>
                         ))}
                       </tbody>

@@ -23,7 +23,7 @@ import { fal } from '@fal-ai/client'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { downloadFromDrive } from '@/lib/google-drive'
-import { composeCreative } from '@/lib/ad-creatives/compose'
+import { composeCreativeCanvas } from '@/lib/ad-creatives/compose-canvas'
 import { ensureAdCreativesBucket, uploadAdCreative } from '@/lib/ad-creatives/storage'
 import { guardarRegistroCoste } from '@/lib/costes'
 
@@ -48,14 +48,22 @@ interface GenerateBody {
   contenido_id?:       string
 }
 
+/** Copy de una variación adaptado a un formato concreto (CAMBIO 4). */
+interface FormatCopy {
+  headline:     string
+  subheadline?: string | null
+  body?:        string | null
+  cta?:         string | null
+}
+
+/** Concepto creativo enriquecido de una variación (CAMBIO 1). */
 interface CopyVariation {
-  headline:           string
-  tagline?:           string
-  caption?:           string
-  body?:              string
-  cta?:               string
-  visual_description: string
-  needs_text_overlay: boolean  // ignorado para selección de modelo — siempre usamos sharp
+  angulo:             string
+  concepto_visual_es: string
+  prompt_en:          string
+  caption:            string
+  /** Copy por formato — solo los formatos solicitados. */
+  copy_por_formato:   Partial<Record<AdFormat, FormatCopy>>
 }
 
 interface StoredColor {
@@ -190,9 +198,30 @@ function detectInstitution(brief: string): InstitutionPaletteColor[] | null {
 // Copy con Claude
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COPY_SYSTEM_PROMPT = `Eres un experto copywriter especializado en marketing digital y publicidad.
-Tu tarea es generar variaciones de copy para creativos publicitarios.
-Responde EXCLUSIVAMENTE con un array JSON válido (sin comentarios, sin markdown, sin texto adicional).`
+const COPY_SYSTEM_PROMPT = `Eres director creativo y copywriter senior de una agencia española de publicidad, experto en dirección de arte fotográfica y en piezas para redes sociales.
+
+JERARQUÍA DE CONTEXTO (obligatoria):
+- MARCA (cliente): gobierna el tono verbal y el estilo VISUAL global. Es la capa dominante — nada puede contradecirla.
+- PROYECTO: marca el enfoque editorial y el ángulo temático.
+- CONTENIDO (artículo): es la FUENTE del mensaje. No inventes datos que no estén en el contenido o el brief.
+
+Para el estilo visual RESPETA ESTRICTAMENTE el brand_context: si la marca tiene una estética natural/documental/sin gloss, NO generes composiciones artificiales, posadas ni con acabado publicitario brillante. Si prohíbe algo, es inviolable.
+
+Responde EXCLUSIVAMENTE con un array JSON válido (sin comentarios, sin markdown, sin texto adicional). Empieza con [ y termina con ].`
+
+/** Guía de longitud de copy por formato (CAMBIO 4). */
+const FORMAT_COPY_GUIDE: Record<AdFormat, string> = {
+  '9x16':   'VERTICAL (mucho espacio): headline potente (≤7 palabras), subheadline opcional, body de 1-2 frases si aporta, cta si aplica.',
+  '1x1':    'CUADRADO (espacio medio): headline (≤7 palabras), subheadline breve opcional, body corto de 1 frase como máximo, cta si aplica.',
+  '1.91x1': 'HORIZONTAL APAISADO (poco alto): MUY breve. Solo headline corto (≤5 palabras) + cta si aplica. subheadline y body deben ser null — no cabe texto largo.',
+}
+
+/** Región de espacio negativo reservado para el texto, según ratio (CAMBIO 4). */
+const FORMAT_NEGATIVE_SPACE: Record<AdFormat, string> = {
+  '9x16':   'Reserve clear, uncluttered negative space in the LOWER THIRD of the vertical frame for a text overlay.',
+  '1x1':    'Reserve clear, uncluttered negative space in the LOWER THIRD of the square frame for a text overlay.',
+  '1.91x1': 'Reserve clear, uncluttered negative space on the LEFT THIRD of the horizontal frame for a short text overlay; keep the subject on the right.',
+}
 
 function buildCopyPrompt(params: {
   intent:          PublicationIntent
@@ -202,11 +231,15 @@ function buildCopyPrompt(params: {
   styleKeywords:   string[]
   restrictions:    string | null
   clientName:      string
+  projectTone:     string | null
+  projectDesc:     string | null
+  formats:         AdFormat[]
   variationCount:  number
 }): string {
   const {
     intent, brief, sourceContent, toneOfVoice,
-    styleKeywords, restrictions, clientName, variationCount,
+    styleKeywords, restrictions, clientName, projectTone, projectDesc,
+    formats, variationCount,
   } = params
 
   const intentDescription: Record<PublicationIntent, string> = {
@@ -215,46 +248,60 @@ function buildCopyPrompt(params: {
     paid_campaign:       'anuncio de pago (paid media) con objetivo de conversión',
   }
 
-  const copyStructure: Record<PublicationIntent, string> = {
-    organic_informative: `{
-  "headline": "Titular principal (max 10 palabras, impactante)",
-  "caption": "Texto del post (2-4 frases, informativo y enganchante)",
-  "visual_description": "Descripción detallada de la escena/fondo ideal (50-100 palabras): qué muestra, estilo, composición, iluminación. NO mencionar texto, letras ni tipografía.",
-  "needs_text_overlay": false
-}`,
-    organic_brand: `{
-  "headline": "Titular emocional de marca (max 8 palabras)",
-  "tagline": "Frase de marca corta y memorable (max 6 palabras)",
-  "visual_description": "Descripción detallada de la escena/fondo ideal (50-100 palabras): estilo lifestyle, mood, composición. NO mencionar texto ni tipografía.",
-  "needs_text_overlay": false
-}`,
-    paid_campaign: `{
-  "headline": "Titular del anuncio (max 40 chars, llamada a la atención)",
-  "body": "Cuerpo del anuncio (1-2 frases, beneficio claro)",
-  "cta": "Call to action (2-4 palabras: 'Empieza ahora', 'Descubre más'...)",
-  "visual_description": "Descripción detallada de la escena/fondo ideal (50-100 palabras). Solo la imagen, sin texto ni overlays.",
-  "needs_text_overlay": false
-}`,
-  }
+  const ctaRule = intent === 'paid_campaign'
+    ? 'cta: OBLIGATORIO (2-4 palabras, ej. "Descúbrelo", "Empieza ahora").'
+    : 'cta: null (esta intención no lleva CTA salvo que el brief lo pida).'
 
-  return `Genera exactamente ${variationCount} variaciones de copy para un creativo de tipo "${intentDescription[intent]}".
+  const copyPorFormato = formats
+    .map((f) => `    "${f}": { "headline": "...", "subheadline": null, "body": null, "cta": null }  // ${FORMAT_COPY_GUIDE[f]}`)
+    .join('\n')
+
+  const bloqueProyecto = (projectTone || projectDesc)
+    ? `PROYECTO (enfoque editorial):
+${projectDesc ? `- Descripción: ${projectDesc}` : ''}
+${projectTone ? `- Tono editorial: ${projectTone}` : ''}`.trim()
+    : 'PROYECTO: sin especificaciones — aplica solo marca y contenido.'
+
+  return `Genera exactamente ${variationCount} variaciones para un creativo de tipo "${intentDescription[intent]}", CADA UNA CON UN ÁNGULO CREATIVO DISTINTO.
 
 CLIENTE: ${clientName}
-BRIEF: ${brief}${sourceContent ? `\nCONTENIDO FUENTE: ${sourceContent}` : ''}
+BRIEF: ${brief}${sourceContent ? `\n\nCONTENIDO FUENTE (artículo — fuente del mensaje):\n${sourceContent}` : ''}
 
-IDENTIDAD DE MARCA:
+MARCA (identidad — capa dominante):
 - Tono de voz: ${toneOfVoice ?? 'Profesional y cercano'}
 - Palabras clave de estilo: ${styleKeywords.length > 0 ? styleKeywords.join(', ') : 'no especificadas'}
 - Restricciones: ${restrictions ?? 'ninguna'}
 
-Devuelve un array JSON con exactamente ${variationCount} objetos, cada uno con esta estructura:
-${copyStructure[intent]}
+${bloqueProyecto}
 
-Reglas:
-- Cada variación debe ser distinta en enfoque y ángulo creativo
-- Respeta el tono de voz y las restricciones de la marca
-- La visual_description describe SOLO la imagen de fondo (sin texto, sin overlays)
-- Responde SOLO con el array JSON, sin texto antes ni después`
+Cada objeto del array debe tener EXACTAMENTE esta estructura:
+{
+  "angulo": "el ángulo creativo de esta variación en una frase (ej: 'el momento en que el dinero no puede esperar 48h')",
+  "concepto_visual_es": "descripción en español clara de qué se ve en la imagen, para que el redactor valide sin leer inglés técnico. 2-3 frases.",
+  "prompt_en": "prompt fotográfico ELABORADO en inglés para FLUX (ver requisitos abajo)",
+  "caption": "texto del pie de publicación (DISTINTO del texto sobre la imagen), con el tono de la marca",
+  "copy_por_formato": {
+${copyPorFormato}
+  }
+}
+
+REQUISITOS DEL prompt_en — orden de fotografía profesional detallada, NO una descripción genérica. Cubre SIEMPRE estas capas:
+- COMPOSICIÓN Y ENCUADRE: tipo de plano (primer plano/detalle/plano medio/general), ángulo de cámara (nivel de ojos/picado/contrapicado/cenital), regla de composición, y espacio negativo genérico donde irá el texto.
+- ILUMINACIÓN: tipo (natural/dorada/difusa), dirección (lateral/contraluz/frontal suave), mood lumínico.
+- ESCENA: sujeto y entorno detallados, localización española/europea, atrezzo coherente con el mensaje.
+- PROFUNDIDAD: shallow/deep focus, bokeh si aplica.
+- ESTILO FOTOGRÁFICO: género (documental/editorial/lifestyle) coherente con el brand_context del cliente.
+- Termina SIEMPRE con: reglas de localización (contexto español/europeo; si hay moneda, euro banknotes/coins, nunca 'ATM'/'dollar bills' sino 'cash machine'/'euro banknotes') y la instrucción anti-texto: 'no visible text, no signage, no labels, no letters or numbers anywhere in the image, no watermarks'.
+Ejemplo del nivel esperado: "medium close-up shot at eye level of a person's hands holding a smartphone showing a banking app, warm golden afternoon light from a window on the left, shallow depth of field with a softly blurred Spanish home interior in the background, documentary editorial style, negative space in the lower third for text overlay, authentic candid feel, no gloss, ...".
+
+REGLAS DE COPY:
+- ${ctaRule}
+- Adapta la longitud del copy a CADA formato según su guía (el apaisado 1.91x1 va MUY breve).
+- Usa null (no string vacío) en subheadline/body/cta cuando no apliquen.
+- El caption es para el pie del post, no se renderiza sobre la imagen.
+- Respeta el tono de la marca y las restricciones; el enfoque editorial lo marca el proyecto; el mensaje sale del contenido.
+
+Responde SOLO con el array JSON (${variationCount} objetos), sin texto antes ni después.`
 }
 
 async function generateCopyVariations(params: {
@@ -265,6 +312,9 @@ async function generateCopyVariations(params: {
   styleKeywords:           string[]
   restrictions:            string | null
   clientName:              string
+  projectTone:             string | null
+  projectDesc:             string | null
+  formats:                 AdFormat[]
   variationCountOverride?: number
 }): Promise<CopyVariation[]> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -272,7 +322,7 @@ async function generateCopyVariations(params: {
 
   const message = await anthropic.messages.create({
     model:      'claude-opus-4-5',
-    max_tokens: 4096,
+    max_tokens: 8192,
     system:     COPY_SYSTEM_PROMPT,
     messages:   [{ role: 'user', content: buildCopyPrompt({ ...params, variationCount }) }],
   })
@@ -294,20 +344,34 @@ async function generateCopyVariations(params: {
   if (!Array.isArray(variations)) throw new Error('Claude devolvió un objeto en lugar de un array')
 
   return variations.map((v) => ({
-    headline:           v.headline          ?? '',
-    tagline:            v.tagline,
-    caption:            v.caption,
-    body:               v.body,
-    cta:                v.cta,
-    visual_description: v.visual_description ?? '',
-    needs_text_overlay: false,  // siempre false — el texto va en sharp
+    angulo:             v.angulo             ?? '',
+    concepto_visual_es: v.concepto_visual_es ?? '',
+    prompt_en:          v.prompt_en          ?? '',
+    caption:            v.caption            ?? '',
+    copy_por_formato:   (v.copy_por_formato && typeof v.copy_por_formato === 'object')
+      ? v.copy_por_formato
+      : {},
   }))
+}
+
+/** Copy del formato pedido, con fallback a cualquier otro formato disponible. */
+function resolverCopyFormato(variation: CopyVariation, format: AdFormat): FormatCopy {
+  const exacto = variation.copy_por_formato[format]
+  if (exacto?.headline) return exacto
+  // Fallback: primer formato con headline
+  const alguno = Object.values(variation.copy_por_formato).find((c) => c?.headline)
+  return alguno ?? { headline: variation.angulo || '', subheadline: null, body: null, cta: null }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt de imagen (solo fondo, sin texto)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Prompt final de fondo. Parte del prompt_en elaborado que devuelve Claude
+ * (ya cubre composición/luz/escena/estilo + localización + anti-texto) y le
+ * añade el ratio y la reserva de espacio negativo específica del formato.
+ */
 function buildImagePrompt(params: {
   variation:     CopyVariation
   styleKeywords: string[]
@@ -317,25 +381,21 @@ function buildImagePrompt(params: {
 
   const formatDesc: Record<AdFormat, string> = {
     '1x1':    'square 1:1 composition',
-    '9x16':   'vertical 9:16 composition for Stories/Reels',
+    '9x16':   'vertical 9:16 composition for Stories/Reels, full bleed, edge to edge, no borders',
     '1.91x1': 'horizontal panoramic 1.91:1 composition for display ads',
   }
 
-  const styleRef = styleKeywords.length > 0
-    ? styleKeywords.slice(0, 6).join(', ')
-    : 'professional, modern'
+  // Base: el prompt elaborado de Claude; fallback al concepto si viniera vacío
+  let prompt = variation.prompt_en?.trim() || variation.concepto_visual_es?.trim() || ''
 
-  let prompt = variation.visual_description
+  const styleRef = styleKeywords.slice(0, 6).join(', ')
+  if (styleRef && !prompt.toLowerCase().includes(styleRef.toLowerCase().split(',')[0]))
+    prompt += `. Brand visual style: ${styleRef}`
 
-  if (styleRef) prompt += `. Visual style: ${styleRef}`
-  prompt += `. Optimized ${formatDesc[format]}`
+  prompt += `. ${formatDesc[format]}. ${FORMAT_NEGATIVE_SPACE[format]}`
 
-  if (format === '9x16') {
-    prompt += '. Full bleed, edge to edge composition, no borders, no padding'
-  }
-
-  // Sufijo obligatorio: sin texto, fotorrealismo
-  prompt += '. Clean background, no text, no words, no typography, no letters, no captions, no overlays. Photorealistic commercial photography.'
+  // Refuerzo de seguridad por si el prompt_en no cerró con anti-texto/localización
+  prompt += '. European/Spanish setting; any currency must be euro banknotes or coins. No visible text, no signage, no labels, no letters or numbers anywhere in the image, no watermarks. Photorealistic commercial photography.'
 
   return prompt
 }
@@ -470,8 +530,10 @@ export async function POST(request: NextRequest) {
 
   const supabase = createAdminClient()
 
-  // ── Obtener proyecto_id desde el contenido (para registros de coste) ──────
+  // ── Obtener proyecto (para costes + contexto editorial: CAMBIO 3) ─────────
   let proyectoId: string | null = null
+  let projectTone: string | null = null
+  let projectDesc: string | null = null
   if (contenido_id) {
     const { data: contData } = await supabase
       .from('contenidos')
@@ -479,6 +541,15 @@ export async function POST(request: NextRequest) {
       .eq('id', contenido_id)
       .maybeSingle()
     proyectoId = contData?.proyecto_id ?? null
+    if (proyectoId) {
+      const { data: projData } = await supabase
+        .from('proyectos')
+        .select('tono_voz, descripcion')
+        .eq('id', proyectoId)
+        .maybeSingle()
+      projectTone = (projData?.tono_voz as string | null) ?? null
+      projectDesc = (projData?.descripcion as string | null) ?? null
+    }
   }
 
   // ── Asegurar bucket de Storage ─────────────────────────────────────────────
@@ -564,6 +635,9 @@ export async function POST(request: NextRequest) {
       styleKeywords,
       restrictions,
       clientName:             clienteData.nombre,
+      projectTone,
+      projectDesc,
+      formats:                formats as AdFormat[],
       variationCountOverride: variation_count
         ? Math.min(Math.max(1, variation_count), 10)
         : undefined,
@@ -600,6 +674,9 @@ export async function POST(request: NextRequest) {
 
       await Promise.all(
         (formats as AdFormat[]).map(async (format) => {
+          // Copy adaptado a este formato (CAMBIO 4)
+          const fmtCopy = resolverCopyFormato(variation, format)
+
           // 1. Prompt de fondo (sin texto)
           const imagePrompt = buildImagePrompt({ variation, styleKeywords, format })
 
@@ -624,11 +701,12 @@ export async function POST(request: NextRequest) {
 
           if (bgUrl) {
             try {
-              const composedBuffer = await composeCreative({
+              const composedBuffer = await composeCreativeCanvas({
                 backgroundImageUrl: bgUrl,
-                headline:           variation.headline,
-                body:               variation.body ?? variation.caption,
-                cta:                variation.cta,
+                headline:           fmtCopy.headline,
+                subheadline:        fmtCopy.subheadline,
+                body:               fmtCopy.body,
+                cta:                fmtCopy.cta,
                 logoBuffer,
                 primaryHex,
                 secondaryHex,
@@ -662,14 +740,16 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // 5. Copy payload
+          // 5. Copy payload (por formato + metadatos del concepto)
           const copyPayload: Record<string, string | undefined> = {
-            headline: variation.headline,
+            headline: fmtCopy.headline,
           }
-          if (variation.tagline) copyPayload.tagline = variation.tagline
-          if (variation.caption) copyPayload.caption = variation.caption
-          if (variation.body)    copyPayload.body    = variation.body
-          if (variation.cta)     copyPayload.cta     = variation.cta
+          if (fmtCopy.subheadline)      copyPayload.subheadline = fmtCopy.subheadline
+          if (fmtCopy.body)             copyPayload.body        = fmtCopy.body
+          if (fmtCopy.cta)              copyPayload.cta         = fmtCopy.cta
+          if (variation.caption)        copyPayload.caption     = variation.caption
+          if (variation.angulo)         copyPayload.angulo      = variation.angulo
+          if (variation.concepto_visual_es) copyPayload.concepto_visual_es = variation.concepto_visual_es
 
           // 6. Guardar en Supabase
           const { data: saved, error: saveError } = await supabase
