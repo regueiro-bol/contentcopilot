@@ -169,7 +169,12 @@ Genera un brief SEO editorial exhaustivo con estas secciones obligatorias:
 Indica uno: guía completa, comparativa, listicle, FAQ, tutorial paso a paso, análisis, opinión experta. Justifica brevemente.
 
 ## 3. Extensión recomendada
-Número de palabras recomendado basado en la dificultad y el tipo de contenido. Formato: "X - Y palabras".
+${ctx.funnelStage === 'bofu'
+  ? 'Rango obligatorio para BOFU: 1000-1500 palabras.'
+  : ctx.funnelStage === 'mofu'
+    ? 'Rango obligatorio para MOFU: 1300-1900 palabras.'
+    : 'Rango obligatorio para TOFU: 1600-2400 palabras.'}
+Elige un rango concreto DENTRO de ese límite según la complejidad real del tema. Este rango es un techo absoluto: no está permitido recomendarlo más alto bajo ningún criterio. Formato: "X - Y palabras".
 
 ## 4. Estructura H2/H3 completa
 Mínimo 5 H2 con al menos 2-3 H3 bajo cada uno. Formato:
