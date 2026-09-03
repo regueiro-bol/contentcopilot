@@ -1067,7 +1067,7 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
 
       const tokensBase = extMax * 2.2
       const tokensMargenEstructura = 500
-      const maxTokensBorrador = Math.min(Math.max(tokensBase + tokensMargenEstructura, 2000), 16000)
+      const maxTokensBorrador = Math.floor(Math.min(Math.max(tokensBase + tokensMargenEstructura, 2000), 8000))
 
       const res = await fetch('/api/claude', {
         method: 'POST',
