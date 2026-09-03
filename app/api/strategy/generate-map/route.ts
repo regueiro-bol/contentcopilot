@@ -6,7 +6,7 @@ import { buildClientContext } from '@/lib/context/client-context'
 import { contextToPrompt } from '@/lib/context/context-to-prompt'
 import { toSpanishTitleCase } from '@/lib/utils'
 
-export const maxDuration = 120
+export const maxDuration = 300
 
 // ─────────────────────────────────────────────────────────────
 // Constantes
@@ -14,9 +14,10 @@ export const maxDuration = 120
 
 /**
  * Máximo de artículos por llamada a Claude.
- * ~30 artículos × ~150 tokens/art ≈ 4 500 tokens de output → safe dentro de 8 192.
+ * max_tokens=2000 y ~150 tokens/art → techo real ≈ 13 artículos.
+ * Usamos 12 para tener margen de seguridad.
  */
-const MAX_ARTICLES_PER_BATCH = 30
+const MAX_ARTICLES_PER_BATCH = 12
 
 /** Top N keywords por cluster en el prompt (reduce tokens de input) */
 const TOP_KW_PER_CLUSTER = 5
@@ -481,151 +482,156 @@ export async function POST(request: NextRequest) {
       if (currentBatch.length > 0) clusterBatches.push(currentBatch)
     }
 
+    const FASES_VALIDAS = ['arranque', 'consolidacion', 'expansion'] as const
+
+    // ── Llamadas a Claude en PARALELO ───────────────────────
+    // Cada batch es independiente (diferentes clusters), por lo que pueden
+    // ejecutarse simultáneamente. El tiempo total pasa de Σ(batches) a max(batches).
+    console.log(`[GenerateMap] Lanzando ${clusterBatches.length} batches en paralelo`)
+
+    const batchResultados = await Promise.all(
+      clusterBatches.map(async (batch, batchIdx) => {
+        const articulosParaBatch = batch.reduce((sum, c) => sum + (c.assigned_articles ?? 1), 0)
+        console.log(`[GenerateMap] Batch ${batchIdx + 1}/${clusterBatches.length}: ${batch.length} clusters, pidiendo ${articulosParaBatch} artículos`)
+
+        try {
+          const response = await anthropic.messages.create({
+            model     : 'claude-sonnet-4-5',
+            max_tokens: 2000,
+            system    : SYSTEM_PROMPT,
+            messages  : [{
+              role   : 'user',
+              content: buildMapPrompt(
+                cliente.nombre,
+                artMes,
+                distribucion,
+                batch,
+                batchIdx,
+                clusterBatches.length,
+                articulosParaBatch,
+                proyectoContextStr,
+                clientContextStr,
+              ),
+            }],
+          })
+
+          const rawText    = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'
+          const stopReason = response.stop_reason
+
+          console.log(`[GenerateMap] Batch ${batchIdx + 1} stop_reason: ${stopReason} | largo: ${rawText.length} chars`)
+          if (stopReason === 'max_tokens') {
+            console.warn(`[GenerateMap] Batch ${batchIdx + 1} — RESPUESTA TRUNCADA — sube MAX_ARTICLES_PER_BATCH o revisa el prompt`)
+          }
+
+          const match = rawText.match(/\[[\s\S]*\]/)
+          if (!match) {
+            console.warn(`[GenerateMap] Batch ${batchIdx + 1} — no se encontró JSON array`)
+            return { articles: [] as ArticleItem[], articulosParaBatch }
+          }
+
+          const parsed = JSON.parse(match[0]) as ArticleItem[]
+          const articles = parsed
+            .filter((a) => a.title && a.main_keyword && a.cluster && a.funnel_stage)
+            .map((a) => ({
+              ...a,
+              slug              : toSlug(a.slug || a.title),
+              secondary_keywords: Array.isArray(a.secondary_keywords) ? a.secondary_keywords : [],
+              volume            : typeof a.volume === 'number' ? a.volume : null,
+              difficulty        : typeof a.difficulty === 'number' ? a.difficulty : null,
+              priority          : typeof a.priority === 'number' ? a.priority : 2,
+              fase_recomendada  : FASES_VALIDAS.includes(a.fase_recomendada as typeof FASES_VALIDAS[number])
+                ? a.fase_recomendada
+                : (a.funnel_stage === 'bofu' ? 'arranque' : a.funnel_stage === 'mofu' ? 'consolidacion' : 'expansion'),
+            }))
+            .slice(0, articulosParaBatch)
+
+          console.log(`[GenerateMap] Batch ${batchIdx + 1} — ${articles.length} artículos válidos`)
+          return { articles, articulosParaBatch }
+
+        } catch (batchErr) {
+          console.error(
+            `[GenerateMap] Error en batch ${batchIdx + 1}:`,
+            batchErr instanceof Error ? batchErr.message : batchErr,
+          )
+          return { articles: [] as ArticleItem[], articulosParaBatch }
+        }
+      }),
+    )
+
+    // ── Insertar resultados secuencialmente (mantiene sort_order) ──
     let totalItemsInsertados = 0
     let sortOrder            = 0
 
-    for (let batchIdx = 0; batchIdx < clusterBatches.length; batchIdx++) {
-      const batch = clusterBatches[batchIdx]
+    for (let batchIdx = 0; batchIdx < batchResultados.length; batchIdx++) {
+      const { articles } = batchResultados[batchIdx]
+      if (articles.length === 0) continue
 
-      // Sumar artículos asignados a los clusters de este batch
-      const articulosParaBatch = batch.reduce((sum, c) => sum + (c.assigned_articles ?? 1), 0)
+      const items = articles.map((a) => {
+        const vol  = a.volume
+        const diff = a.difficulty
+        const p1   = vol ?? null
+        const p2   = (vol != null && diff != null)
+          ? Math.round(vol * (100 - diff) / 100)
+          : null
 
-      console.log(`[GenerateMap] Batch ${batchIdx + 1}/${clusterBatches.length}: ${batch.length} clusters, pidiendo ${articulosParaBatch} artículos`)
-
-      try {
-        const response = await anthropic.messages.create({
-          model     : 'claude-sonnet-4-5',
-          max_tokens: 8192,
-          system    : SYSTEM_PROMPT,
-          messages  : [{
-            role   : 'user',
-            content: buildMapPrompt(
-              cliente.nombre,
-              artMes,
-              distribucion,
-              batch,
-              batchIdx,
-              clusterBatches.length,
-              articulosParaBatch,
-              proyectoContextStr,
-              clientContextStr,
-            ),
-          }],
-        })
-
-        const rawText    = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'
-        const stopReason = response.stop_reason
-
-        console.log(`[GenerateMap] Batch ${batchIdx + 1} stop_reason: ${stopReason} | largo: ${rawText.length} chars`)
-        if (stopReason === 'max_tokens') {
-          console.warn(`[GenerateMap] Batch ${batchIdx + 1} — RESPUESTA TRUNCADA!`)
-        }
-
-        // ── Parsear artículos del batch ───────────────────────
-        const match = rawText.match(/\[[\s\S]*\]/)
-        if (!match) {
-          console.warn(`[GenerateMap] Batch ${batchIdx + 1} — no se encontró JSON array`)
-          continue
-        }
-
-        const FASES_VALIDAS = ['arranque', 'consolidacion', 'expansion'] as const
-        const parsed = JSON.parse(match[0]) as ArticleItem[]
-        const articles = parsed
-          .filter((a) => a.title && a.main_keyword && a.cluster && a.funnel_stage)
-          .map((a) => ({
-            ...a,
-            slug              : toSlug(a.slug || a.title),
-            secondary_keywords: Array.isArray(a.secondary_keywords) ? a.secondary_keywords : [],
-            volume            : typeof a.volume === 'number' ? a.volume : null,
-            difficulty        : typeof a.difficulty === 'number' ? a.difficulty : null,
-            priority          : typeof a.priority === 'number' ? a.priority : 2,
-            fase_recomendada  : FASES_VALIDAS.includes(a.fase_recomendada as typeof FASES_VALIDAS[number])
-              ? a.fase_recomendada
-              : (a.funnel_stage === 'bofu' ? 'arranque' : a.funnel_stage === 'mofu' ? 'consolidacion' : 'expansion'),
-          }))
-          .slice(0, articulosParaBatch) // No exceder lo pedido
-
-        console.log(`[GenerateMap] Batch ${batchIdx + 1} — ${articles.length} artículos válidos`)
-
-        if (articles.length === 0) continue
-
-        // ── Insertar items en Supabase inmediatamente ────────
-        const items = articles.map((a) => {
-          const vol  = a.volume
-          const diff = a.difficulty
-          const p1   = vol ?? null
-          const p2   = (vol != null && diff != null)
-            ? Math.round(vol * (100 - diff) / 100)
-            : null
-
-          // Prioridad final: p4 > p3 > p2_oportunidad > legacy priority
-          let prioridad_final: number
-          if (p2 != null) {
-            if (p2 > 3000)     prioridad_final = 1
-            else if (p2 > 1000) prioridad_final = 2
-            else                prioridad_final = 3
-          } else {
-            prioridad_final = typeof a.priority === 'number' ? a.priority : 2
-          }
-
-          const base = {
-            map_id            : map.id,
-            title             : toSpanishTitleCase(a.title),
-            slug              : a.slug,
-            main_keyword      : a.main_keyword,
-            secondary_keywords: a.secondary_keywords,
-            cluster           : a.cluster,
-            funnel_stage      : a.funnel_stage,
-            volume            : vol,
-            difficulty        : diff,
-            priority          : a.priority,
-            suggested_month   : null,
-            fase              : a.fase_recomendada ?? 'sin_fase',
-            sort_order        : sortOrder++,
-            status            : 'planned',
-          }
-
-          // Campos Sprint 2 — solo se incluyen si la migración 029 está aplicada
-          const sprint2 = {
-            tipo_articulo    : 'nuevo' as const,
-            p1_volumen       : p1,
-            p2_oportunidad   : p2,
-            p3_actualizacion : false,
-            p4_manual        : null as number | null,
-            prioridad_final,
-            validacion       : 'propuesto' as const,
-          }
-
-          return { ...base, ...sprint2 }
-        })
-
-        let { error: itemsError } = await supabase
-          .from('content_map_items')
-          .insert(items)
-
-        // Si la migración 029 no está aplicada, reintentar sin los campos Sprint 2
-        if (itemsError?.code === 'PGRST204') {
-          console.warn(`[GenerateMap] Campos Sprint 2 no disponibles, reintentando sin ellos`)
-          const itemsBase = items.map(({ tipo_articulo: _ta, p1_volumen: _p1, p2_oportunidad: _p2, p3_actualizacion: _p3, p4_manual: _p4, prioridad_final: _pf, validacion: _v, ...rest }) => rest)
-          const { error: retryError } = await supabase
-            .from('content_map_items')
-            .insert(itemsBase)
-          itemsError = retryError ?? null
-        }
-
-        if (itemsError) {
-          console.error(`[GenerateMap] Batch ${batchIdx + 1} — error insertando items:`, itemsError)
+        let prioridad_final: number
+        if (p2 != null) {
+          if (p2 > 3000)      prioridad_final = 1
+          else if (p2 > 1000) prioridad_final = 2
+          else                prioridad_final = 3
         } else {
-          totalItemsInsertados += items.length
-          console.log(`[GenerateMap] Batch ${batchIdx + 1} — ${items.length} items insertados (total acumulado: ${totalItemsInsertados})`)
+          prioridad_final = typeof a.priority === 'number' ? a.priority : 2
         }
 
-      } catch (batchErr) {
-        console.error(
-          `[GenerateMap] Error en batch ${batchIdx + 1}:`,
-          batchErr instanceof Error ? batchErr.message : batchErr,
-        )
-        // Continuamos con el siguiente batch
+        const base = {
+          map_id            : map.id,
+          title             : toSpanishTitleCase(a.title),
+          slug              : a.slug,
+          main_keyword      : a.main_keyword,
+          secondary_keywords: a.secondary_keywords,
+          cluster           : a.cluster,
+          funnel_stage      : a.funnel_stage,
+          volume            : vol,
+          difficulty        : diff,
+          priority          : a.priority,
+          suggested_month   : null,
+          fase              : a.fase_recomendada ?? 'sin_fase',
+          sort_order        : sortOrder++,
+          status            : 'planned',
+        }
+
+        const sprint2 = {
+          tipo_articulo    : 'nuevo' as const,
+          p1_volumen       : p1,
+          p2_oportunidad   : p2,
+          p3_actualizacion : false,
+          p4_manual        : null as number | null,
+          prioridad_final,
+          validacion       : 'propuesto' as const,
+        }
+
+        return { ...base, ...sprint2 }
+      })
+
+      let { error: itemsError } = await supabase
+        .from('content_map_items')
+        .insert(items)
+
+      // Si la migración 029 no está aplicada, reintentar sin los campos Sprint 2
+      if (itemsError?.code === 'PGRST204') {
+        console.warn(`[GenerateMap] Campos Sprint 2 no disponibles, reintentando sin ellos`)
+        const itemsBase = items.map(({ tipo_articulo: _ta, p1_volumen: _p1, p2_oportunidad: _p2, p3_actualizacion: _p3, p4_manual: _p4, prioridad_final: _pf, validacion: _v, ...rest }) => rest)
+        const { error: retryError } = await supabase
+          .from('content_map_items')
+          .insert(itemsBase)
+        itemsError = retryError ?? null
+      }
+
+      if (itemsError) {
+        console.error(`[GenerateMap] Batch ${batchIdx + 1} — error insertando items:`, itemsError)
+      } else {
+        totalItemsInsertados += items.length
+        console.log(`[GenerateMap] Batch ${batchIdx + 1} — ${items.length} items insertados (total acumulado: ${totalItemsInsertados})`)
       }
     }
 

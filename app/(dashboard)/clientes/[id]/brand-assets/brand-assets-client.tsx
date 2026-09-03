@@ -150,15 +150,20 @@ function GenerationStatusBadge({ status }: { status: GenerationStatus }) {
 function AssetCard({
   asset,
   onToggleApproved,
+  onDelete,
   toggling,
+  deleting,
   patchError,
 }: {
   asset: BrandAssetRow
   onToggleApproved: (id: string, current: boolean) => void
+  onDelete: (id: string) => void
   toggling: boolean
+  deleting: boolean
   patchError: string | null
 }) {
   const [imgError, setImgError] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const ext = asset.file_name?.split('.').pop()?.toUpperCase() ?? ''
   const shortName = asset.file_name ?? asset.drive_file_id
   const showImage = isPreviewableImage(asset.mime_type) && !imgError
@@ -238,8 +243,46 @@ function AssetCard({
               <ExternalLink className="h-4 w-4" />
             </a>
           )}
+
+          {/* Eliminar (borrado real) — el fichero de Drive no se toca */}
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={deleting}
+            className="text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
+            title="Eliminar"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
         </div>
       </div>
+
+      {/* Confirmación de borrado */}
+      {confirmDelete && (
+        <div className="border-t border-red-100 bg-red-50 px-3 py-2 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs text-red-800">
+            ¿Eliminar <strong>{shortName}</strong>? Esta acción no se puede deshacer.
+          </p>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-xs"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              className="h-6 px-2 text-xs bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => onDelete(asset.id)}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Eliminar'}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -253,14 +296,18 @@ function BrandBookSection({
   hasContext,
   clientId,
   onToggleApproved,
+  onDelete,
   togglingIds,
+  deletingIds,
   patchErrors,
 }: {
   assets: BrandAssetRow[]
   hasContext: boolean
   clientId: string
   onToggleApproved: (id: string, current: boolean) => void
+  onDelete: (id: string) => void
   togglingIds: Set<string>
+  deletingIds: Set<string>
   patchErrors: Map<string, string>
 }) {
   const router = useRouter()
@@ -356,7 +403,9 @@ function BrandBookSection({
                 key={asset.id}
                 asset={asset}
                 onToggleApproved={onToggleApproved}
+                onDelete={onDelete}
                 toggling={togglingIds.has(asset.id)}
+                deleting={deletingIds.has(asset.id)}
                 patchError={patchErrors.get(asset.id) ?? null}
               />
             ))}
@@ -408,13 +457,17 @@ function AssetSection({
   assetType,
   assets,
   onToggleApproved,
+  onDelete,
   togglingIds,
+  deletingIds,
   patchErrors,
 }: {
   assetType: AssetType
   assets: BrandAssetRow[]
   onToggleApproved: (id: string, current: boolean) => void
+  onDelete: (id: string) => void
   togglingIds: Set<string>
+  deletingIds: Set<string>
   patchErrors: Map<string, string>
 }) {
   const isEmpty = assets.length === 0
@@ -460,7 +513,9 @@ function AssetSection({
                 key={asset.id}
                 asset={asset}
                 onToggleApproved={onToggleApproved}
+                onDelete={onDelete}
                 toggling={togglingIds.has(asset.id)}
+                deleting={deletingIds.has(asset.id)}
                 patchError={patchErrors.get(asset.id) ?? null}
               />
             ))}
@@ -700,6 +755,18 @@ function BrandContextPanel({
               <Pencil className="h-3 w-3" /> Editar
             </Button>
           </div>
+          {/* Trazabilidad multi-documento: qué manuales alimentaron el contexto */}
+          {(context.source_files?.length ?? 0) > 0 && (
+            <p className="text-xs text-gray-400 mt-1.5">
+              Generado a partir de {context.source_files!.length} documento{context.source_files!.length > 1 ? 's' : ''}:{' '}
+              <span className="text-gray-500">
+                {context.source_files!.map((f) => f.file_name).join(', ')}
+              </span>
+              {context.processed_at && (
+                <> · {new Date(context.processed_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+              )}
+            </p>
+          )}
         </CardHeader>
 
         <CardContent className="pt-0 space-y-5">
@@ -1088,8 +1155,12 @@ export default function BrandAssetsClient({
 
   // togglingIds: Set de IDs con PATCH en curso — permite múltiples concurrentes
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())
-  // Map<assetId, errorMessage> — errores de PATCH por activo
+  // deletingIds: Set de IDs con DELETE en curso
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
+  // Map<assetId, errorMessage> — errores de PATCH/DELETE por activo
   const [patchErrors, setPatchErrors] = useState<Map<string, string>>(new Map())
+  // Aviso tras eliminar un brand book que alimentaba el brand_context
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null)
 
   // Ref para saber si hay operaciones pendientes antes de aplicar sync del servidor
   const pendingRef = useRef(0)
@@ -1190,6 +1261,76 @@ export default function BrandAssetsClient({
     // revirtiendo visualmente la aprobación aunque el PATCH hubiera tenido éxito.
   }, [hasContext])
 
+  // Borrado real del asset. El fichero de Drive del cliente no se toca —
+  // los assets son referencias. Si el asset alimentaba el brand_context,
+  // la API devuelve fed_context=true y mostramos el aviso de reprocesar.
+  const handleDeleteAsset = useCallback(async (id: string) => {
+    pendingRef.current += 1
+    setDeletingIds((prev) => new Set(prev).add(id))
+    setPatchErrors((prev) => { const m = new Map(prev); m.delete(id); return m })
+
+    try {
+      const res = await fetch(`/api/brand-assets/${id}`, { method: 'DELETE' })
+
+      let json: Record<string, unknown> = {}
+      try {
+        json = await res.json()
+      } catch {
+        setPatchErrors((prev) => new Map(prev).set(id, `Error del servidor (${res.status})`))
+        return
+      }
+
+      if (!res.ok) {
+        const msg = (json?.error as string) ?? `Error ${res.status}`
+        setPatchErrors((prev) => new Map(prev).set(id, msg))
+        return
+      }
+
+      if (json.fed_context) {
+        const nombre = (json.file_name as string | null) ?? 'Este documento'
+        setDeleteNotice(
+          `«${nombre}» alimentaba el contexto de marca. Reprocesa los brand assets para actualizarlo.`,
+        )
+      }
+
+      // Quitar el asset y recalcular cobertura (mismo criterio que el toggle)
+      setAssets((prev) => {
+        const next = prev.filter((a) => a.id !== id)
+
+        const approvedByType = (type: AssetType) =>
+          next.some((a) => a.asset_type === type && a.approved)
+
+        const hasLogo          = approvedByType('logo')
+        const hasBrandBook     = approvedByType('brand_book')
+        const hasProductImages = approvedByType('product_image')
+        const pendingReview    = next.filter((a) => !a.approved).length
+
+        let generation_status: GenerationStatus = 'blocked'
+        if (hasLogo && hasContext) generation_status = 'ready'
+        else if (hasLogo)          generation_status = 'pending'
+
+        setCoverageState((prev) => ({
+          ...prev,
+          has_logo:           hasLogo,
+          has_brand_book:     hasBrandBook,
+          has_product_images: hasProductImages,
+          total_assets:       next.length,
+          pending_review:     pendingReview,
+          generation_status,
+        }))
+
+        return next
+      })
+    } finally {
+      pendingRef.current = Math.max(0, pendingRef.current - 1)
+      setDeletingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }, [hasContext])
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1202,6 +1343,21 @@ export default function BrandAssetsClient({
       </div>
 
       <Separator />
+
+      {/* Aviso: se eliminó un brand book que alimentaba el contexto de marca */}
+      {deleteNotice && (
+        <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-amber-800 flex-1">{deleteNotice}</p>
+          <button
+            onClick={() => setDeleteNotice(null)}
+            className="text-amber-500 hover:text-amber-700 transition-colors flex-shrink-0"
+            title="Descartar aviso"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Layout: grid principal + sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1216,7 +1372,9 @@ export default function BrandAssetsClient({
                 hasContext={hasContext}
                 clientId={clientId}
                 onToggleApproved={handleToggleApproved}
+                onDelete={handleDeleteAsset}
                 togglingIds={togglingIds}
+                deletingIds={deletingIds}
                 patchErrors={patchErrors}
               />
             ) : (
@@ -1225,7 +1383,9 @@ export default function BrandAssetsClient({
                 assetType={assetType}
                 assets={byType[assetType]}
                 onToggleApproved={handleToggleApproved}
+                onDelete={handleDeleteAsset}
                 togglingIds={togglingIds}
+                deletingIds={deletingIds}
                 patchErrors={patchErrors}
               />
             ),

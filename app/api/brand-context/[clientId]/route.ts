@@ -1,11 +1,11 @@
 /**
- * PATCH /api/brand-context/[clientId]
+ * GET   /api/brand-context/[clientId] — lee el contexto de marca del cliente
+ * PATCH /api/brand-context/[clientId] — actualiza los campos editables
  *
- * Actualiza los campos editables del contexto de marca de un cliente.
  * Usa service_role para bypassear RLS.
  *
- * Campos permitidos: colors, typography, tone_of_voice,
- *                    style_keywords, restrictions, raw_summary
+ * Campos permitidos en PATCH: colors, typography, tone_of_voice,
+ *                             style_keywords, restrictions, raw_summary
  */
 
 import { auth } from '@clerk/nextjs/server'
@@ -20,6 +20,35 @@ const ALLOWED_FIELDS = [
   'restrictions',
   'raw_summary',
 ] as const
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: { clientId: string } },
+) {
+  const { userId } = await auth().catch(() => ({ userId: null as string | null }))
+  if (!userId) {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  const { clientId } = params
+  if (!clientId) {
+    return NextResponse.json({ error: 'clientId es requerido' }, { status: 400 })
+  }
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('brand_context')
+    .select('*')
+    .eq('client_id', clientId)
+    .maybeSingle()
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  // context es null si el cliente aún no tiene brand_context procesado
+  return NextResponse.json({ context: data })
+}
 
 export async function PATCH(
   request: NextRequest,

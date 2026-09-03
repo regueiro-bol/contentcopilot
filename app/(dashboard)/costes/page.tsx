@@ -62,8 +62,10 @@ const ETIQUETAS_TIPO: Record<string, string> = {
   revision           : 'Revisiones GEO-SEO',
   brief_seo          : 'Brief SEO',
   prompt_imagen      : 'Prompts de imagen',
+  concepto_social    : 'Conceptos social',
   rag_embedding      : 'Embeddings RAG',
-  imagen_flux        : 'Imágenes destacadas',
+  imagen_ia          : 'Imágenes destacadas',
+  imagen_flux        : 'Imágenes destacadas',   // histórico (antes del selector de modelo)
   ad_creative        : 'Piezas sociales (FLUX)',
   video_reel         : 'Vídeos Reel (FLUX)',
   video_story        : 'Vídeos Story (FLUX)',
@@ -80,8 +82,8 @@ const ETIQUETAS_TIPO: Record<string, string> = {
 }
 
 const SERVICIOS_GRUPOS: Array<{ id: string; label: string; color: string; tipos: string[] }> = [
-  { id: 'claude',     label: 'Claude (Anthropic)',  color: 'bg-orange-500',  tipos: ['borrador','copiloto','revision','brief_seo','prompt_imagen','humanizacion','georadar_claude','analisis_web'] },
-  { id: 'flux',       label: 'FLUX (FAL.ai)',        color: 'bg-pink-500',    tipos: ['imagen_flux','ad_creative','video_reel','video_story'] },
+  { id: 'claude',     label: 'Claude (Anthropic)',  color: 'bg-orange-500',  tipos: ['borrador','copiloto','revision','brief_seo','prompt_imagen','concepto_social','humanizacion','georadar_claude','analisis_web'] },
+  { id: 'flux',       label: 'Imágenes IA (FAL.ai)', color: 'bg-pink-500',    tipos: ['imagen_ia','imagen_flux','ad_creative','video_reel','video_story'] },
   { id: 'apis',       label: 'APIs externas',        color: 'bg-amber-500',   tipos: ['serpapi_search','dataforseo_keywords','dataforseo_volume','competitor_keywords'] },
   { id: 'rag',        label: 'RAG (OpenAI Embed)',   color: 'bg-teal-500',    tipos: ['rag_embedding'] },
   { id: 'gpt4',       label: 'GPT-4o (OpenAI)',      color: 'bg-emerald-500', tipos: ['georadar_gpt4'] },
@@ -201,7 +203,7 @@ export default async function CostesPage({
   regsFiltrados.forEach(r => {
     if (!r.contenido_id) return
     const curr = aggContenido.get(r.contenido_id) ?? { coste_texto: 0, coste_imagenes: 0, coste_total: 0 }
-    const esImagen = ['imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(r.tipo_operacion)
+    const esImagen = ['imagen_ia', 'imagen_flux', 'ad_creative', 'video_reel', 'video_story'].includes(r.tipo_operacion)
     if (esImagen) curr.coste_imagenes += Number(r.coste_usd)
     else          curr.coste_texto    += Number(r.coste_usd)
     curr.coste_total += Number(r.coste_usd)

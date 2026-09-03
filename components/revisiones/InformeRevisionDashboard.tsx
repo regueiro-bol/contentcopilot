@@ -251,10 +251,10 @@ export default function InformeRevisionDashboard({ informe, fecha, agente, onApl
       icon: <CheckCircle className="h-10 w-10 text-white" />,
     },
     revision_menor: {
-      bg: 'bg-amber-400',
-      text: 'text-white',
+      bg: 'bg-slate-50 border border-slate-200',
+      text: 'text-gray-700',
       label: 'Revisión menor necesaria',
-      icon: <AlertCircle className="h-10 w-10 text-white" />,
+      icon: <AlertCircle className="h-10 w-10 text-slate-400" />,
     },
     revision_necesaria: {
       bg: 'bg-red-500',

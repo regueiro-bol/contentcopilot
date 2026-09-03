@@ -138,7 +138,10 @@ export async function POST(request: NextRequest) {
       `Style: ${styleDesc}.`,
       primaryHex ? `Color palette: use ${primaryHex} as primary accent color.` : '',
       `Platform: ${platform}, optimized for ${format || 'social media'} format.`,
-      'No text, no logos, no watermarks. High quality, professional content marketing image.',
+      // Localización: audiencia española — contexto europeo/español, moneda en euros
+      'European/Spanish setting and aesthetic; any currency shown must be euros.',
+      // Anti-texto reforzado
+      'No visible text, no signage, no labels, no letters or numbers anywhere in the image, no logos, no watermarks. High quality, professional content marketing image.',
     ].filter(Boolean).join(' ')
 
     // ── PASO 3: Call Fal.ai ──

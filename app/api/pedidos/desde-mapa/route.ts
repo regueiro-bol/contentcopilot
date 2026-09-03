@@ -4,7 +4,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { toSpanishTitleCase } from '@/lib/utils'
 
-export const maxDuration = 120
+export const maxDuration = 300
 
 // ─────────────────────────────────────────────────────────────
 // Prompt Brief SEO
@@ -247,6 +247,9 @@ export async function POST(request: NextRequest) {
   const supabase  = createAdminClient()
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+  // Guardamos el map_item_id activo para poder marcar 'error' desde el catch
+  let activeMapItemId: string | null = null
+
   try {
     const body = await request.json() as {
       map_item_id?        : string
@@ -415,12 +418,23 @@ export async function POST(request: NextRequest) {
     // ── Verificar que el map_item existe y cargar datos completos ──
     const { data: mapItem } = await supabase
       .from('content_map_items')
-      .select('id, contenido_id, map_id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, suggested_month')
+      .select('id, contenido_id, map_id, title, slug, main_keyword, secondary_keywords, cluster, funnel_stage, volume, difficulty, suggested_month, pedido_estado, pedido_iniciado_at')
       .eq('id', map_item_id!)
       .single()
 
     if (!mapItem) {
       return NextResponse.json({ error: 'Artículo del mapa no encontrado' }, { status: 404 })
+    }
+
+    // Guardar para el catch
+    activeMapItemId = mapItem.id as string
+
+    // Guardia contra duplicados: 409 si ya está en curso
+    if (mapItem.pedido_estado === 'generando') {
+      return NextResponse.json(
+        { error: 'Ya hay una generación en curso para este artículo' },
+        { status: 409 },
+      )
     }
 
     if (mapItem.contenido_id) {
@@ -430,6 +444,12 @@ export async function POST(request: NextRequest) {
         message     : 'Ya existe un pedido para este artículo',
       })
     }
+
+    // Marcar 'generando' antes de cualquier operación lenta
+    await supabase
+      .from('content_map_items')
+      .update({ pedido_estado: 'generando', pedido_iniciado_at: new Date().toISOString(), pedido_error_msg: null })
+      .eq('id', map_item_id!)
 
     // ── Buscar o crear proyecto "Estrategia SEO" ──
     const PROJECT_NAME = 'Estrategia SEO'
@@ -476,10 +496,10 @@ export async function POST(request: NextRequest) {
 
     if (existente) {
       console.log(`[DesdeMapa] Contenido ya existe: ${existente.id} (slug: ${slug})`)
-      // Vincular map_item si no lo estaba
+      // Vincular map_item si no lo estaba y cerrar el estado 'generando'
       await supabase
         .from('content_map_items')
-        .update({ contenido_id: existente.id, status: 'assigned', updated_at: new Date().toISOString() })
+        .update({ contenido_id: existente.id, status: 'assigned', pedido_estado: 'listo', updated_at: new Date().toISOString() })
         .eq('id', map_item_id)
       return NextResponse.json({
         ok            : true,
@@ -625,6 +645,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Marcar 'listo' en BD
+    await supabase
+      .from('content_map_items')
+      .update({ pedido_estado: 'listo' })
+      .eq('id', map_item_id!)
+
     return NextResponse.json({
       ok             : true,
       contenido_id   : contenido.id,
@@ -634,6 +660,19 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e))
     console.error('[DesdeMapa] Error inesperado:', err.message)
+
+    // Marcar 'error' en BD si el fallo ocurrió dentro del flujo MAP_ITEM
+    if (activeMapItemId) {
+      try {
+        await supabase
+          .from('content_map_items')
+          .update({ pedido_estado: 'error', pedido_error_msg: err.message })
+          .eq('id', activeMapItemId)
+      } catch (dbErr) {
+        console.error('[DesdeMapa] Error marcando estado error en BD:', dbErr)
+      }
+    }
+
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }

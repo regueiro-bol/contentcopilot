@@ -253,7 +253,12 @@ export interface BrandContextRow {
   restrictions: string | null
   raw_summary: string | null
   processed_at: string | null
+  /** @deprecated Primer documento procesado — la lista completa está en source_files */
   source_file_id: string | null
+  /** Todos los documentos que alimentaron el contexto (JSONB) */
+  source_files: Array<{ drive_file_id: string; file_name: string }> | null
+  /** Modelo(s) de IA usados en la última extracción */
+  model: string | null
   created_at: string
   updated_at: string
 }

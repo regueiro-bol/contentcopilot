@@ -6,6 +6,8 @@ import { useAuth } from '@clerk/nextjs'
 import { ChevronRight, ChevronDown, Sparkles, ExternalLink, FileText, Clock, MessageSquare, RefreshCw, Loader2, PenLine, Wand2, Bot, LayoutGrid, X } from 'lucide-react'
 import InformeRevisionDashboard from '@/components/revisiones/InformeRevisionDashboard'
 import BriefSEODisplay from '@/components/contenidos/BriefSEODisplay'
+import { FUENTES_DISPONIBLES, FUENTE_DEFAULT_ID, fuentesDeMarca } from '@/lib/video/fonts'
+import { MODELOS_IMAGEN, MODELO_IMAGEN_DEFAULT } from '@/lib/image-models'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -564,6 +566,163 @@ type CostesContenido = {
   coste_rag     : number
 }
 
+// ─── Límite de imágenes de la galería del tab Imagen ────────────────────────
+const MAX_IMAGENES_GALERIA = 8
+
+// ─── System prompt del generador de prompts de imagen (tab Imagen) ──────────
+// El toggle "incluirPersonas" cambia la instrucción anti-texto final y la regla
+// sobre presencia de personas en la escena.
+function buildSystemPromptImagen(incluirPersonas: boolean): string {
+  const instruccionAntiTexto = incluirPersonas
+    ? 'no visible text, no signage, no labels, no letters or numbers anywhere in the image, people allowed but no identifiable faces, faces turned away or out of frame or blurred'
+    : 'no visible text, no signage, no labels, no letters or numbers anywhere in the image, no people'
+
+  const reglaPersonas = incluirPersonas
+    ? '- Las personas están PERMITIDAS en la escena: puedes describir manos, siluetas, personas de espaldas o desenfocadas, pero NUNCA rostros identificables (caras giradas, fuera de plano o difuminadas).'
+    : '- NO incluyas personas en la escena.'
+
+  return `Eres un experto en prompts para generación de imágenes con IA (modelo FLUX). Analizas el texto de un artículo y diseñas una imagen destacada fotorrealista y profesional.
+
+REGLAS DE LOCALIZACIÓN (obligatorias en todos los prompts):
+- El contenido es para audiencia española. Describe entornos, objetos, estética y contextos europeos/españoles.
+- Evita términos que puedan inducir texto en inglés renderizado en la imagen: en lugar de 'ATM' escribe 'cash machine in a Spanish bank branch', en lugar de 'dollar bills' escribe 'euro banknotes', etc.
+- Si la escena incluye moneda, debe ser euros.
+${reglaPersonas}
+- Incluye SIEMPRE al final del prompt esta instrucción anti-texto reforzada: '${instruccionAntiTexto}'
+
+COHERENCIA CON LA MARCA:
+Si en el contexto se incluye un bloque MARCA con tono visual, estilo y restricciones fotográficas del cliente, el prompt de imagen DEBE respetarlos:
+- El estilo fotográfico descrito (iluminación, mood, composición) debe alinearse con el tono visual de marca
+- Respeta estrictamente las restricciones fotográficas (ej: si la marca prohíbe fotografía posada o composiciones artificiales, describe escenas naturales y espontáneas)
+- NO menciones colores corporativos hex en el prompt — la coherencia de marca en fotografía viene del estilo y mood, no de teñir la imagen con colores de marca
+
+REQUISITOS DEL PROMPT TÉCNICO (campo prompt_en):
+- En inglés, optimizado para FLUX.
+- Describe una escena visual relevante al tema del artículo.
+- Especifica estilo fotográfico profesional (iluminación, composición, profundidad de campo).
+- Visualmente impactante y coherente con el contenido.
+- Máximo 150 palabras.
+- Termina SIEMPRE con la instrucción anti-texto reforzada indicada en las reglas de localización.
+
+FORMATO DE RESPUESTA — responde ÚNICAMENTE con un objeto JSON válido, sin markdown ni backticks ni texto adicional, empezando por { y terminando por }:
+{
+  "descripcion_es": "Descripción en español claro de qué imagen se va a generar, para que el redactor valide el concepto sin leer inglés técnico. 2-4 frases.",
+  "prompt_en": "El prompt técnico completo en inglés optimizado para FLUX"
+}`
+}
+
+// Parsea la respuesta de doble capa {descripcion_es, prompt_en}. Con fallback:
+// si no viene JSON válido, trata toda la respuesta como prompt técnico.
+function parsePromptImagenResponse(raw: string): { descripcion: string; promptEn: string } {
+  let descripcion = ''
+  let promptEn = ''
+  try {
+    const limpio = raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim()
+    const ini = limpio.indexOf('{')
+    const fin = limpio.lastIndexOf('}')
+    if (ini === -1 || fin === -1) throw new Error('sin JSON')
+    const parsed = JSON.parse(limpio.substring(ini, fin + 1))
+    descripcion = (parsed.descripcion_es ?? '').toString().trim()
+    promptEn    = (parsed.prompt_en ?? '').toString().trim()
+  } catch {
+    promptEn = raw
+  }
+  return { descripcion, promptEn }
+}
+
+// ─── Reglas compartidas de localización para prompts de imagen (tab Social) ──
+const REGLAS_LOCALIZACION_IMG = `- El contenido es para audiencia española. Describe entornos, objetos, estética y contextos europeos/españoles.
+- Evita términos que puedan inducir texto en inglés renderizado en la imagen: en lugar de 'ATM' escribe 'cash machine in a Spanish bank branch', en lugar de 'dollar bills' escribe 'euro banknotes', etc.
+- Si la escena incluye moneda, debe ser euros.`
+
+const ANTITEXTO_SLIDES = `no visible text, no signage, no labels, no letters or numbers anywhere in the image, no identifiable faces`
+
+// ─── System prompt del generador de concepto social (MEJORA 1) ───────────────
+function buildSystemPromptConceptoSocial(intent: 'organic_informative' | 'organic_brand' | 'paid_campaign'): string {
+  const enfoque: Record<typeof intent, string> = {
+    organic_informative: `Concepto de contenido nativo: extrae el valor del artículo y adáptalo al lenguaje social (un dato clave, un consejo práctico, una definición útil). El post debe aportar valor por sí mismo, sin sonar a promoción.`,
+    organic_brand: `Concepto de posicionamiento de marca: usa el tema del artículo para reforzar la autoridad y los valores de la marca. El protagonista es la relación marca-tema, no el detalle informativo.`,
+    paid_campaign: `Concepto de conversión: gancho llamativo + beneficio claro + llamada a la acción hacia el artículo. Piensa en detener el scroll y llevar clic al contenido.`,
+  }
+
+  return `Eres un estratega de contenido social de una agencia española de marketing. A partir del texto de un artículo, generas el concepto de una campaña de piezas sociales.
+
+TIPO DE CONCEPTO REQUERIDO:
+${enfoque[intent]}
+
+COHERENCIA CON LA MARCA:
+Si en el contexto se incluye un bloque MARCA (tono, estilo, restricciones), el concepto DEBE respetarlo: el tono verbal global lo gobierna la marca, y las restricciones son inviolables.
+
+FORMATO DE RESPUESTA — responde ÚNICAMENTE con un objeto JSON válido, sin markdown ni backticks ni texto adicional, empezando por { y terminando por }:
+{
+  "nombre_campana": "Nombre corto y descriptivo de la campaña (máx 8 palabras, en español)",
+  "brief_campana": "Brief creativo de 2-4 frases en español, adaptado al tipo de concepto requerido"
+}`
+}
+
+// ─── System prompt de extracción de puntos para slides (MEJORAS 2-4) ─────────
+function buildSystemPromptSlides(opts: {
+  tipoVideo   : 'reel' | 'story'
+  modo        : 'completo' | 'adicional'
+  tonoProyecto: string | null
+  descProyecto: string | null
+}): string {
+  const { tipoVideo, modo, tonoProyecto, descProyecto } = opts
+
+  const cantidad = modo === 'adicional'
+    ? `Devuelve UN ÚNICO punto nuevo. El mensaje del usuario incluye las slides ya existentes: el punto nuevo NO puede repetir ni solapar lo que ya cubren. Devuelve un array JSON con exactamente 1 objeto.`
+    : tipoVideo === 'reel'
+      ? `Decide tú cuántos puntos fuertes tiene el artículo: entre 3 y 5. Ni rellenes hasta 5 con puntos flojos ni te quedes en 3 si hay 5 potentes.`
+      : `Devuelve exactamente 2 puntos (o 1 si el artículo es muy breve).`
+
+  const bloqueProyecto = (tonoProyecto || descProyecto)
+    ? `PROYECTO (capa editorial):
+${descProyecto ? `- Descripción: ${descProyecto}` : ''}
+${tonoProyecto ? `- Tono editorial: ${tonoProyecto}` : ''}`.trim()
+    : `PROYECTO (capa editorial): sin especificaciones — aplica solo marca y contenido.`
+
+  return `Eres un experto en contenido social en vídeo de una agencia española de marketing. Extraes los puntos clave de un artículo para un ${tipoVideo === 'reel' ? 'Reel' : 'Story'} de Instagram compuesto por slides.
+
+JERARQUÍA DE CONTEXTO (obligatoria para los textos):
+El mensaje sale del contenido, el enfoque editorial lo marca el proyecto, el tono global lo gobierna la marca. Ejemplo: para un artículo de fraude con marca que pide tono tranquilizador, en lugar de 'Clonan tu tarjeta en segundos' (alarmista) genera 'Así funciona el skimming — y así te proteges' (didáctico + preventivo).
+1. MARCA (bloque MARCA del contexto, si existe): tono verbal global y restricciones — gobierna todo.
+2. PROYECTO: el enfoque editorial.
+3. CONTENIDO: el artículo del mensaje del usuario es la única fuente del mensaje — no inventes datos.
+
+${bloqueProyecto}
+
+CANTIDAD DE PUNTOS:
+${cantidad}
+
+DIRECCIÓN FOTOGRÁFICA ÚNICA (crítico para la coherencia del vídeo):
+${modo === 'adicional'
+  ? 'El mensaje del usuario incluye los prompts de imagen de las slides existentes. ANTES de escribir el nuevo, deduce su dirección fotográfica (paleta de luz, mood, óptica, tratamiento/grano) y REPLÍCALA exactamente en el nuevo prompt — solo cambia la escena. La slide añadida debe parecer del mismo vídeo, no una foto suelta.'
+  : 'ANTES de generar los prompts, define UNA sola dirección fotográfica para TODO el vídeo: misma paleta de luz, mismo mood lumínico, misma óptica y mismo tratamiento/grano. Aplícala en CADA slide variando SOLO la escena. El vídeo final debe sentirse como una pieza unitaria, no como fotos sueltas.'}
+
+CADA PUNTO DEBE INCLUIR:
+- texto_principal: frase corta impactante (máx 8 palabras, en español, respetando la jerarquía de contexto)
+- texto_secundario: frase complementaria (máx 12 palabras, en español)
+- posicion_texto: dónde irá el texto sobre esta slide — "arriba", "centro" o "abajo". Elígelo según la composición de la escena y varíalo entre slides si mejora el ritmo visual.
+- imagen_prompt: ORDEN DE FOTOGRAFÍA PROFESIONAL detallada en inglés para FLUX (fondo de la slide), NO una descripción genérica.
+
+REQUISITOS DEL imagen_prompt — cada prompt cubre SIEMPRE estas capas:
+- COMPOSICIÓN Y ENCUADRE: tipo de plano (primer plano/detalle/plano medio/general), ángulo de cámara (nivel de ojos/picado/contrapicado/cenital), regla de composición. Pensado para VERTICAL 9:16: sujeto centrado-alto, aprovecha la altura del encuadre.
+- ILUMINACIÓN: tipo (natural/dorada/difusa), dirección (lateral/contraluz/frontal suave), mood lumínico.
+- ESCENA DETALLADA: sujeto y entorno específicos, con atrezzo narrativo que apoye el mensaje de ESA slide; localización española/europea.
+- PROFUNDIDAD: shallow/deep focus, bokeh si aplica.
+- ESTILO FOTOGRÁFICO: género (documental/editorial/lifestyle) coherente con el brand_context del cliente.
+- ESPACIO PARA TEXTO según la posicion_texto de la slide: "arriba" → reserva espacio negativo despejado en el TERCIO SUPERIOR; "abajo" → en el TERCIO INFERIOR; "centro" → composición que deje el centro despejado o con un fondo que no compita con el texto.
+- Personas: sin rostros identificables (manos, siluetas, personas de espaldas o desenfocadas).
+- Coherencia con la marca: si el contexto incluye bloque MARCA, el estilo fotográfico debe alinearse con su tono visual y respetar sus restricciones. NO menciones colores corporativos hex.
+${REGLAS_LOCALIZACION_IMG}
+- Termina SIEMPRE con: '${ANTITEXTO_SLIDES}'
+
+Ejemplo del nivel esperado para imagen_prompt: "medium close-up shot at eye level of a person's hands inserting a card into a Spanish cash machine, warm diffused afternoon light from the left, shallow depth of field with a softly blurred bank branch interior, documentary editorial style, muted warm palette with subtle film grain, clear negative space in the lower third for text overlay, ${ANTITEXTO_SLIDES}".
+
+FORMATO DE RESPUESTA — responde ÚNICAMENTE con un array JSON válido, sin markdown ni backticks ni texto adicional, empezando por [ y terminando por ]:
+[{"texto_principal": "...", "texto_secundario": "...", "posicion_texto": "arriba|centro|abajo", "imagen_prompt": "..."}]`
+}
+
 export default function ContenidoDetalleClient({
   contenido,
   proyecto,
@@ -672,7 +831,8 @@ export default function ContenidoDetalleClient({
 
   // ── Tab Social ────────────────────────────────────────────────────────────
   type VideoGenerado = { id?: string; url: string; tipo: 'reel' | 'story'; duracion: number; num_slides: number; status?: string }
-  type SlideForm     = { texto_principal: string; texto_secundario: string; imagen_prompt: string }
+  type PosicionTextoSlide = 'arriba' | 'centro' | 'abajo'
+  type SlideForm     = { texto_principal: string; texto_secundario: string; imagen_prompt: string; posicion_texto: PosicionTextoSlide }
 
   const [nombreCampana, setNombreCampana] = useState(contenido.titulo)
   const [briefSocial, setBriefSocial] = useState(
@@ -680,6 +840,7 @@ export default function ContenidoDetalleClient({
       .filter(Boolean).join('. ')
   )
   const [intentSocial, setIntentSocial] = useState<'organic_informative' | 'organic_brand' | 'paid_campaign'>('organic_informative')
+  const [generandoConcepto, setGenerandoConcepto] = useState(false) // MEJORA 1
   const [formatosSocial, setFormatosSocial] = useState<string[]>(['1x1'])
   const [variantesSocial, setVariantesSocial] = useState<1 | 2 | 3>(1)
   const [generandoSocial, setGenerandoSocial] = useState(false)
@@ -690,7 +851,7 @@ export default function ContenidoDetalleClient({
   // ── Tab Social — Vídeos ───────────────────────────────────────────────────
   const [tipoVideo,             setTipoVideo]             = useState<'reel' | 'story'>('reel')
   const [slidesVideo,           setSlidesVideo]           = useState<SlideForm[]>([
-    { texto_principal: '', texto_secundario: '', imagen_prompt: '' },
+    { texto_principal: '', texto_secundario: '', imagen_prompt: '', posicion_texto: 'centro' },
   ])
   const [duracionSlide,         setDuracionSlide]         = useState<3 | 4 | 5 | 6>(4)
   const [generandoVideo,        setGenerandoVideo]        = useState(false)
@@ -699,6 +860,34 @@ export default function ContenidoDetalleClient({
   const [galeriaVideos,         setGaleriaVideos]         = useState<VideoGenerado[]>([])
   const [videoPreviewUrl,       setVideoPreviewUrl]       = useState<string | null>(null)
   const [extrayendoPuntos,       setExtrayendoPuntos]       = useState(false)
+  const [pidiendoPunto,          setPidiendoPunto]          = useState(false) // MEJORA 2b
+  const [errorSlidesIA,          setErrorSlidesIA]          = useState<string | null>(null)
+  // Tipografía del vídeo (a nivel de Reel/Story — coherencia visual completa).
+  // Las fuentes que aparecen en brand_context.typography del cliente se
+  // ordenan primero con badge "Marca" y la primera es el default.
+  const [fuenteVideo,            setFuenteVideo]            = useState<string>(FUENTE_DEFAULT_ID)
+  const [fuentesMarcaIds,        setFuentesMarcaIds]        = useState<string[]>([])
+
+  // Cargar brand_context.typography del cliente para el selector de tipografía
+  useEffect(() => {
+    const clienteId = cliente?.id
+    if (!clienteId) return
+    let cancelado = false
+    async function cargarFuentesMarca() {
+      try {
+        const res = await fetch(`/api/brand-context/${clienteId}`)
+        if (!res.ok) return
+        const { context } = await res.json() as { context: { typography?: Array<{ name?: string }> } | null }
+        const ids = fuentesDeMarca(context?.typography)
+        if (cancelado || ids.length === 0) return
+        setFuentesMarcaIds(ids)
+        setFuenteVideo(ids[0]) // default: la primera fuente de marca
+      } catch { /* sin brand context — el selector queda con el catálogo por defecto */ }
+    }
+    cargarFuentesMarca()
+    return () => { cancelado = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cliente?.id])
   const [confirmEliminarVideoId, setConfirmEliminarVideoId] = useState<string | null>(null)
   const [savingVideoId,          setSavingVideoId]          = useState<string | null>(null)
 
@@ -735,7 +924,7 @@ export default function ContenidoDetalleClient({
         if (!res.ok) return
         const { imagenes } = await res.json() as { imagenes: ImagenGaleria[] }
         if (Array.isArray(imagenes) && imagenes.length > 0) {
-          setGaleriaImagenes(imagenes.slice(0, 4))
+          setGaleriaImagenes(imagenes.slice(0, MAX_IMAGENES_GALERIA))
         }
       } catch { /* sin persistencia previa — galería vacía */ }
     }
@@ -757,9 +946,15 @@ export default function ContenidoDetalleClient({
   const [lightboxImagenUrl, setLightboxImagenUrl] = useState<string | null>(null)
   const [confirmEliminarIdx, setConfirmEliminarIdx] = useState<number | null>(null)
   const [promptImagen, setPromptImagen] = useState('')
+  const [descripcionImagen, setDescripcionImagen] = useState('') // capa 1: descripción ES (solo lectura)
+  const [incluirPersonas, setIncluirPersonas] = useState(false)  // toggle personas en la escena
+  const [ajustesImagen, setAjustesImagen] = useState('')          // ajustes en español para regenerar
+  const [aplicandoAjustes, setAplicandoAjustes] = useState(false)
   const [generandoPromptIA, setGenerandoPromptIA] = useState(false)
   const [errorPromptIA, setErrorPromptIA] = useState<string | null>(null)
   const [formatoImagen, setFormatoImagen] = useState<'1200x630' | '1200x800' | '1920x1080'>('1200x630')
+  const [modeloImagen, setModeloImagen] = useState<string>(MODELO_IMAGEN_DEFAULT)  // selector de modelo (Fase 1)
+  const [mostrarGuiaModelo, setMostrarGuiaModelo] = useState(false)                 // popover "¿qué modelo elegir?"
   const [variantesImagen, setVariantesImagen] = useState<1 | 2 | 3>(1)
   const [generandoImagen, setGenerandoImagen] = useState(false)
   const [errorImagen, setErrorImagen] = useState<string | null>(null)
@@ -888,6 +1083,11 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
           agente         : 'claude_api',
         }),
       })
+      const ct = res.headers.get('content-type') ?? ''
+      if (!ct.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(`Error del servidor (${res.status}): ${text.substring(0, 200)}`)
+      }
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error al conectar con el agente redactor')
       const textoBorrador: string = data.contenido ?? ''
@@ -976,6 +1176,47 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
     } finally { setCambiandoEstado(false) }
   }
 
+  // MEJORA 1 — genera nombre de campaña + brief desde el artículo según la intención
+  async function handleGenerarConceptoSocial() {
+    if (!texto.trim()) { setErrorSocial('Primero genera el contenido del artículo en el tab Contenido'); return }
+    setGenerandoConcepto(true)
+    setErrorSocial(null)
+    try {
+      const res = await fetch('/api/claude', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          system        : buildSystemPromptConceptoSocial(intentSocial),
+          messages      : [{ role: 'user', content: `TEXTO DEL ARTÍCULO:\n${texto.substring(0, 2500)}` }],
+          modo          : 'json',
+          max_tokens    : 500,
+          proyecto_id   : contenido.proyecto_id ?? null,
+          client_id     : cliente?.id ?? null,
+          context_scope : 'brand_only',
+          contenido_id  : contenido.id,
+          tipo_operacion: 'concepto_social',
+          agente        : 'claude_api',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con Claude')
+      const raw = ((data.contenido ?? data.texto ?? '') as string).trim()
+      const ini = raw.indexOf('{')
+      const fin = raw.lastIndexOf('}')
+      if (ini === -1 || fin === -1) throw new Error('Claude no devolvió un concepto válido')
+      const parsed = JSON.parse(raw.substring(ini, fin + 1)) as { nombre_campana?: string; brief_campana?: string }
+      const nombre = (parsed.nombre_campana ?? '').toString().trim()
+      const brief  = (parsed.brief_campana ?? '').toString().trim()
+      if (!nombre && !brief) throw new Error('Claude no devolvió un concepto válido')
+      if (nombre) setNombreCampana(nombre)
+      if (brief)  setBriefSocial(brief)
+    } catch (e) {
+      setErrorSocial(e instanceof Error ? e.message : 'Error inesperado al generar el concepto')
+    } finally {
+      setGenerandoConcepto(false)
+    }
+  }
+
   async function handleGenerarSocial() {
     if (!cliente?.id) { setErrorSocial('No hay cliente asociado a este contenido'); return }
     if (!briefSocial.trim()) { setErrorSocial('El brief es obligatorio'); return }
@@ -1052,18 +1293,13 @@ VERIFICACIÓN FINAL: Cuando termines, cuenta el número de palabras que has escr
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
-          system: `Eres un experto en prompts para generación de imágenes con IA. Analiza el texto del artículo y genera un prompt en inglés para crear una imagen fotorrealista y profesional. El prompt debe:
-- Describir una escena visual relevante al tema del artículo
-- Especificar estilo fotográfico profesional (iluminación, composición, profundidad de campo)
-- Ser visualmente impactante y coherente con el contenido
-- NO incluir texto, letras ni palabras en la imagen
-- NO incluir personas reconocibles o rostros identificables
-- Máximo 150 palabras
-Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
+          system: buildSystemPromptImagen(incluirPersonas),
           messages      : [{ role: 'user', content: texto.substring(0, 2000) }],
           modo          : 'json',
-          max_tokens    : 300,
+          max_tokens    : 700,
           proyecto_id   : contenido.proyecto_id ?? null,
+          client_id     : cliente?.id ?? null,
+          context_scope : 'brand_only',
           contenido_id  : contenido.id,
           tipo_operacion: 'prompt_imagen',
           agente        : 'claude_api',
@@ -1072,9 +1308,13 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
       const data = await res.json()
       console.log('[PROMPT IMG] respuesta Claude:', data)
       if (!res.ok) throw new Error(data.error ?? 'Error al conectar con Claude')
-      const prompt = data.contenido ?? data.texto ?? ''
-      if (!prompt.trim()) throw new Error('Claude no devolvió un prompt. Inténtalo de nuevo.')
-      setPromptImagen(prompt.trim())
+      const raw = (data.contenido ?? data.texto ?? '').trim()
+      if (!raw) throw new Error('Claude no devolvió un prompt. Inténtalo de nuevo.')
+
+      const { descripcion, promptEn } = parsePromptImagenResponse(raw)
+      if (!promptEn) throw new Error('Claude no devolvió un prompt técnico válido.')
+      setDescripcionImagen(descripcion)
+      setPromptImagen(promptEn)
     } catch (e) {
       setErrorPromptIA(e instanceof Error ? e.message : 'Error inesperado')
     } finally {
@@ -1082,8 +1322,68 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
     }
   }
 
+  // MEJORA 2 — regenera el prompt incorporando los ajustes del redactor (en español)
+  async function handleAplicarAjustes() {
+    if (!promptImagen.trim() || !ajustesImagen.trim()) return
+    setAplicandoAjustes(true)
+    setErrorPromptIA(null)
+    try {
+      const res = await fetch('/api/claude', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          system: buildSystemPromptImagen(incluirPersonas),
+          messages: [{
+            role: 'user',
+            content: `Este es el prompt actual de imagen:
+${promptImagen.trim()}
+
+El redactor pide estos cambios:
+${ajustesImagen.trim()}
+
+Regenera el prompt incorporando los cambios pedidos. Mantén las reglas de localización y la instrucción anti-texto final. Devuelve el mismo JSON { descripcion_es, prompt_en }.`,
+          }],
+          modo          : 'json',
+          max_tokens    : 700,
+          proyecto_id   : contenido.proyecto_id ?? null,
+          client_id     : cliente?.id ?? null,
+          context_scope : 'brand_only',
+          contenido_id  : contenido.id,
+          tipo_operacion: 'prompt_imagen',
+          agente        : 'claude_api',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con Claude')
+      const raw = (data.contenido ?? data.texto ?? '').trim()
+      if (!raw) throw new Error('Claude no devolvió un prompt. Inténtalo de nuevo.')
+
+      const { descripcion, promptEn } = parsePromptImagenResponse(raw)
+      if (!promptEn) throw new Error('Claude no devolvió un prompt técnico válido.')
+      setDescripcionImagen(descripcion)
+      setPromptImagen(promptEn)
+      setAjustesImagen('') // limpiar el campo tras aplicar
+    } catch (e) {
+      setErrorPromptIA(e instanceof Error ? e.message : 'Error inesperado')
+    } finally {
+      setAplicandoAjustes(false)
+    }
+  }
+
   async function handleGenerarImagenDestacada() {
-    if (!promptImagen.trim()) return
+    console.log('[IMG GEN] handler disparado')
+    console.log('[IMG GEN] prompt a usar:', promptImagen)
+    console.log('[IMG GEN] condiciones de salida temprana:', {
+      promptVacio     : !promptImagen.trim(),
+      generandoImagen,
+      galeriaLlena    : galeriaImagenes.length >= MAX_IMAGENES_GALERIA,
+      galeriaLength   : galeriaImagenes.length,
+    })
+    if (!promptImagen.trim()) {
+      // Antes: return silencioso — ahora deja rastro visible
+      setErrorImagen('No hay prompt de imagen. Genera o escribe uno primero.')
+      return
+    }
     setGenerandoImagen(true)
     setErrorImagen(null)
     try {
@@ -1094,6 +1394,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
           prompt      : promptImagen.trim(),
           formato     : formatoImagen,
           variantes   : variantesImagen,
+          modelo_id   : modeloImagen,
           contenido_id: contenido.id,
         }),
       })
@@ -1105,7 +1406,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
       // Añadir a la galería SIN guardar en BD — el usuario usará el botón "Guardar"
       setGaleriaImagenes((prev) => {
         const nuevas: ImagenGaleria[] = urls.map((url) => ({ url, formato: formatoImagen }))
-        return [...nuevas, ...prev].slice(0, 4)
+        return [...nuevas, ...prev].slice(0, MAX_IMAGENES_GALERIA)
       })
     } catch (e) {
       setErrorImagen(e instanceof Error ? e.message : 'Error al generar la imagen')
@@ -1164,42 +1465,135 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
 
   // ── Handlers de vídeo ────────────────────────────────────────────────────
 
-  /** Llama a Claude para extraer los puntos clave del artículo y rellenar slides. */
+  /** Parsea el array de puntos devuelto por Claude (con limpieza de markdown). */
+  function parsePuntosSlides(raw: string): Array<{ texto_principal: string; texto_secundario?: string; imagen_prompt?: string; posicion_texto?: string }> {
+    const limpio = raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim()
+    const ini = limpio.indexOf('[')
+    const fin = limpio.lastIndexOf(']')
+    if (ini === -1 || fin === -1) throw new Error('No se pudo parsear la respuesta de Claude')
+    return JSON.parse(limpio.substring(ini, fin + 1))
+  }
+
+  /** Valida la posicion_texto que devuelve Claude; fallback a 'centro'. */
+  function normalizarPosicionTexto(v: unknown): PosicionTextoSlide {
+    return v === 'arriba' || v === 'abajo' ? v : 'centro'
+  }
+
+  /** MEJORAS 2-4 — Claude decide los puntos del artículo y crea las slides completas
+   *  (textos con jerarquía marca→proyecto→contenido + prompts de imagen coherentes). */
   async function handleExtraerPuntosClaveVideo() {
     if (!texto.trim()) return
     setExtrayendoPuntos(true)
+    setErrorSlidesIA(null)
     try {
       const maxSlides = tipoVideo === 'story' ? 2 : 5
       const res = await fetch('/api/claude', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body   : JSON.stringify({
-          system: `Extrae los ${maxSlides} puntos más impactantes de este artículo para usar en un ${tipoVideo === 'reel' ? 'Reel' : 'Story'} de Instagram. Para cada punto devuelve: - texto_principal: frase corta impactante (máx 8 palabras) - texto_secundario: frase complementaria (máx 12 palabras). Solo devuelve un JSON array con objetos {texto_principal, texto_secundario}, sin explicaciones ni markdown.`,
-          messages      : [{ role: 'user', content: texto.slice(0, 3000) }],
+          system: buildSystemPromptSlides({
+            tipoVideo,
+            modo        : 'completo',
+            tonoProyecto: proyecto?.tono_voz ?? null,
+            descProyecto: proyecto?.descripcion ?? null,
+          }),
+          messages      : [{ role: 'user', content: `TEXTO DEL ARTÍCULO:\n${texto.slice(0, 3000)}` }],
           modo          : 'json',
-          max_tokens    : 600,
+          max_tokens    : 2800,
           proyecto_id   : contenido.proyecto_id ?? null,
+          client_id     : cliente?.id ?? null,
+          context_scope : 'brand_only',
           contenido_id  : contenido.id,
           tipo_operacion: 'copiloto',
           agente        : 'claude_api',
         }),
       })
       const data = await res.json()
-      const raw: string = data.contenido ?? data.texto ?? ''
-      const jsonMatch = raw.match(/\[[\s\S]*?\]/)
-      if (!jsonMatch) throw new Error('No se pudo parsear la respuesta')
-      const puntos = JSON.parse(jsonMatch[0]) as Array<{ texto_principal: string; texto_secundario?: string }>
-      const basePrompt = promptImagen.trim() || contenido.titulo
+      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con Claude')
+      const puntos = parsePuntosSlides((data.contenido ?? data.texto ?? '') as string)
+      if (puntos.length === 0) throw new Error('Claude no devolvió puntos')
+      const fallbackPrompt = promptImagen.trim() || contenido.titulo
       setSlidesVideo(
         puntos.slice(0, maxSlides).map((p) => ({
           texto_principal : p.texto_principal?.trim()  ?? '',
           texto_secundario: p.texto_secundario?.trim() ?? '',
-          imagen_prompt   : basePrompt,
+          imagen_prompt   : p.imagen_prompt?.trim() || fallbackPrompt,
+          posicion_texto  : normalizarPosicionTexto(p.posicion_texto),
         }))
       )
     } catch (e) {
       console.error('[Puntos clave vídeo]', e)
+      setErrorSlidesIA(e instanceof Error ? e.message : 'Error al extraer los puntos clave')
     } finally { setExtrayendoPuntos(false) }
+  }
+
+  /** MEJORA 2b — pide a la IA un punto adicional que no repita las slides existentes. */
+  async function handlePedirOtroPuntoIA() {
+    if (!texto.trim()) return
+    const maxSlides = tipoVideo === 'story' ? 2 : 5
+    if (slidesVideo.length >= maxSlides) return
+    setPidiendoPunto(true)
+    setErrorSlidesIA(null)
+    try {
+      const slidesConTexto = slidesVideo.filter((s) => s.texto_principal.trim())
+      const resumenSlides = slidesConTexto.length
+        ? slidesConTexto.map((s, i) =>
+            `${i + 1}. ${s.texto_principal}${s.texto_secundario ? ` — ${s.texto_secundario}` : ''}`
+          ).join('\n')
+        : 'Ninguna todavía.'
+      const promptsExistentes = slidesConTexto
+        .map((s) => s.imagen_prompt.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join('\n')
+
+      const res = await fetch('/api/claude', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          system: buildSystemPromptSlides({
+            tipoVideo,
+            modo        : 'adicional',
+            tonoProyecto: proyecto?.tono_voz ?? null,
+            descProyecto: proyecto?.descripcion ?? null,
+          }),
+          messages: [{
+            role: 'user',
+            content: `SLIDES YA EXISTENTES (no repitas estos puntos):
+${resumenSlides}
+${promptsExistentes ? `\nPROMPTS DE IMAGEN EXISTENTES (replica su estética):\n${promptsExistentes}` : ''}
+
+TEXTO DEL ARTÍCULO:
+${texto.slice(0, 3000)}`,
+          }],
+          modo          : 'json',
+          max_tokens    : 900,
+          proyecto_id   : contenido.proyecto_id ?? null,
+          client_id     : cliente?.id ?? null,
+          context_scope : 'brand_only',
+          contenido_id  : contenido.id,
+          tipo_operacion: 'copiloto',
+          agente        : 'claude_api',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con Claude')
+      const puntos = parsePuntosSlides((data.contenido ?? data.texto ?? '') as string)
+      const nuevo = puntos[0]
+      if (!nuevo?.texto_principal?.trim()) throw new Error('Claude no devolvió un punto válido')
+      setSlidesVideo((prev) => [
+        ...prev,
+        {
+          texto_principal : nuevo.texto_principal.trim(),
+          texto_secundario: nuevo.texto_secundario?.trim() ?? '',
+          imagen_prompt   : nuevo.imagen_prompt?.trim() || promptImagen.trim() || contenido.titulo,
+          posicion_texto  : normalizarPosicionTexto(nuevo.posicion_texto),
+        },
+      ].slice(0, maxSlides))
+    } catch (e) {
+      console.error('[Punto adicional vídeo]', e)
+      setErrorSlidesIA(e instanceof Error ? e.message : 'Error al pedir otro punto')
+    } finally { setPidiendoPunto(false) }
   }
 
   /** Llama a /api/video/generate y añade el vídeo a la galería. */
@@ -1224,6 +1618,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
           tipo          : tipoVideo,
           slides        : slidesValidos,
           duracion_slide: duracionSlide,
+          fuente_id     : fuenteVideo,
         }),
       })
       setProgresoVideo('Componiendo vídeo…')
@@ -1990,6 +2385,20 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                   </CardHeader>
                   <CardContent className="space-y-4">
 
+                    {/* MEJORA 1 — concepto desde el artículo (usa la intención seleccionada) */}
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleGenerarConceptoSocial}
+                        disabled={generandoConcepto || !texto.trim()}
+                        className="text-xs h-7 gap-1.5"
+                      >
+                        {generandoConcepto && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {generandoConcepto ? 'Generando concepto…' : '✨ Generar concepto desde el artículo'}
+                      </Button>
+                    </div>
+
                     {/* Nombre de campaña */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-gray-600">Nombre de campaña</label>
@@ -2218,7 +2627,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                                   const min = 1
                                   const adjusted = prev.slice(0, max)
                                   return adjusted.length >= min ? adjusted : [
-                                    { texto_principal: '', texto_secundario: '', imagen_prompt: '' }
+                                    { texto_principal: '', texto_secundario: '', imagen_prompt: '', posicion_texto: 'centro' }
                                   ]
                                 })
                               }}
@@ -2235,16 +2644,51 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                         </div>
                       </div>
 
+                      {/* Tipografía del vídeo — a nivel de Reel, coherencia visual completa */}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-gray-600">Tipografía del vídeo</p>
+                        <div className="flex gap-2 flex-wrap">
+                          {[...FUENTES_DISPONIBLES]
+                            .sort((a, b) =>
+                              Number(fuentesMarcaIds.includes(b.id)) - Number(fuentesMarcaIds.includes(a.id))
+                            )
+                            .map((f) => {
+                              const esMarca = fuentesMarcaIds.includes(f.id)
+                              const activa = fuenteVideo === f.id
+                              return (
+                                <button
+                                  key={f.id}
+                                  onClick={() => setFuenteVideo(f.id)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
+                                    activa
+                                      ? 'bg-indigo-600 text-white border-indigo-600'
+                                      : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300'
+                                  }`}
+                                >
+                                  {f.nombre}
+                                  {esMarca && (
+                                    <span className={`text-[9px] font-bold uppercase tracking-wide rounded px-1 py-0.5 ${
+                                      activa ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'
+                                    }`}>
+                                      Marca
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                        </div>
+                      </div>
+
                       {/* Slides */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-semibold text-gray-600">
                             Slides ({slidesVideo.length}/{tipoVideo === 'story' ? 2 : 5})
                           </p>
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 flex-wrap">
                             <button
                               onClick={handleExtraerPuntosClaveVideo}
-                              disabled={extrayendoPuntos || !texto.trim()}
+                              disabled={extrayendoPuntos || pidiendoPunto || !texto.trim()}
                               className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1"
                             >
                               {extrayendoPuntos ? (
@@ -2254,18 +2698,37 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                               )}
                             </button>
                             {slidesVideo.length < (tipoVideo === 'story' ? 2 : 5) && (
-                              <button
-                                onClick={() => setSlidesVideo((prev) => [
-                                  ...prev,
-                                  { texto_principal: '', texto_secundario: '', imagen_prompt: promptImagen || contenido.titulo },
-                                ])}
-                                className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-md transition-colors"
-                              >
-                                + Slide
-                              </button>
+                              <>
+                                <button
+                                  onClick={handlePedirOtroPuntoIA}
+                                  disabled={pidiendoPunto || extrayendoPuntos || !texto.trim()}
+                                  className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {pidiendoPunto ? (
+                                    <><Loader2 className="h-3 w-3 animate-spin" />Pidiendo…</>
+                                  ) : (
+                                    <>+ Pedir otro punto a la IA</>
+                                  )}
+                                </button>
+                                <button
+                                  onClick={() => setSlidesVideo((prev) => [
+                                    ...prev,
+                                    { texto_principal: '', texto_secundario: '', imagen_prompt: promptImagen || contenido.titulo, posicion_texto: 'centro' },
+                                  ])}
+                                  className="text-[10px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-md transition-colors"
+                                >
+                                  + Añadir slide vacía
+                                </button>
+                              </>
                             )}
                           </div>
                         </div>
+
+                        {errorSlidesIA && (
+                          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                            {errorSlidesIA}
+                          </p>
+                        )}
 
                         {slidesVideo.map((slide, i) => (
                           <div key={i} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
@@ -2327,6 +2790,31 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                                 className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
                                 placeholder="Professional photo of… cinematic lighting…"
                               />
+                            </div>
+
+                            {/* Posición del texto en el vídeo */}
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-semibold text-gray-500">Posición del texto</label>
+                              <div className="flex gap-3">
+                                {([
+                                  { value: 'arriba', label: 'Arriba' },
+                                  { value: 'centro', label: 'Centro' },
+                                  { value: 'abajo',  label: 'Abajo' },
+                                ] as const).map((pos) => (
+                                  <label key={pos.value} className="flex items-center gap-1 cursor-pointer select-none">
+                                    <input
+                                      type="radio"
+                                      name={`posicion-texto-${i}`}
+                                      checked={slide.posicion_texto === pos.value}
+                                      onChange={() => setSlidesVideo((prev) =>
+                                        prev.map((s, idx) => idx === i ? { ...s, posicion_texto: pos.value } : s)
+                                      )}
+                                      className="h-3 w-3 text-indigo-600 focus:ring-indigo-500"
+                                    />
+                                    <span className="text-[10px] text-gray-600">{pos.label}</span>
+                                  </label>
+                                ))}
+                              </div>
                             </div>
 
                             {/* Vista previa del slide */}
@@ -2550,7 +3038,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     Galería de imágenes
                     <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
-                      {galeriaImagenes.length} / 4
+                      {galeriaImagenes.length} / {MAX_IMAGENES_GALERIA}
                     </span>
                   </CardTitle>
                 </CardHeader>
@@ -2649,9 +3137,9 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                       )
                     })}
                   </div>
-                  {galeriaImagenes.length >= 4 && (
+                  {galeriaImagenes.length >= MAX_IMAGENES_GALERIA && (
                     <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
-                      Límite de 4 imágenes alcanzado. Elimina alguna para generar más.
+                      Límite de {MAX_IMAGENES_GALERIA} imágenes alcanzado. Elimina alguna para generar más.
                     </p>
                   )}
                 </CardContent>
@@ -2675,8 +3163,8 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                   </div>
                 )}
 
-                {/* Generador de prompt */}
-                <div className="space-y-2">
+                {/* Generador de prompt — doble capa (descripción ES + prompt técnico EN) */}
+                <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <p className="text-xs font-semibold text-gray-600">Prompt para la imagen</p>
                     <Button
@@ -2689,21 +3177,128 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                       {generandoPromptIA
                         ? <Loader2 className="h-3 w-3 animate-spin" />
                         : <Sparkles className="h-3 w-3" />}
-                      {generandoPromptIA ? 'Generando prompt…' : 'Generar desde el artículo'}
+                      {generandoPromptIA
+                        ? 'Generando prompt…'
+                        : (promptImagen ? 'Regenerar prompt' : 'Generar desde el artículo')}
                     </Button>
                   </div>
+
+                  {/* MEJORA 1 — toggle personas en la escena */}
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={incluirPersonas}
+                      onChange={(e) => setIncluirPersonas(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs font-medium text-gray-700">Incluir personas en la imagen</span>
+                    <span className="text-[10px] text-gray-400">(sin rostros identificables)</span>
+                  </label>
+
                   {errorPromptIA && (
                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                       {errorPromptIA}
                     </p>
                   )}
-                  <textarea
-                    value={promptImagen}
-                    onChange={(e) => setPromptImagen(e.target.value)}
-                    placeholder="Describe la imagen que quieres generar, o usa el botón para generarla automáticamente a partir del texto del artículo..."
-                    rows={4}
-                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white resize-y transition-colors"
-                  />
+
+                  {/* Capa 1 — Qué se va a generar (español, solo lectura) */}
+                  {descripcionImagen && (
+                    <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
+                      <p className="text-xs font-semibold text-indigo-700 mb-1">📝 Qué se va a generar</p>
+                      <p className="text-sm text-gray-700 leading-relaxed">{descripcionImagen}</p>
+                    </div>
+                  )}
+
+                  {/* Capa 2 — Prompt técnico (inglés, editable) */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-gray-600">
+                      🔧 Prompt técnico <span className="text-gray-400">(en inglés para FLUX, editable)</span>
+                    </p>
+                    <textarea
+                      value={promptImagen}
+                      onChange={(e) => setPromptImagen(e.target.value)}
+                      placeholder="Describe la imagen que quieres generar, o usa el botón para generarla automáticamente a partir del texto del artículo..."
+                      rows={4}
+                      className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white resize-y transition-colors"
+                    />
+                  </div>
+
+                  {/* MEJORA 2 — ajustes en español para iterar el prompt */}
+                  {promptImagen && (
+                    <div className="space-y-1.5 border-t border-gray-100 pt-3">
+                      <p className="text-xs font-semibold text-gray-600">
+                        ✏️ Ajustes <span className="text-gray-400">(describe en español los cambios que quieres)</span>
+                      </p>
+                      <textarea
+                        value={ajustesImagen}
+                        onChange={(e) => setAjustesImagen(e.target.value)}
+                        placeholder="Ej: quiero que se vea una mano cubriendo el teclado del cajero"
+                        rows={2}
+                        className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white resize-y transition-colors"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleAplicarAjustes}
+                        disabled={aplicandoAjustes || !ajustesImagen.trim()}
+                        className="text-xs h-7 gap-1.5"
+                      >
+                        {aplicandoAjustes
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Sparkles className="h-3 w-3" />}
+                        {aplicandoAjustes ? 'Aplicando…' : 'Aplicar ajustes y regenerar prompt'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Modelo de imagen (selector Fase 1) */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 relative">
+                    <p className="text-xs font-semibold text-gray-600">Modelo de imagen</p>
+                    <button
+                      type="button"
+                      onClick={() => setMostrarGuiaModelo((v) => !v)}
+                      className="h-4 w-4 rounded-full bg-gray-200 text-gray-600 text-[10px] font-bold flex items-center justify-center hover:bg-gray-300 transition-colors"
+                      title="¿Qué modelo elegir?"
+                      aria-label="¿Qué modelo elegir?"
+                    >
+                      ?
+                    </button>
+                    {mostrarGuiaModelo && (
+                      <div className="absolute z-20 left-0 top-6 w-80 rounded-xl border border-gray-200 bg-white shadow-lg p-3.5 text-xs text-gray-700 leading-relaxed">
+                        <div className="flex items-start justify-between gap-2 mb-1.5">
+                          <p className="font-semibold text-gray-800">💡 ¿Qué modelo elegir?</p>
+                          <button
+                            type="button"
+                            onClick={() => setMostrarGuiaModelo(false)}
+                            className="text-gray-400 hover:text-gray-600"
+                            aria-label="Cerrar"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <ul className="space-y-1.5">
+                          <li>· Fotografía con <strong>personas</strong> o escenas realistas → <strong>FLUX 1.1 Ultra</strong></li>
+                          <li>· Piezas de <strong>producto</strong> o con detalle fino → <strong>Seedream 4.5</strong></li>
+                          <li>· Imagen destacada importante o <strong>hero de campaña</strong> → <strong>Imagen 4 Ultra</strong></li>
+                          <li>· Generar <strong>varias variantes</strong> para comparar → <strong>Seedream 4.5</strong> (más económico)</li>
+                        </ul>
+                        <p className="mt-2 text-gray-500">Puedes cambiar de modelo y regenerar si el resultado no te convence.</p>
+                      </div>
+                    )}
+                  </div>
+                  <select
+                    value={modeloImagen}
+                    onChange={(e) => setModeloImagen(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {MODELOS_IMAGEN.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.nombre} — {m.descripcion_corta}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Formato */}
@@ -2763,7 +3358,7 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                 {/* Botón generar */}
                 <Button
                   onClick={handleGenerarImagenDestacada}
-                  disabled={generandoImagen || !promptImagen.trim() || galeriaImagenes.length >= 4}
+                  disabled={generandoImagen || !promptImagen.trim() || galeriaImagenes.length >= MAX_IMAGENES_GALERIA}
                   className="w-full gap-2"
                 >
                   {generandoImagen ? (
@@ -2772,6 +3367,19 @@ Solo devuelve el prompt en inglés, sin explicaciones ni texto adicional.`,
                     <><Wand2 className="h-4 w-4" />Generar imagen{variantesImagen > 1 ? `s (${variantesImagen})` : ''}</>
                   )}
                 </Button>
+
+                {/* Motivo del deshabilitado — un botón disabled no dispara onClick, así que
+                    el porqué debe verse aquí, no solo en el aviso de la galería de arriba */}
+                {!generandoImagen && galeriaImagenes.length >= MAX_IMAGENES_GALERIA && (
+                  <p className="text-xs text-amber-600 text-center -mt-2">
+                    Galería llena ({MAX_IMAGENES_GALERIA}/{MAX_IMAGENES_GALERIA}): elimina alguna imagen para poder generar más.
+                  </p>
+                )}
+                {!generandoImagen && galeriaImagenes.length < MAX_IMAGENES_GALERIA && !promptImagen.trim() && (
+                  <p className="text-xs text-gray-400 text-center -mt-2">
+                    Escribe o genera un prompt para activar el botón.
+                  </p>
+                )}
 
               </CardContent>
             </Card>

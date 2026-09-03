@@ -250,15 +250,47 @@ export async function buildClientContext(
       : Promise.resolve({ data: null, error: null }),
   ])
 
-  // ── Safely extract results (failures → sensible defaults) ─
-  const brandData     = brandResult.status       === 'fulfilled' ? brandResult.value.data      : null
-  const assetsData    = assetsResult.status      === 'fulfilled' ? assetsResult.value.data      : []
-  const compData      = competitorsResult.status === 'fulfilled' ? competitorsResult.value.data : []
-  const inspData      = inspiracionResult.status === 'fulfilled' ? inspiracionResult.value.data : null
-  const mapData       = mapItemsResult.status    === 'fulfilled' ? mapItemsResult.value.data    : []
-  const analyticsData = analyticsResult.status   === 'fulfilled' ? analyticsResult.value.data   : null
-  const gscOpData     = gscOpResult.status       === 'fulfilled' ? gscOpResult.value.data       : []
-  const gmbData       = gmbResult.status         === 'fulfilled' ? gmbResult.value.data         : null
+  // ── Safely extract results — log any Supabase errors so they ─
+  // surface in Vercel logs instead of being silently swallowed.
+  // Supabase JS wraps errors in { data, error } without rejecting,
+  // so Promise.allSettled always resolves 'fulfilled'; we must check
+  // .value.error explicitly.
+  function extractOrNull<T>(
+    result: PromiseSettledResult<{ data: T | null; error: unknown }>,
+    label : string,
+  ): T | null {
+    if (result.status === 'rejected') {
+      console.error(`[buildClientContext] ${label} — promise rejected:`, result.reason)
+      return null
+    }
+    if (result.value.error) {
+      console.error(`[buildClientContext] ${label} — supabase error:`, result.value.error)
+    }
+    return result.value.data ?? null
+  }
+
+  function extractOrEmpty<T>(
+    result: PromiseSettledResult<{ data: T[] | null; error: unknown }>,
+    label : string,
+  ): T[] {
+    if (result.status === 'rejected') {
+      console.error(`[buildClientContext] ${label} — promise rejected:`, result.reason)
+      return []
+    }
+    if (result.value.error) {
+      console.error(`[buildClientContext] ${label} — supabase error:`, result.value.error)
+    }
+    return result.value.data ?? []
+  }
+
+  const brandData     = extractOrNull(brandResult,       'brand_context')
+  const assetsData    = extractOrEmpty(assetsResult as PromiseSettledResult<{ data: Array<{ asset_type: string; drive_url: string }> | null; error: unknown }>, 'brand_assets')
+  const compData      = extractOrEmpty(competitorsResult as PromiseSettledResult<{ data: Array<{ page_name: string; platform: string }> | null; error: unknown }>, 'competitors')
+  const inspData      = extractOrNull(inspiracionResult, 'inspiracion_sessions')
+  const mapData       = extractOrEmpty(mapItemsResult as PromiseSettledResult<{ data: Array<{ title: string; main_keyword: string; cluster: string | null; funnel_stage: string | null; fase_recomendada: string | null; priority: number | null }> | null; error: unknown }>, 'content_map_items')
+  const analyticsData = extractOrNull(analyticsResult,  'gsc_snapshots')
+  const gscOpData     = extractOrEmpty(gscOpResult as PromiseSettledResult<{ data: Array<{ type: string; titulo: string; keyword: string | null; current_position: number | null; impressions: number | null; clicks: number | null }> | null; error: unknown }>, 'content_opportunities')
+  const gmbData       = extractOrNull(gmbResult,        'gmb_snapshots')
 
   // ── Parse inspiracion resultado ──────────────────────────
   let inspiracion: ClientContext['inspiracion'] = null
