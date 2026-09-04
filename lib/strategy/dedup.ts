@@ -106,6 +106,11 @@ export const CLUSTER_FUERA_DE_NEGOCIO = 'Sin relación con el negocio'
  * Patrones que marcan un cluster como ajeno a lo que vende el cliente.
  * Incluye el nombre canónico y las variantes que el modelo ha ido
  * inventando por su cuenta en sesiones anteriores.
+ *
+ * Los clusters de competencia NO se excluyen. La restricción editorial es
+ * no nombrar a la competencia dentro del texto, no renunciar al territorio:
+ * keywords como "crematorio mascotas Galicia" son BOFU legítimo del cliente
+ * aunque el cluster se llame "Competidores crematorio mascotas".
  */
 const PATRONES_EXCLUSION: RegExp[] = [
   /sin\s+relaci[oó]n/i,
@@ -114,7 +119,6 @@ const PATRONES_EXCLUSION: RegExp[] = [
   /irrelevante/i,
   /descartar/i,
   /\(no\s+cliente\)/i,
-  /competidor/i,      // el prompt ya prohíbe artículos sobre la competencia
   /\bmarcas?\b.*competencia/i,
 ]
 
