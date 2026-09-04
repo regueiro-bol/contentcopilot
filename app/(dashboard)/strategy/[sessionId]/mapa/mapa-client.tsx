@@ -128,6 +128,55 @@ function TipoArticuloBadge({ tipo }: { tipo: 'nuevo' | 'actualizacion' | 'mejora
   )
 }
 
+/**
+ * Indicador de solapamiento por artículo.
+ *
+ * El resumen de "Gap analysis" da los totales, pero sin esto no se sabe
+ * QUÉ artículo es nuevo, parcial o ya existe. Mismos colores que la leyenda.
+ */
+function GapDot({ item }: { item: MapItem }) {
+  const cs = item.content_status
+  if (!cs) {
+    return (
+      <span
+        className="inline-block h-2 w-2 rounded-full bg-gray-200"
+        title="Sin analizar — pulsa «Re-analizar gaps»"
+      />
+    )
+  }
+
+  const cfg = {
+    gap             : { color: 'bg-emerald-500', label: 'Nuevo',    desc: 'No existe contenido similar. Crear desde cero.' },
+    partial         : { color: 'bg-blue-500',    label: 'Parcial',  desc: 'Existe contenido relacionado pero incompleto.' },
+    existing_content: { color: 'bg-amber-400',   label: 'Ya existe', desc: 'Contenido muy similar ya publicado. Valorar actualización.' },
+  }[cs]
+
+  const sim = item.similarity_score != null
+    ? ` · similitud ${item.similarity_score.toFixed(2)}`
+    : ''
+
+  const dot = (
+    <span
+      className={cn('inline-block h-2.5 w-2.5 rounded-full', cfg.color)}
+      title={`${cfg.label} — ${cfg.desc}${sim}`}
+      aria-label={cfg.label}
+    />
+  )
+
+  // Si conocemos la URL que solapa, el punto lleva a ella
+  return item.existing_url ? (
+    <a
+      href={item.existing_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex hover:scale-125 transition-transform"
+      title={`${cfg.label} — ${cfg.desc}${sim}\n${item.existing_url}`}
+    >
+      {dot}
+    </a>
+  ) : dot
+}
+
 function PrioridadFinalBadge({ item }: { item: MapItem }) {
   const p = item.prioridad_final ?? item.priority
   const label = p === 1 ? 'P1' : p === 2 ? 'P2' : 'P3'
@@ -1256,6 +1305,10 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                       <thead>
                         <tr className="border-b border-gray-100">
                           <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 w-6">#</th>
+                          <th className="px-2 py-2 text-center text-xs font-semibold text-gray-500 w-6" title="Solapamiento con contenido existente">
+                            <span className="sr-only">Gap</span>
+                            <span aria-hidden>●</span>
+                          </th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">Título</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">Etapas</th>
                           <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500">P</th>
@@ -1268,6 +1321,10 @@ export default function MapaClient({ session, clientId, map, items }: Props) {
                         {faseItems.map((item: MapItem, idx: number) => (
                           <tr key={item.id} className="hover:bg-gray-50/60 transition-colors">
                             <td className="px-4 py-3 text-xs text-gray-400 tabular-nums">{idx + 1}</td>
+                            {/* Gap: nuevo / parcial / ya existe */}
+                            <td className="px-2 py-3 text-center align-middle">
+                              <GapDot item={item} />
+                            </td>
                             {/* Título + keyword + cluster */}
                             <td className="px-3 py-3 max-w-[280px]">
                               <p className="font-medium text-gray-900 leading-snug line-clamp-2 text-sm">
