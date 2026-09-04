@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { buildClientContext } from '@/lib/context/client-context'
 import { contextToPrompt } from '@/lib/context/context-to-prompt'
 import { toSpanishTitleCase } from '@/lib/utils'
+import { deduplicarArticulos, esClusterExcluido } from '@/lib/strategy/dedup'
 
 export const maxDuration = 300
 
@@ -78,6 +79,7 @@ function buildMapPrompt(
   articulosParaEsteBatch: number,
   proyectoContextStr?: string,
   clientContextStr?: string,
+  contenidoExistenteBlock?: string,
 ): string {
   // Generar instrucción explícita por cluster
   const assignmentLines = clustersWithAssignment
@@ -101,7 +103,7 @@ function buildMapPrompt(
     ? `\n\nCONTEXTO DEL CLIENTE:\n${clientContextStr}\n`
     : ''
 
-  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".${proyectoBlock}${clienteBlock}
+  return `Genera artículos para el banco de contenidos SEO del cliente "${clientName}".${proyectoBlock}${clienteBlock}${contenidoExistenteBlock ?? ''}
 
 RESTRICCIONES EDITORIALES OBLIGATORIAS:
 - Genera artículos coherentes con el proyecto y sus temáticas autorizadas.
@@ -298,6 +300,63 @@ export async function POST(request: NextRequest) {
     })
     const clientContextStr = clientCtx ? contextToPrompt(clientCtx) : undefined
 
+    // ── Contenido que YA existe ──────────────────────────────
+    // Dos fuentes que hasta ahora no llegaban al generador:
+    //   - analisis_web.articulos → títulos publicados en la web del cliente
+    //   - contenidos             → artículos ya creados en ContentCopilot
+    // Se inyectan en el prompt y, además, se usan como filtro duro tras
+    // generar: el prompt por sí solo no ha bastado para evitar duplicados.
+    const [analisisRes, contenidosRes] = await Promise.all([
+      supabase
+        .from('analisis_web')
+        .select('articulos')
+        .eq('cliente_id', session.client_id)
+        .eq('tipo', 'cliente')
+        .order('fecha_analisis', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('contenidos')
+        .select('titulo')
+        .eq('cliente_id', session.client_id),
+    ])
+
+    const titulosPublicados: string[] = Array.isArray(analisisRes.data?.articulos)
+      ? (analisisRes.data.articulos as Array<{ titulo?: string }>)
+          .map((a) => String(a?.titulo ?? '').trim())
+          .filter(Boolean)
+      : []
+
+    const titulosContentCopilot: string[] = (contenidosRes.data ?? [])
+      .map((c) => String((c as { titulo?: string }).titulo ?? '').trim())
+      .filter(Boolean)
+
+    const titulosExistentes = [...titulosPublicados, ...titulosContentCopilot]
+
+    console.log(
+      `[GenerateMap] Contenido existente — ${titulosPublicados.length} publicados en web, ` +
+      `${titulosContentCopilot.length} en ContentCopilot`,
+    )
+
+    const bloques: string[] = []
+    if (titulosPublicados.length > 0) {
+      bloques.push(
+        'ARTÍCULOS YA PUBLICADOS — no generes duplicados ni variantes de estos:\n' +
+        titulosPublicados.slice(0, 80).map((t) => `  - ${t}`).join('\n'),
+      )
+    }
+    if (titulosContentCopilot.length > 0) {
+      bloques.push(
+        'ARTÍCULOS YA CREADOS EN CONTENTCOPILOT — no generes duplicados ni variantes de estos:\n' +
+        titulosContentCopilot.slice(0, 80).map((t) => `  - ${t}`).join('\n'),
+      )
+    }
+    const contenidoExistenteBlock = bloques.length > 0
+      ? `\n\n${bloques.join('\n\n')}\n\nSi una keyword ya está cubierta por alguno de los títulos anteriores, ` +
+        'NO generes otro artículo sobre ella: elige otro ángulo del cluster o, si no lo hay, ' +
+        'genera menos artículos para ese cluster.\n'
+      : ''
+
     // ── Cargar keywords clusterizadas ────────────────────────
     const { data: keywords, error: kwError } = await supabase
       .from('keywords')
@@ -387,15 +446,43 @@ export async function POST(request: NextRequest) {
       .sort((a, b) => (b.total_volume ?? 0) - (a.total_volume ?? 0))
       .map(({ total_volume: _, ...rest }) => rest) // eliminar campo auxiliar
 
-    const totalClusters = allClusterSummaries.length
+    // ── Descartar clusters ajenos al negocio ─────────────────
+    // El clustering marca como "Sin relación con el negocio" las keywords
+    // de otro sector o categoría. Sin este filtro acababan produciendo
+    // artículos como "piscinas para perros en Madrid" para un crematorio.
+    const clustersExcluidos = allClusterSummaries.filter((c) => esClusterExcluido(c.cluster))
+    const clustersRelevantes = allClusterSummaries.filter((c) => !esClusterExcluido(c.cluster))
+
+    if (clustersExcluidos.length > 0) {
+      console.log(
+        `[GenerateMap] ${clustersExcluidos.length} clusters excluidos por ser ajenos al negocio: ` +
+        clustersExcluidos.map((c) => `"${c.cluster}"`).join(', '),
+      )
+    }
+
+    if (clustersRelevantes.length === 0) {
+      return NextResponse.json(
+        { error: 'Todos los clusters quedaron excluidos por no guardar relación con el negocio. Revisa el clustering.' },
+        { status: 400 },
+      )
+    }
 
     // ── Asignar artículos a cada cluster ─────────────────────
-    // Regla: cada cluster recibe mínimo 1 artículo.
-    // Clusters con ≥3 keywords pueden recibir artículos extra (fase 2).
-    // El sobrante se reparte round-robin entre todos los clusters.
-    // Usamos TODOS los clusters — totalMax controla solo el nº de artículos,
-    // nunca limita cuántos clusters participan.
-    const clustersToUse = allClusterSummaries
+    // totalMax es un TECHO, no una referencia. Antes la fase 1 daba 1
+    // artículo a CADA cluster sin mirar el techo: con 59 clusters y un
+    // total pedido de 30 salían 59 artículos. Si hay más clusters que
+    // artículos, nos quedamos con los de mayor volumen (ya vienen
+    // ordenados por total_volume descendente).
+    const clustersToUse = clustersRelevantes.slice(0, totalMax)
+
+    if (clustersRelevantes.length > totalMax) {
+      console.log(
+        `[GenerateMap] ${clustersRelevantes.length} clusters relevantes > techo de ${totalMax} artículos: ` +
+        `se usan los ${clustersToUse.length} de mayor volumen`,
+      )
+    }
+
+    const totalClusters = clustersToUse.length
     let articulosRestantes = totalMax
 
     // Fase 1: 1 artículo por cluster
@@ -441,8 +528,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Red de seguridad: pase lo que pase en las fases anteriores, la suma
+    // asignada nunca puede superar el techo pedido.
+    {
+      let exceso = clustersToUse.reduce((s, c) => s + (c.assigned_articles ?? 1), 0) - totalMax
+      if (exceso > 0) {
+        console.warn(`[GenerateMap] Reparto excedía el techo en ${exceso} artículos — recortando`)
+        // Recortar por la cola (menor volumen) sin bajar de 1 por cluster
+        for (let i = clustersToUse.length - 1; i >= 0 && exceso > 0; i--) {
+          const c = clustersToUse[i]
+          const quitar = Math.min(exceso, (c.assigned_articles ?? 1) - 1)
+          if (quitar > 0) {
+            c.assigned_articles = (c.assigned_articles ?? 1) - quitar
+            exceso -= quitar
+          }
+        }
+      }
+    }
+
     const totalAsignado = clustersToUse.reduce((sum, c) => sum + (c.assigned_articles ?? 1), 0)
-    console.log(`[GenerateMap] ${totalClusters} clusters, ${keywords.length} keywords, ${meses} meses, ${artMes} art/mes → ${totalAsignado} artículos asignados`)
+    console.log(`[GenerateMap] ${totalClusters} clusters, ${keywords.length} keywords, techo ${totalMax} → ${totalAsignado} artículos asignados`)
     console.log(`[GenerateMap] Asignación:`, clustersToUse.map((c) => `${c.cluster}=${c.assigned_articles}`).join(', '))
 
     // ── Crear content_map ANTES de los batches ───────────────
@@ -517,6 +622,7 @@ export async function POST(request: NextRequest) {
                 articulosParaBatch,
                 proyectoContextStr,
                 clientContextStr,
+                contenidoExistenteBlock,
               ),
             }],
           })
@@ -564,13 +670,35 @@ export async function POST(request: NextRequest) {
       }),
     )
 
-    // ── Insertar resultados secuencialmente (mantiene sort_order) ──
+    // ── Deduplicar antes de insertar ─────────────────────────
+    // Los lotes corren en paralelo, así que ninguno ve los títulos de los
+    // demás; y dentro de un cluster con keywords casi sinónimas el modelo
+    // produce reescrituras del mismo artículo. Se comparan además contra el
+    // contenido que ya existe: el aviso en el prompt no basta por sí solo.
+    const todosLosArticulos = batchResultados.flatMap((b) => b.articles)
+
+    const { conservados: articulosUnicos, descartados } = deduplicarArticulos(
+      todosLosArticulos,
+      titulosExistentes,
+    )
+
+    if (descartados.length > 0) {
+      console.log(`[GenerateMap] ${descartados.length} artículos descartados por solapamiento:`)
+      for (const d of descartados) {
+        console.log(`  - [${d.motivo}] "${d.item.title}" ← choca con "${d.contra}"`)
+      }
+    }
+    console.log(
+      `[GenerateMap] ${todosLosArticulos.length} generados → ${articulosUnicos.length} únicos ` +
+      `(comparados contra ${titulosExistentes.length} títulos ya existentes)`,
+    )
+
+    // ── Insertar ─────────────────────────────────────────────
     let totalItemsInsertados = 0
     let sortOrder            = 0
 
-    for (let batchIdx = 0; batchIdx < batchResultados.length; batchIdx++) {
-      const { articles } = batchResultados[batchIdx]
-      if (articles.length === 0) continue
+    if (articulosUnicos.length > 0) {
+      const articles = articulosUnicos
 
       const items = articles.map((a) => {
         const vol  = a.volume
@@ -634,10 +762,10 @@ export async function POST(request: NextRequest) {
       }
 
       if (itemsError) {
-        console.error(`[GenerateMap] Batch ${batchIdx + 1} — error insertando items:`, itemsError)
+        console.error(`[GenerateMap] Error insertando items:`, itemsError)
       } else {
         totalItemsInsertados += items.length
-        console.log(`[GenerateMap] Batch ${batchIdx + 1} — ${items.length} items insertados (total acumulado: ${totalItemsInsertados})`)
+        console.log(`[GenerateMap] ${items.length} items insertados`)
       }
     }
 
@@ -669,6 +797,16 @@ export async function POST(request: NextRequest) {
       map_id        : map.id,
       total_articles: totalItemsInsertados,
       por_fase      : porFase,
+      // El total puede quedar por debajo de lo pedido: el número solicitado
+      // es un techo, y sobre él actúan la exclusión de clusters ajenos al
+      // negocio y el descarte por solapamiento.
+      resumen_generacion: {
+        techo_solicitado    : totalMax,
+        clusters_excluidos  : clustersExcluidos.length,
+        articulos_generados : todosLosArticulos.length,
+        descartados_duplicados: descartados.length,
+        titulos_existentes_comparados: titulosExistentes.length,
+      },
     })
 
   } catch (e) {
