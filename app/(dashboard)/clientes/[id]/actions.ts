@@ -62,6 +62,33 @@ export async function actualizarClienteMarca(
   revalidatePath(`/clientes/${id}`)
 }
 
+export async function actualizarServiciosProductos(
+  id: string,
+  servicios: string[],
+) {
+  const supabase = createAdminClient()
+
+  // Normalizar: trim, quitar vacíos, deduplicar sin distinguir mayúsculas
+  const vistos = new Set<string>()
+  const limpios = servicios
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length <= 120)
+    .filter((s) => {
+      const k = s.toLowerCase()
+      if (vistos.has(k)) return false
+      vistos.add(k)
+      return true
+    })
+
+  const { error } = await supabase
+    .from('clientes')
+    .update({ servicios_productos: limpios })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath(`/clientes/${id}`)
+}
+
 // ─── Estado del cliente ─────────────────────────────────────────────────────
 
 export async function archivarCliente(id: string) {

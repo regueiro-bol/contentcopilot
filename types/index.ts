@@ -22,6 +22,7 @@ export interface Cliente {
 
   // Contexto corporativo
   descripcion: string                  // contexto empresarial general
+  servicios_productos: string[]        // lo que vende — determina intención comercial del funnel
   restricciones_globales: string[]     // palabras/temas prohibidos en TODOS sus proyectos
   identidad_corporativa: string        // tono y valores de marca a nivel global
 

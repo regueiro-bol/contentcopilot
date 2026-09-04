@@ -20,8 +20,9 @@ export default async function ClientesPage() {
   console.log('Supabase response:', JSON.stringify(data))
   console.log('Supabase error:', JSON.stringify(error))
 
-  type Row = Omit<Cliente, 'restricciones_globales'> & {
+  type Row = Omit<Cliente, 'restricciones_globales' | 'servicios_productos'> & {
     restricciones_globales: unknown
+    servicios_productos: unknown
     proyectos: { count: number }[]
   }
 
@@ -37,6 +38,7 @@ export default async function ClientesPage() {
     descripcion: c.descripcion,
     identidad_corporativa: c.identidad_corporativa,
     restricciones_globales: (c.restricciones_globales ?? []) as string[],
+    servicios_productos: (c.servicios_productos ?? []) as string[],
     account_manager_id: c.account_manager_id,
     num_proyectos: c.proyectos?.[0]?.count ?? 0,
   }))

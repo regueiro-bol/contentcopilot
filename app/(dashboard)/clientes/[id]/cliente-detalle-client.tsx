@@ -7,7 +7,7 @@ import {
   CheckCircle2, XCircle, Clock, Image as ImageIcon, ArrowRight,
   Loader2, Link2, Globe, AlertCircle, AlertTriangle, BarChart2,
   RefreshCw, Plug, RotateCcw, Megaphone, Lightbulb, Share2,
-  Search, TrendingUp, TrendingDown, Zap, Target,
+  Search, TrendingUp, TrendingDown, Zap, Target, Package, X,
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import {
   actualizarClienteIdentidad,
   actualizarClienteMarca,
+  actualizarServiciosProductos,
   crearProyecto,
   archivarCliente,
   reactivarCliente,
@@ -1591,6 +1592,186 @@ function ZonaPeligrosa({ clienteId, clienteNombre }: { clienteId: string; client
 // Componente principal
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// Servicios y productos (tab Identidad)
+//
+// Alimenta la clasificación de funnel: una keyword sobre algo de esta lista
+// nunca se clasifica como TOFU. Ver app/api/strategy/clustering.
+// ---------------------------------------------------------------------------
+
+function ServiciosProductosCard({
+  clienteId, iniciales,
+}: { clienteId: string; iniciales: string[] }) {
+  const router = useRouter()
+  const [servicios, setServicios] = useState<string[]>(iniciales)
+  const [nuevo,     setNuevo]     = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [sugiriendo, setSugiriendo] = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+  const [aviso,     setAviso]     = useState<string | null>(null)
+
+  const sucio = JSON.stringify(servicios) !== JSON.stringify(iniciales)
+
+  function añadir() {
+    const v = nuevo.trim()
+    if (!v) return
+    if (servicios.some((s) => s.toLowerCase() === v.toLowerCase())) { setNuevo(''); return }
+    setServicios((p) => [...p, v])
+    setNuevo('')
+  }
+
+  async function sugerirConIA() {
+    setSugiriendo(true)
+    setError(null)
+    setAviso(null)
+    try {
+      const res = await fetch('/api/clientes/sugerir-servicios', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ cliente_id: clienteId }),
+      })
+      const data = await res.json() as {
+        servicios?: string[]
+        fuentes_usadas?: { descripcion: boolean; identidad: boolean; analisis_publicado: boolean }
+        error?: string
+      }
+      if (!res.ok) throw new Error(data.error ?? 'Error generando sugerencias')
+
+      const propuestos = data.servicios ?? []
+      // Fusionar con lo existente sin duplicar
+      const vistos = new Set(servicios.map((s) => s.toLowerCase()))
+      const nuevos = propuestos.filter((s) => !vistos.has(s.toLowerCase()))
+      setServicios((p) => [...p, ...nuevos])
+
+      const f = data.fuentes_usadas
+      const fuentes = [
+        f?.descripcion        ? 'descripción' : null,
+        f?.analisis_publicado ? 'contenido publicado' : null,
+      ].filter(Boolean).join(' + ')
+
+      setAviso(
+        nuevos.length === 0
+          ? 'La IA no encontró servicios nuevos que añadir.'
+          : `${nuevos.length} propuesta${nuevos.length !== 1 ? 's' : ''} añadida${nuevos.length !== 1 ? 's' : ''}${fuentes ? ` (leyendo ${fuentes})` : ''}. Revísalas antes de guardar.`,
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error')
+    } finally {
+      setSugiriendo(false)
+    }
+  }
+
+  async function guardar() {
+    setGuardando(true)
+    setError(null)
+    setAviso(null)
+    try {
+      await actualizarServiciosProductos(clienteId, servicios)
+      router.refresh()
+      setAviso('Guardado.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al guardar')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2">
+          <Package className="h-4 w-4 text-indigo-600" />
+          <CardTitle className="text-sm font-semibold">Servicios y productos</CardTitle>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={sugerirConIA}
+          disabled={sugiriendo || guardando}
+        >
+          {sugiriendo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {sugiriendo ? 'Analizando...' : 'Sugerir con IA'}
+        </Button>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        <p className="text-xs text-gray-500">
+          Lo que el cliente vende. Determina la intención comercial al clasificar keywords:
+          una búsqueda sobre cualquiera de estos elementos nunca se clasifica como TOFU,
+          aunque esté formulada de forma informacional.
+        </p>
+
+        {/* Lista */}
+        {servicios.length === 0 ? (
+          <p className="text-sm text-gray-400 py-2">
+            Sin definir. Usa <span className="font-medium">Sugerir con IA</span> para
+            proponerlos a partir de la descripción y del contenido publicado.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {servicios.map((s, i) => (
+              <span
+                key={`${s}-${i}`}
+                className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-1 text-xs font-medium"
+              >
+                {s}
+                <button
+                  type="button"
+                  onClick={() => setServicios((p) => p.filter((_, j) => j !== i))}
+                  className="hover:text-indigo-900"
+                  aria-label={`Quitar ${s}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Añadir manual */}
+        <div className="flex gap-2">
+          <Input
+            value={nuevo}
+            onChange={(e) => setNuevo(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); añadir() } }}
+            placeholder="Añadir servicio o producto..."
+            className="h-9 text-sm"
+          />
+          <Button variant="outline" size="sm" onClick={añadir} disabled={!nuevo.trim()} className="gap-1 shrink-0">
+            <Plus className="h-3.5 w-3.5" />
+            Añadir
+          </Button>
+        </div>
+
+        {error && (
+          <p className="text-xs text-red-600 flex items-center gap-1.5">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />{error}
+          </p>
+        )}
+        {aviso && !error && (
+          <p className="text-xs text-gray-500">{aviso}</p>
+        )}
+
+        {sucio && (
+          <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+            <span className="text-xs text-amber-600">Cambios sin guardar</span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setServicios(iniciales); setAviso(null); setError(null) }} disabled={guardando}>
+                Descartar
+              </Button>
+              <Button size="sm" onClick={guardar} disabled={guardando} className="gap-1.5">
+                {guardando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Guardar
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Análisis web del cliente (tab Identidad)
 // ---------------------------------------------------------------------------
 
@@ -1978,7 +2159,13 @@ export default function ClienteDetalleClient({
               urlWeb={cliente.url_web ?? undefined}
             />
 
-            {/* Sección C: Identidad de marca */}
+            {/* Sección C: Servicios y productos */}
+            <ServiciosProductosCard
+              clienteId={cliente.id}
+              iniciales={cliente.servicios_productos ?? []}
+            />
+
+            {/* Sección D: Identidad de marca */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-semibold">Identidad de marca</CardTitle>
