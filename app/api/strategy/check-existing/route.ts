@@ -108,6 +108,41 @@ export async function POST(request: NextRequest) {
 
     console.log(`[CheckExisting] Analizando ${items.length} items para client ${client_id}`)
 
+    // ── Diagnóstico del corpus de comparación ──────────────────
+    // La comparación se hace SOLO contra documentos_rag (vía buscar_rag_cliente).
+    // Si el cliente no tiene documentos indexados, todos los items salen 'gap'
+    // por ausencia de fuente, no porque el contenido sea realmente nuevo.
+    const { data: proyectosCliente } = await supabase
+      .from('proyectos')
+      .select('id')
+      .eq('cliente_id', client_id)
+
+    const proyectoIds = (proyectosCliente ?? []).map((p) => p.id as string)
+
+    let corpusSize = 0
+    if (proyectoIds.length > 0) {
+      const { count } = await supabase
+        .from('documentos_rag')
+        .select('id', { count: 'exact', head: true })
+        .in('proyecto_id', proyectoIds)
+        .not('embedding', 'is', null)
+      corpusSize = count ?? 0
+    }
+
+    console.log(
+      `[CheckExisting] CORPUS — ${proyectoIds.length} proyectos, ` +
+      `${corpusSize} documentos indexados en documentos_rag con embedding`,
+    )
+
+    if (corpusSize === 0) {
+      console.warn(
+        `[CheckExisting] ⚠️  CORPUS VACÍO para client ${client_id}. ` +
+        `buscar_rag_cliente no devolverá nada y los ${items.length} items se ` +
+        `clasificarán como 'gap' por falta de fuente, NO por ser contenido nuevo. ` +
+        `El resultado de este análisis no es concluyente.`,
+      )
+    }
+
     // ── Generar embeddings en batch ────────────────────────────
     // OpenAI acepta hasta ~2048 inputs por llamada; procesamos en lotes de 20
     const BATCH_SIZE = 20
@@ -117,6 +152,11 @@ export async function POST(request: NextRequest) {
       existing_url: string | null
       similarity_score: number
     }[] = []
+
+    // Contadores de diagnóstico
+    let sinResultadoRpc = 0   // el RPC no devolvió ninguna fila
+    let erroresRpc      = 0
+    let maxSimilarity   = 0
 
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
       const batch = items.slice(i, i + BATCH_SIZE)
@@ -143,7 +183,8 @@ export async function POST(request: NextRequest) {
         )
 
         if (ragErr) {
-          console.error(`[CheckExisting] RPC error para item ${item.id}:`, ragErr.message)
+          erroresRpc++
+          console.error(`[CheckExisting] RPC error para "${item.title}":`, ragErr.message)
           results.push({
             id: item.id,
             content_status: 'gap',
@@ -162,7 +203,13 @@ export async function POST(request: NextRequest) {
           similarity: number
         }>)?.[0]
 
+        const numResultados = Array.isArray(ragResults) ? ragResults.length : 0
+
         if (!top) {
+          sinResultadoRpc++
+          console.log(
+            `[CheckExisting] "${item.title}" — 0 documentos recuperados del RAG → gap por falta de fuente`,
+          )
           results.push({
             id: item.id,
             content_status: 'gap',
@@ -174,6 +221,13 @@ export async function POST(request: NextRequest) {
 
         const status = classify(top.similarity)
         const url    = (top.metadatos as Record<string, unknown> | null)?.url as string | undefined
+
+        if (top.similarity > maxSimilarity) maxSimilarity = top.similarity
+
+        console.log(
+          `[CheckExisting] "${item.title}" — ${numResultados} doc(s) recuperado(s), ` +
+          `mejor match "${top.titulo}" sim=${top.similarity.toFixed(3)} → ${status}`,
+        )
 
         results.push({
           id: item.id,
@@ -210,12 +264,41 @@ export async function POST(request: NextRequest) {
     const partial  = results.filter((r) => r.content_status === 'partial').length
 
     console.log(`[CheckExisting] Completado: ${gaps} gaps, ${existing} existing, ${partial} partial (${updated}/${results.length} actualizados)`)
+    console.log(
+      `[CheckExisting] DIAGNÓSTICO — corpus: ${corpusSize} docs · ` +
+      `items sin ningún match recuperado: ${sinResultadoRpc}/${results.length} · ` +
+      `errores RPC: ${erroresRpc} · similitud máxima observada: ${maxSimilarity.toFixed(3)} · ` +
+      `umbrales: existing≥${THRESHOLD_EXISTING} partial≥${THRESHOLD_PARTIAL}`,
+    )
+
+    if (corpusSize === 0) {
+      console.warn(
+        `[CheckExisting] ⚠️  Los ${gaps} "gaps" NO significan que el contenido sea nuevo: ` +
+        `no había nada contra lo que comparar.`,
+      )
+    } else if (sinResultadoRpc > 0) {
+      console.warn(
+        `[CheckExisting] ⚠️  ${sinResultadoRpc} items no recuperaron ningún documento pese a ` +
+        `haber ${corpusSize} en el corpus — revisar el RPC buscar_rag_cliente.`,
+      )
+    }
 
     return NextResponse.json({
       ok: true,
       total: results.length,
       updated,
       summary: { gap: gaps, existing_content: existing, partial },
+      // Diagnóstico: permite distinguir "no hay solapamiento" de
+      // "no había fuente contra la que comparar".
+      diagnostico: {
+        corpus_documentos      : corpusSize,
+        items_sin_match        : sinResultadoRpc,
+        errores_rpc            : erroresRpc,
+        similitud_maxima       : Math.round(maxSimilarity * 1000) / 1000,
+        umbral_existente       : THRESHOLD_EXISTING,
+        umbral_parcial         : THRESHOLD_PARTIAL,
+        resultado_concluyente  : corpusSize > 0,
+      },
       items: results,
     })
   } catch (e) {
