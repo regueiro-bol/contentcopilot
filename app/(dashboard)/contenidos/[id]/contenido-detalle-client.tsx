@@ -331,67 +331,68 @@ function RevisarConIAModal({
 }
 
 // ---------------------------------------------------------------------------
-// Modal: Generar brief con IA (Dify)
+// Modal: Regenerar brief con IA
 // ---------------------------------------------------------------------------
 function GenerarBriefModal({
   contenidoId,
   tieneBrief,
+  keywordPrincipal,
+  tamanyoMin,
+  tamanyoMax,
   open,
   onClose,
 }: {
-  contenidoId: string
-  tieneBrief: boolean
-  open: boolean
-  onClose: () => void
+  contenidoId     : string
+  tieneBrief      : boolean
+  keywordPrincipal: string | undefined
+  tamanyoMin      : number | undefined
+  tamanyoMax      : number | undefined
+  open            : boolean
+  onClose         : () => void
 }) {
   const router = useRouter()
-  const { userId } = useAuth()
-  const [datosExcel, setDatosExcel] = useState('')
-  const [generando, setGenerando] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [comentario, setComentario] = useState('')
+  const [generando, setGenerando]   = useState(false)
+  const [error, setError]           = useState<string | null>(null)
 
-  async function handleGenerar() {
-    if (!datosExcel.trim()) {
-      setError('Pega los datos del Excel para continuar')
-      return
-    }
+  function deriveFunnel(max: number | undefined): string | null {
+    if (max == null) return null
+    if (max <= 1500) return 'BOFU'
+    if (max <= 1900) return 'MOFU'
+    return 'TOFU'
+  }
+
+  async function handleRegenerar(conComentario: boolean) {
     setGenerando(true)
     setError(null)
-
     try {
-      const res = await fetch('/api/dify', {
-        method: 'POST',
+      const res = await fetch(`/api/contenidos/${contenidoId}/brief/regenerar`, {
+        method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: datosExcel,
-          app_id: process.env.NEXT_PUBLIC_DIFY_BRIEF_SEO_APP_ID ?? 'brief_seo',
-          usuario: userId,
-          modo: 'blocking',
-        }),
+        body   : JSON.stringify({ comentario: conComentario ? comentario : undefined }),
       })
-
+      const ct = res.headers.get('content-type') ?? ''
+      if (!ct.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(`Error del servidor (${res.status}): ${text.substring(0, 200)}`)
+      }
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Error al conectar con el agente')
-
-      const textoGenerado: string = data.answer ?? data.respuesta ?? ''
-      if (!textoGenerado) throw new Error('El agente no devolvió respuesta')
-
-      // Guardar en Supabase dentro del campo JSONB brief
-      await actualizarBriefContenido(contenidoId, { texto_generado: textoGenerado } as Partial<BriefSEO>)
-
+      if (!res.ok) throw new Error(data.error ?? 'Error al regenerar el brief')
       router.refresh()
-      setDatosExcel('')
+      setComentario('')
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error inesperado al generar el brief')
+      setError(e instanceof Error ? e.message : 'Error inesperado al regenerar el brief')
     } finally {
       setGenerando(false)
     }
   }
 
+  const funnel = deriveFunnel(tamanyoMax)
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !generando && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-indigo-600" />
@@ -400,50 +401,49 @@ function GenerarBriefModal({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          {/* Instrucciones */}
-          <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-800">
-            <p className="font-semibold mb-1">¿Cómo funciona?</p>
-            <p className="text-indigo-700 text-sm leading-relaxed">
-              Pega los datos del Excel SEO (keyword, título propuesto, URL, volumen de búsquedas,
-              estructura de H's, keywords secundarias…). El agente Brief SEO los procesará
-              y generará el brief completo.
-            </p>
+          {/* Datos en solo lectura */}
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2 text-sm">
+            {keywordPrincipal && (
+              <div className="flex items-start gap-2">
+                <span className="text-gray-500 shrink-0 w-28">Keyword</span>
+                <span className="font-medium text-gray-900">{keywordPrincipal}</span>
+              </div>
+            )}
+            {funnel && (
+              <div className="flex items-start gap-2">
+                <span className="text-gray-500 shrink-0 w-28">Etapa funnel</span>
+                <span className="font-medium text-gray-900">{funnel}</span>
+              </div>
+            )}
+            {tamanyoMin && tamanyoMax && (
+              <div className="flex items-start gap-2">
+                <span className="text-gray-500 shrink-0 w-28">Extensión</span>
+                <span className="font-medium text-gray-900">{tamanyoMin}–{tamanyoMax} palabras</span>
+              </div>
+            )}
           </div>
 
+          {/* Comentario opcional */}
           <div className="space-y-1.5">
-            <Label>
-              Datos del Excel SEO <span className="text-red-500">*</span>
+            <Label className="text-sm text-gray-700">
+              ¿Algo que corregir en esta versión? <span className="text-gray-400 font-normal">(opcional)</span>
             </Label>
             <textarea
-              value={datosExcel}
-              onChange={(e) => setDatosExcel(e.target.value)}
+              value={comentario}
+              onChange={(e) => setComentario(e.target.value)}
               disabled={generando}
-              placeholder={`Keyword principal: financiación pyme
-Título propuesto: Cómo conseguir financiación para tu pyme en 2025
-URL prevista: /blog/financiacion-pyme
-Volumen de búsquedas: 2.400/mes
-Tipo de keyword: informacional
-Keywords secundarias: crédito pyme, préstamos para empresas, ...
-Estructura H's:
-  H1: Cómo conseguir financiación para tu pyme...
-  H2: Tipos de financiación disponibles
-  H2: Requisitos para solicitar un crédito
-  ...`}
-              rows={12}
-              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white resize-y font-mono leading-relaxed transition-colors disabled:opacity-60"
+              placeholder={'El enfoque debería ser más resolutivo\nFalta una sección sobre precios\nEl tono es demasiado técnico para el lector objetivo'}
+              rows={4}
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y leading-relaxed transition-colors disabled:opacity-60"
             />
-            <p className="text-xs text-gray-400">
-              Puedes pegar texto libre, datos del Excel o cualquier formato — el agente lo interpretará.
-            </p>
           </div>
 
-          {/* Estado de generación */}
           {generando && (
             <div className="flex items-center gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
               <Loader2 className="h-4 w-4 text-blue-600 animate-spin shrink-0" />
               <div>
-                <p className="text-sm font-semibold text-blue-800">Generando brief…</p>
-                <p className="text-xs text-blue-600 mt-0.5">El agente está procesando los datos. Puede tardar 15–30 segundos.</p>
+                <p className="text-sm font-semibold text-blue-800">Regenerando brief…</p>
+                <p className="text-xs text-blue-600 mt-0.5">Puede tardar 30–60 segundos.</p>
               </div>
             </div>
           )}
@@ -455,16 +455,26 @@ Estructura H's:
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={generando}>
+        <DialogFooter className="flex-col sm:flex-row gap-2">
+          <Button variant="outline" onClick={onClose} disabled={generando} className="sm:mr-auto">
             Cancelar
           </Button>
-          <Button onClick={handleGenerar} disabled={generando || !datosExcel.trim()} className="gap-2">
-            {generando ? (
-              <><Loader2 className="h-3.5 w-3.5 animate-spin" />Generando…</>
-            ) : (
-              <><Sparkles className="h-3.5 w-3.5" />{tieneBrief ? 'Regenerar' : 'Generar brief'}</>
-            )}
+          <Button
+            variant="outline"
+            onClick={() => handleRegenerar(false)}
+            disabled={generando}
+            className="gap-2"
+          >
+            {generando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            Regenerar
+          </Button>
+          <Button
+            onClick={() => handleRegenerar(true)}
+            disabled={generando || !comentario.trim()}
+            className="gap-2"
+          >
+            {generando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            Regenerar con indicaciones
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -3581,6 +3591,9 @@ ${texto.slice(0, 3000)}`,
       <GenerarBriefModal
         contenidoId={contenido.id}
         tieneBrief={!!contenido.brief}
+        keywordPrincipal={contenido.keyword_principal}
+        tamanyoMin={contenido.tamanyo_texto_min}
+        tamanyoMax={contenido.tamanyo_texto_max}
         open={modalBrief}
         onClose={() => setModalBrief(false)}
       />

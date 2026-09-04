@@ -28,6 +28,15 @@ export interface GeoradarSummary {
   scores_por_llm: unknown
 }
 
+export interface BriefRegeneracion {
+  id          : string
+  contenido_id: string
+  usuario_id  : string | null
+  comentario  : string | null
+  created_at  : string
+  contenidos  : { titulo: string } | null
+}
+
 export default async function ProyectoDetallePage({
   params,
 }: {
@@ -43,6 +52,7 @@ export default async function ProyectoDetallePage({
     { data: lastInspiracionRaw },
     { data: lastStrategyRaw },
     { data: lastGeoradarRaw },
+    { data: regeneracionesRaw },
   ] = await Promise.all([
     supabase.from('proyectos').select('*').eq('id', params.proyectoId).single(),
     supabase.from('contenidos').select('*').eq('proyecto_id', params.proyectoId).order('created_at', { ascending: false }),
@@ -70,6 +80,12 @@ export default async function ProyectoDetallePage({
       .eq('estado', 'completado')
       .order('fecha_scan', { ascending: false })
       .limit(2),
+    supabase
+      .from('brief_regeneraciones')
+      .select('id, contenido_id, usuario_id, comentario, created_at, contenidos(titulo)')
+      .eq('proyecto_id', params.proyectoId)
+      .order('created_at', { ascending: false })
+      .limit(50),
   ])
 
   if (errProyecto || !proyectoRaw || errCliente || !clienteRaw) notFound()
@@ -117,6 +133,7 @@ export default async function ProyectoDetallePage({
   const lastInspiracion = (lastInspiracionRaw ?? null) as InspiracionSummary | null
   const lastStrategy = (lastStrategyRaw ?? null) as StrategySummary | null
   const lastGeoradar = (lastGeoradarRaw ?? []) as GeoradarSummary[]
+  const regeneraciones = (regeneracionesRaw ?? []) as BriefRegeneracion[]
 
   return (
     <ProyectoDetalleClient
@@ -127,6 +144,7 @@ export default async function ProyectoDetallePage({
       lastInspiracion={lastInspiracion}
       lastStrategy={lastStrategy}
       lastGeoradar={lastGeoradar}
+      regeneraciones={regeneraciones}
     />
   )
 }
