@@ -50,16 +50,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  console.log('[team/members] raw activo values:', (roles ?? []).map(r => ({ id: r.user_id.slice(-6), activo: r.activo })))
+
   // Enriquecer con datos de Clerk
   const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
   const members = await Promise.all(
     (roles ?? []).map(async (row) => {
+      // Tratar null/undefined como true; solo false explícito es inactivo
+      const activo = row.activo === false ? false : true
       try {
         const user = await clerk.users.getUser(row.user_id)
         return {
           user_id   : row.user_id,
           role      : row.role,
-          activo    : row.activo ?? true,
+          activo,
           created_at: row.created_at,
           email     : user.emailAddresses[0]?.emailAddress ?? null,
           nombre    : [user.firstName, user.lastName].filter(Boolean).join(' ') || null,
@@ -70,7 +74,7 @@ export async function GET(req: NextRequest) {
         return {
           user_id   : row.user_id,
           role      : row.role,
-          activo    : row.activo ?? true,
+          activo,
           created_at: row.created_at,
           email     : null,
           nombre    : null,
@@ -80,5 +84,6 @@ export async function GET(req: NextRequest) {
     }),
   )
 
+  console.log('[team/members] members activo summary:', members.map(m => ({ id: m.user_id.slice(-6), activo: m.activo })))
   return NextResponse.json({ members })
 }

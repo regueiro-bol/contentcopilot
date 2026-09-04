@@ -336,7 +336,7 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
         <>
           {/* ── Miembros activos ───────────────────────────────── */}
           {(() => {
-            const activos   = miembros.filter(m => m.activo !== false)
+            const activos   = miembros.filter(m => m.activo === true)
             const inactivos = miembros.filter(m => m.activo === false)
 
             const FilaMiembro = ({ m }: { m: Miembro }) => (
@@ -354,13 +354,13 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
                   <RolBadge role={m.role} />
                 </td>
                 <td className="px-4 py-3 text-center">
-                  {m.activo !== false
+                  {m.activo === true
                     ? <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">Activo</span>
                     : <span className="text-[10px] font-bold bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">Inactivo</span>
                   }
                 </td>
                 <td className="px-4 py-3 text-center">
-                  {m.activo !== false ? (
+                  {m.activo === true ? (
                     <button
                       type="button"
                       onClick={() => abrirDrawer(m)}
