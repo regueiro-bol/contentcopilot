@@ -72,7 +72,6 @@ const SYSTEM_PROMPT = `Eres un experto en planificación editorial SEO para el m
 function buildMapPrompt(
   clientName  : string,
   artMes      : number,
-  distribucion: { tofu: number; mofu: number; bofu: number },
   clustersWithAssignment: ClusterSummary[],
   batchIndex  : number,
   totalBatches: number,
@@ -110,7 +109,6 @@ RESTRICCIONES EDITORIALES OBLIGATORIAS:
 - Respeta las keywords prohibidas y temáticas vetadas indicadas en el contexto del proyecto.
 - Adapta el tono y enfoque al definido para este proyecto específico.
 
-Distribución objetivo del funnel: TOFU ${distribucion.tofu}% · MOFU ${distribucion.mofu}% · BOFU ${distribucion.bofu}%
 Ritmo estimado: ${artMes} artículos/mes
 
 Lote ${batchIndex + 1} de ${totalBatches}.
@@ -129,7 +127,14 @@ Para cada artículo genera:
 - main_keyword: keyword principal (diferente para cada artículo del mismo cluster)
 - secondary_keywords: array de 2-4 keywords complementarias del mismo cluster
 - cluster: nombre exacto del cluster (igual al de los datos)
-- funnel_stage: "tofu" | "mofu" | "bofu" según el cluster
+- funnel_stage: "tofu" | "mofu" | "bofu" — hereda la etapa de las keywords que
+  cubre el artículo. Cada cluster trae su desglose real en el campo "funnel" y
+  la etapa de cada keyword en "top_keywords": úsalos. Si un cluster es
+  mayoritariamente bofu, sus artículos son bofu.
+  NO repartas los artículos entre las tres etapas para equilibrar el resultado.
+  La distribución final debe ser consecuencia de lo que son las keywords, no un
+  objetivo a cumplir. Un mapa mayoritariamente comercial es correcto si las
+  keywords lo son.
 - fase_recomendada: en qué fase del plan publicar este artículo:
   * "arranque": artículos BOFU de alta prioridad y base de autoridad del nicho — publicar primero
   * "consolidacion": artículos MOFU que amplían el territorio semántico — publicar en segunda ola
@@ -190,7 +195,9 @@ export async function POST(request: NextRequest) {
     const totalMax     = total_articles
       ? Math.max(1, Math.min(200, total_articles))
       : meses * artMes
-    const distribucion = config?.distribucion ?? { tofu: 40, mofu: 35, bofu: 25 }
+    // config.distribucion se sigue aceptando en el body por compatibilidad,
+    // pero ya NO se inyecta en el prompt: la distribución del funnel es
+    // consecuencia de cómo estén clasificadas las keywords, no una cuota.
 
     // Si no viene session_id pero sí client_id → buscar la sesión más reciente completada
     if (!session_id && bodyClientId) {
@@ -504,7 +511,6 @@ export async function POST(request: NextRequest) {
               content: buildMapPrompt(
                 cliente.nombre,
                 artMes,
-                distribucion,
                 batch,
                 batchIdx,
                 clusterBatches.length,

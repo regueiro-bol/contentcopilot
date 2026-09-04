@@ -27,6 +27,12 @@ export interface ClientContext {
     web                  : string | null
     /** Text / JSONB field with editorial SEO competitors */
     competidores         : string | null
+    /**
+     * Services and products the client actually sells. Drives commercial
+     * intent in funnel classification — a keyword about one of these is
+     * never TOFU.
+     */
+    servicios_productos  : string[]
   }
 
   /** Null if no brand book has been processed yet */
@@ -150,7 +156,7 @@ export async function buildClientContext(
   // ── Core client (mandatory, fail fast if not found) ──────
   const { data: cliente } = await supabase
     .from('clientes')
-    .select('id, nombre, sector, descripcion, identidad_corporativa, tono_voz, perfil_lector, web, competidores')
+    .select('id, nombre, sector, descripcion, identidad_corporativa, tono_voz, perfil_lector, web, competidores, servicios_productos')
     .eq('id', clientId)
     .single()
 
@@ -394,6 +400,9 @@ export async function buildClientContext(
             ? cliente.competidores
             : JSON.stringify(cliente.competidores))
         : null,
+      servicios_productos  : Array.isArray(cliente.servicios_productos)
+        ? (cliente.servicios_productos as string[]).filter(Boolean)
+        : [],
     },
 
     brand: brandData

@@ -27,17 +27,45 @@ const SYSTEM_PROMPT = `Eres un experto en SEO y estrategia de contenidos para el
 Tu especialidad es agrupar keywords en clusters semánticos coherentes para estrategias de contenido editorial.
 Respondes ÚNICAMENTE con el JSON pedido, sin texto adicional, comentarios ni explicaciones previas o posteriores.`
 
-function buildUserPrompt(keywordsText: string, clientName: string): string {
+function buildUserPrompt(
+  keywordsText: string,
+  clientName  : string,
+  negocioBlock: string,
+): string {
   return `Clasifica las siguientes keywords en clusters semánticos para la estrategia de contenidos del cliente "${clientName}".
-
+${negocioBlock}
 Para cada keyword asigna:
+
 - cluster_name: nombre descriptivo del cluster (máx 5 palabras, en español, primera letra mayúscula).
   * Keywords del mismo tema DEBEN tener el mismo cluster_name EXACTO.
-  * Ejemplos: "Pruebas Físicas Guardia Civil", "Requisitos Oposiciones Estado", "Academias Online Oposiciones"
-- funnel_stage:
-  * "tofu": informacional — qué es, cómo, guías, explicaciones generales, sin intención de compra
-  * "mofu": consideración — comparativas, requisitos, temarios, cuánto dura, diferencias, dudas específicas
-  * "bofu": decisión — academia, precio, matrícula, mejor, online, contratar, inscribirse, preparar ya
+  * Usa el vocabulario del propio negocio del cliente, no términos genéricos.
+
+- funnel_stage: aplica estas reglas EN ESTE ORDEN.
+
+  REGLA 1 — INTENCIÓN COMERCIAL. Tiene prioridad sobre cualquier otra señal.
+  Si la keyword se refiere a un servicio o producto que el cliente vende
+  (ver lista arriba), NO puede ser "tofu" en ningún caso, por muy
+  informacional que suene su formulación:
+    * "bofu": la consulta trata sobre el servicio o producto en sí —
+      nombrarlo, buscarlo, saber en qué consiste, qué incluye, cuánto
+      cuesta, cómo se contrata o dónde conseguirlo.
+    * "mofu": la consulta trata sobre la decisión de contratarlo —
+      comparar alternativas, requisitos previos, cuándo conviene,
+      qué tener en cuenta antes de decidir.
+  Lo que determina la intención comercial es QUÉ VENDE EL CLIENTE, no si la
+  búsqueda contiene un verbo de compra. Una consulta sin ningún término
+  transaccional sobre algo que el cliente vende sigue siendo comercial:
+  quien la busca es un cliente potencial evaluando esa oferta.
+
+  REGLA 2 — Solo si la keyword NO guarda relación con ningún servicio ni
+  producto del cliente:
+    * "tofu": interés general del sector, ajeno a la oferta del cliente.
+    * "mofu": tema adyacente que aproxima al lector a la categoría de la oferta.
+    * "bofu": intención explícita de contratar o comprar.
+
+  No busques repartir las keywords entre las tres etapas: clasifica cada una
+  por lo que realmente es. Si la mayoría resulta comercial, así debe quedar.
+
 - priority:
   * 1 (alta): volumen > 1000 o muy estratégica para el negocio
   * 2 (media): volumen 200-1000 o relevancia media
@@ -94,11 +122,41 @@ export async function POST(request: NextRequest) {
 
     const { data: cliente } = await supabase
       .from('clientes')
-      .select('nombre')
+      .select('nombre, descripcion, sector, servicios_productos')
       .eq('id', session.client_id)
       .single()
 
     const clientName = cliente?.nombre ?? 'Cliente'
+
+    // ── Bloque de negocio ────────────────────────────────────
+    // Determina la intención comercial del funnel: una keyword sobre algo
+    // que el cliente vende nunca es TOFU, suene como suene.
+    const servicios = Array.isArray(cliente?.servicios_productos)
+      ? (cliente.servicios_productos as string[]).filter(Boolean)
+      : []
+
+    const negocioLines: string[] = []
+    if (cliente?.sector)      negocioLines.push(`Sector: ${cliente.sector}`)
+    if (cliente?.descripcion) negocioLines.push(`Descripción: ${String(cliente.descripcion).substring(0, 1000)}`)
+
+    if (servicios.length > 0) {
+      negocioLines.push(
+        'SERVICIOS Y PRODUCTOS QUE VENDE EL CLIENTE:\n' +
+        servicios.map((s) => `  - ${s}`).join('\n'),
+      )
+    } else {
+      negocioLines.push(
+        'SERVICIOS Y PRODUCTOS: no hay lista explícita. Dedúcelos de la descripción\n' +
+        'y del sector antes de clasificar, y aplica igualmente la regla de intención\n' +
+        'comercial sobre lo que deduzcas.',
+      )
+    }
+
+    const negocioBlock = negocioLines.length > 0
+      ? `\nNEGOCIO DEL CLIENTE:\n${negocioLines.join('\n')}\n`
+      : ''
+
+    console.log(`[Clustering] Negocio — ${servicios.length} servicios declarados`)
 
     // ── Cargar keywords incluidas ────────────────────────────
     const { data: keywords, error: kwError } = await supabase
@@ -147,7 +205,7 @@ export async function POST(request: NextRequest) {
         model     : 'claude-sonnet-4-6',
         max_tokens: 4096,   // 50 kw × ~130 chars/entry ≈ 1625 tokens; 4096 deja margen amplio
         system    : SYSTEM_PROMPT,
-        messages  : [{ role: 'user', content: buildUserPrompt(keywordsText, clientName) }],
+        messages  : [{ role: 'user', content: buildUserPrompt(keywordsText, clientName, negocioBlock) }],
       })
 
       const rawText    = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]'

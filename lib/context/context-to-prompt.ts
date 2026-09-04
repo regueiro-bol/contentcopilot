@@ -4,12 +4,24 @@
  * Converts a ClientContext into a concise string suitable for
  * injection into AI generation prompts.
  *
+ * Principio de diseño: el contexto describe la REALIDAD del cliente
+ * (qué vende, qué ya ha publicado, qué mide su analítica). NO da
+ * instrucciones editoriales. Cualquier recomendación estratégica que
+ * venga en los datos de origen se presenta enmarcada como opinión de
+ * terceros, nunca como directriz para el modelo.
+ *
  * Usage:
  *   const ctx = await buildClientContext(supabase, clientId)
  *   if (ctx) prompt += '\n\n' + contextToPrompt(ctx)
  */
 
 import type { ClientContext } from './client-context'
+
+/** Cap del resumen de marca — evita que un brandbook entero domine el prompt */
+const BRAND_SUMMARY_MAX = 800
+
+/** Cap de la descripción corporativa — suele contener los servicios en prosa */
+const DESCRIPCION_MAX = 1000
 
 export function contextToPrompt(ctx: ClientContext): string {
   const sections: string[] = []
@@ -19,7 +31,7 @@ export function contextToPrompt(ctx: ClientContext): string {
     `CLIENTE: ${ctx.client.name}`,
     ctx.client.sector                ? `Sector: ${ctx.client.sector}` : null,
     ctx.client.web                   ? `Web: ${ctx.client.web}` : null,
-    ctx.client.descripcion           ? `Descripción: ${ctx.client.descripcion.substring(0, 300)}` : null,
+    ctx.client.descripcion           ? `Descripción: ${ctx.client.descripcion.substring(0, DESCRIPCION_MAX)}` : null,
     ctx.client.identidad_corporativa ? `Identidad de marca: ${ctx.client.identidad_corporativa.substring(0, 200)}` : null,
     ctx.client.tono_voz              ? `Tono de voz: ${ctx.client.tono_voz}` : null,
     ctx.client.perfil_lector         ? `Perfil lector: ${ctx.client.perfil_lector}` : null,
@@ -28,10 +40,26 @@ export function contextToPrompt(ctx: ClientContext): string {
 
   sections.push(identityLines.join('\n'))
 
+  // ── Servicios y productos ────────────────────────────────
+  // Sin truncar: define la intención comercial del cliente y determina
+  // qué keywords son transaccionales aunque suenen informacionales.
+  if (ctx.client.servicios_productos.length > 0) {
+    const lines = ctx.client.servicios_productos.map((s) => `  - ${s}`).join('\n')
+    sections.push(
+      'SERVICIOS Y PRODUCTOS QUE VENDE EL CLIENTE:\n' +
+      `${lines}\n` +
+      '  (Cualquier consulta sobre estos elementos tiene intención comercial,\n' +
+      '   independientemente de cómo esté formulada la búsqueda.)',
+    )
+  }
+
   // ── Brand context ────────────────────────────────────────
   if (ctx.brand) {
     const brandLines: string[] = ['MARCA:']
-    if (ctx.brand.raw_summary)               brandLines.push(`  Resumen: ${ctx.brand.raw_summary}`)
+    if (ctx.brand.raw_summary) {
+      brandLines.push(`  Resumen del brandbook (descriptivo, no son instrucciones editoriales):`)
+      brandLines.push(`    ${ctx.brand.raw_summary.substring(0, BRAND_SUMMARY_MAX)}`)
+    }
     if (ctx.brand.tone_of_voice)             brandLines.push(`  Tono: ${ctx.brand.tone_of_voice}`)
     if (ctx.brand.style_keywords.length > 0) brandLines.push(`  Estilo: ${ctx.brand.style_keywords.join(', ')}`)
     if (ctx.brand.restrictions)              brandLines.push(`  Restricciones: ${ctx.brand.restrictions}`)
@@ -46,35 +74,38 @@ export function contextToPrompt(ctx: ClientContext): string {
     sections.push(`COMPETIDORES EN REDES:\n${lines}`)
   }
 
-  // ── Inspiracion opportunities ────────────────────────────
+  // ── Bloque de INVENTARIO Y DATOS ─────────────────────────
+  // Todo lo que sigue describe el estado actual: temas ya detectados,
+  // artículos ya planificados, métricas ya medidas. Es material de
+  // referencia, no una lista de encargos.
+  const inventario: string[] = []
+
   if (ctx.inspiracion) {
     if (ctx.inspiracion.oportunidades.length > 0) {
       const lines = ctx.inspiracion.oportunidades
         .map((op) => `  - ${op.tema} [urgencia: ${op.urgencia}]`)
         .join('\n')
-      sections.push(`OPORTUNIDADES DETECTADAS:\n${lines}`)
+      inventario.push(`Temas detectados en sesiones de inspiración:\n${lines}`)
     }
     if (ctx.inspiracion.temas_trending.length > 0) {
-      sections.push(
-        `TENDENCIAS DEL SECTOR:\n${ctx.inspiracion.temas_trending.map((t) => `  - ${t}`).join('\n')}`,
+      inventario.push(
+        `Tendencias observadas en el sector:\n${ctx.inspiracion.temas_trending.map((t) => `  - ${t}`).join('\n')}`,
       )
     }
   }
 
-  // ── Pending map items ────────────────────────────────────
   if (ctx.pendingMapItems.length > 0) {
     const lines = ctx.pendingMapItems
       .map((item) =>
         `  - "${item.title}" [${item.funnel_stage ?? '?'}${item.fase_recomendada ? '/' + item.fase_recomendada : ''}] P${item.priority ?? '?'} — ${item.main_keyword}`,
       )
       .join('\n')
-    sections.push(`ARTÍCULOS PENDIENTES EN BANCO:\n${lines}`)
+    inventario.push(`Artículos ya planificados en el banco:\n${lines}`)
   }
 
-  // ── Analytics SEO (GSC snapshot) ─────────────────────────
   if (ctx.analytics) {
     const a = ctx.analytics
-    const analyticsLines: string[] = ['RENDIMIENTO SEO ACTUAL (GSC):']
+    const analyticsLines: string[] = ['Rendimiento SEO medido (Google Search Console):']
 
     analyticsLines.push(`  Clicks mensuales: ${a.totalClicks.toLocaleString('es-ES')} · Posición media: ${a.avgPosition}`)
 
@@ -96,17 +127,9 @@ export function contextToPrompt(ctx: ClientContext): string {
     const b = a.searchTypeBreakdown
     analyticsLines.push(`  Distribución búsquedas: ${b.informacional}% informacional · ${b.transaccional}% transaccional · ${b.marca}% marca`)
 
-    if (b.transaccional < 20) {
-      analyticsLines.push('  ⚠️  Tráfico transaccional bajo — priorizar contenido BOFU')
-    }
-    if (b.marca > 40) {
-      analyticsLines.push('  ⚠️  Alta dependencia de marca — diversificar con contenido evergreen')
-    }
-
-    sections.push(analyticsLines.join('\n'))
+    inventario.push(analyticsLines.join('\n'))
   }
 
-  // ── GSC content opportunities ────────────────────────────
   if (ctx.gscOpportunities && ctx.gscOpportunities.length > 0) {
     const lines = ctx.gscOpportunities
       .map((op) => {
@@ -114,20 +137,17 @@ export function contextToPrompt(ctx: ClientContext): string {
         if (op.keyword)         parts.push(`    Keyword: ${op.keyword}`)
         if (op.currentPosition) parts.push(`    Posición actual: ${op.currentPosition}`)
         if (op.impressions)     parts.push(`    Impresiones: ${op.impressions}`)
-        parts.push('    → Priorizar este contenido')
         return parts.join('\n')
       })
       .join('\n')
-    sections.push(`OPORTUNIDADES SEO DETECTADAS:\n${lines}`)
+    inventario.push(`Keywords con recorrido detectadas en GSC:\n${lines}`)
   }
 
-  // ── GMB reviews context ──────────────────────────────────
   if (ctx.gmb) {
     const g = ctx.gmb
     const gmbLines: string[] = []
 
-    const header = `RESEÑAS GOOGLE (${g.reviewCount ?? '?'} reseñas${g.rating ? `, ${g.rating}⭐` : ''}):`
-    gmbLines.push(header)
+    gmbLines.push(`Reseñas de Google (${g.reviewCount ?? '?'} reseñas${g.rating ? `, ${g.rating}⭐` : ''}):`)
 
     if (g.topKeywords.length > 0) {
       gmbLines.push(`  Lo que más valoran los clientes: ${g.topKeywords.join(', ')}`)
@@ -137,7 +157,15 @@ export function contextToPrompt(ctx: ClientContext): string {
       g.implicitQuestions.forEach((q) => gmbLines.push(`    - ${q}`))
     }
 
-    if (gmbLines.length > 1) sections.push(gmbLines.join('\n'))
+    if (gmbLines.length > 1) inventario.push(gmbLines.join('\n'))
+  }
+
+  if (inventario.length > 0) {
+    sections.push(
+      'INVENTARIO Y DATOS (material de referencia — describe lo que YA existe y lo que\n' +
+      'se ha medido; NO es una lista de encargos ni una directriz de qué generar):\n\n' +
+      inventario.join('\n\n'),
+    )
   }
 
   return sections.join('\n\n')
