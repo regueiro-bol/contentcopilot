@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   // ── Lista completa de miembros ───────────────────────────────────────────
   const { data: roles, error } = await supabase
     .from('user_roles')
-    .select('user_id, role, created_at')
+    .select('user_id, role, activo, created_at')
     .order('created_at', { ascending: true })
 
   if (error) {
@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
         return {
           user_id   : row.user_id,
           role      : row.role,
+          activo    : row.activo ?? true,
           created_at: row.created_at,
           email     : user.emailAddresses[0]?.emailAddress ?? null,
           nombre    : [user.firstName, user.lastName].filter(Boolean).join(' ') || null,
@@ -69,6 +70,7 @@ export async function GET(req: NextRequest) {
         return {
           user_id   : row.user_id,
           role      : row.role,
+          activo    : row.activo ?? true,
           created_at: row.created_at,
           email     : null,
           nombre    : null,

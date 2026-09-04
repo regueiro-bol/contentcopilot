@@ -36,15 +36,21 @@ export function usePermissions() {
     fetchedRef.current = true
 
     fetch('/api/auth/my-permissions')
-      .then((r) => r.json())
-      .then((d: UserPermissionsData) => {
+      .then(async (r) => {
+        if (r.status === 403) {
+          // Cuenta desactivada — sin permisos, sin fallback de rol
+          const d: UserPermissionsData = { role: 'desactivado', permissions: {} }
+          cache.set(userId, d)
+          setData(d)
+          return
+        }
+        const d: UserPermissionsData = await r.json()
         cache.set(userId, d)
         setData(d)
       })
       .catch(() => {
-        // fallback: rol redactor sin overrides
-        const fallback: UserPermissionsData = { role: 'redactor', permissions: {} }
-        setData(fallback)
+        // Error de red — sin permisos mientras se resuelve
+        setData({ role: 'desactivado', permissions: {} })
       })
       .finally(() => setLoading(false))
   }, [isLoaded, user?.id])   // eslint-disable-line react-hooks/exhaustive-deps

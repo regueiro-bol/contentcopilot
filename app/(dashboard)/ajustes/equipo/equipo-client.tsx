@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useUser } from '@clerk/nextjs'
 import {
   Users, UserPlus, X, Loader2, AlertCircle, CheckCircle2,
   Shield, ChevronRight, Pencil, Mail, Clock, Ban, Building2,
+  UserCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -15,6 +17,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 interface Miembro {
   user_id   : string
   role      : string
+  activo    : boolean
   email     : string | null
   nombre    : string | null
   avatar_url: string | null
@@ -99,6 +102,7 @@ function RolBadge({ role }: { role: string }) {
 
 export default function EquipoClient({ todosClientes }: { todosClientes: ClienteItem[] }) {
   const { invalidate } = usePermissions()
+  const { user: currentUser } = useUser()
 
   // Datos
   const [miembros,    setMiembros]    = useState<Miembro[]>([])
@@ -125,6 +129,9 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
   // Clientes asignados en el drawer
   const [drawerClientIds,      setDrawerClientIds]      = useState<string[]>([])
   const [cargandoClientes,     setCargandoClientes]     = useState(false)
+
+  // Desactivación
+  const [desactivando, setDesactivando] = useState<string | null>(null)  // userId en curso
 
   // ── Cargar datos ────────────────────────────────────────────────────────
   const cargar = useCallback(async () => {
@@ -255,6 +262,26 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
     }
   }
 
+  // ── Desactivar / reactivar miembro ─────────────────────────────────────
+  async function cambiarActivo(miembro: Miembro, activo: boolean) {
+    setDesactivando(miembro.user_id)
+    try {
+      const res  = await fetch('/api/team/update-member', {
+        method : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ userId: miembro.user_id, role: miembro.role, permissions: {}, activo }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error')
+      setDrawerMiembro(null)
+      cargar()
+    } catch (e) {
+      setDrawerError(e instanceof Error ? e.message : 'Error')
+    } finally {
+      setDesactivando(null)
+    }
+  }
+
   // ── Toggle permiso en drawer ────────────────────────────────────────────
   function togglePermiso(perm: string) {
     const rolBase    = roleHasPermission(drawerRol, perm as Permission)
@@ -308,59 +335,112 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
       ) : (
         <>
           {/* ── Miembros activos ───────────────────────────────── */}
-          <div>
-            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-              Miembros activos ({miembros.length})
-            </h2>
-            <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-              {miembros.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">Sin miembros registrados</p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50">
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Miembro</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Email</th>
-                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Rol</th>
-                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
-                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {miembros.map((m) => (
-                      <tr key={m.user_id} className="hover:bg-gray-50/60">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <Avatar nombre={m.nombre} avatar_url={m.avatar_url} />
-                            <span className="text-xs font-medium text-gray-900">{m.nombre ?? m.email ?? m.user_id}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 hidden sm:table-cell">
-                          <span className="text-xs text-gray-500">{m.email ?? '—'}</span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <RolBadge role={m.role} />
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">Activo</span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => abrirDrawer(m)}
-                            className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Permisos
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
+          {(() => {
+            const activos   = miembros.filter(m => m.activo !== false)
+            const inactivos = miembros.filter(m => m.activo === false)
+
+            const FilaMiembro = ({ m }: { m: Miembro }) => (
+              <tr key={m.user_id} className="hover:bg-gray-50/60">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <Avatar nombre={m.nombre} avatar_url={m.avatar_url} />
+                    <span className="text-xs font-medium text-gray-900">{m.nombre ?? m.email ?? m.user_id}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 hidden sm:table-cell">
+                  <span className="text-xs text-gray-500">{m.email ?? '—'}</span>
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <RolBadge role={m.role} />
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {m.activo !== false
+                    ? <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">Activo</span>
+                    : <span className="text-[10px] font-bold bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">Inactivo</span>
+                  }
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {m.activo !== false ? (
+                    <button
+                      type="button"
+                      onClick={() => abrirDrawer(m)}
+                      className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                    >
+                      <Pencil className="h-3 w-3" />
+                      Permisos
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => cambiarActivo(m, true)}
+                      disabled={desactivando === m.user_id}
+                      className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-800 font-medium disabled:opacity-50"
+                    >
+                      {desactivando === m.user_id
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <UserCheck className="h-3 w-3" />
+                      }
+                      Reactivar
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+
+            return (
+              <>
+                <div>
+                  <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                    Miembros activos ({activos.length})
+                  </h2>
+                  <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                    {activos.length === 0 ? (
+                      <p className="text-sm text-gray-400 text-center py-8">Sin miembros activos</p>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50">
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Miembro</th>
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Email</th>
+                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Rol</th>
+                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
+                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {activos.map(m => <FilaMiembro key={m.user_id} m={m} />)}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+
+                {inactivos.length > 0 && (
+                  <div>
+                    <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                      Miembros inactivos ({inactivos.length})
+                    </h2>
+                    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50">
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Miembro</th>
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Email</th>
+                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Rol</th>
+                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
+                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {inactivos.map(m => <FilaMiembro key={m.user_id} m={m} />)}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )
+          })()}
 
           {/* ── Invitaciones pendientes ────────────────────────── */}
           {invitaciones.length > 0 && (
@@ -674,6 +754,25 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
                   Guardar cambios
                 </Button>
               </div>
+              {/* Desactivar — solo si no es el propio usuario */}
+              {drawerMiembro && drawerMiembro.user_id !== currentUser?.id && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-2 text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300"
+                  disabled={desactivando === drawerMiembro.user_id || guardandoDrawer}
+                  onClick={() => {
+                    if (!confirm(`¿Desactivar a ${drawerMiembro.nombre ?? drawerMiembro.email}? No podrá acceder a la plataforma hasta que se reactive.`)) return
+                    cambiarActivo(drawerMiembro, false)
+                  }}
+                >
+                  {desactivando === drawerMiembro.user_id
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Ban className="h-3.5 w-3.5" />
+                  }
+                  Desactivar miembro
+                </Button>
+              )}
             </div>
           </div>
         </>
