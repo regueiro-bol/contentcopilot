@@ -76,8 +76,8 @@ export async function POST(
       return NextResponse.json({ error: 'Contenido no encontrado' }, { status: 404 })
     }
 
-    // ── Cargar proyecto + cliente ─────────────────────────────────────────────
-    const [{ data: proyecto }, { data: cliente }, { data: publicados }] = await Promise.all([
+    // ── Cargar proyecto + cliente + funnel_stage real ─────────────────────────
+    const [{ data: proyecto }, { data: cliente }, { data: publicados }, { data: mapItem }] = await Promise.all([
       supabase
         .from('proyectos')
         .select('nombre, tono_voz, perfil_lector, extension_min, extension_max')
@@ -95,16 +95,26 @@ export async function POST(
         .neq('id', params.id)
         .in('estado', ['publicado', 'aprobado'])
         .limit(15),
+      // funnel_stage real del mapa — evita deducirlo de las columnas guardadas
+      supabase
+        .from('content_map_items')
+        .select('funnel_stage')
+        .eq('contenido_id', params.id)
+        .maybeSingle(),
     ])
 
-    const brief      = c.brief as Record<string, unknown> | null
+    const brief         = c.brief as Record<string, unknown> | null
     const kwSecundarias: string[] = Array.isArray(brief?.keywords_secundarias)
       ? (brief!.keywords_secundarias as string[])
       : []
 
-    const extMin  = c.tamanyo_texto_min ?? proyecto?.extension_min ?? null
-    const extMax  = c.tamanyo_texto_max ?? proyecto?.extension_max ?? null
-    const funnel  = deriveFunnelStage(extMax)
+    // Funnel: fuente canónica = content_map_items; fallback = inferencia por extensión guardada
+    const funnelRaw = (mapItem?.funnel_stage as string | null | undefined) ?? null
+    const funnel    = funnelRaw ?? deriveFunnelStage(c.tamanyo_texto_max ?? proyecto?.extension_max ?? null)
+
+    // Rango de extensión derivado del funnel real (no de las columnas guardadas)
+    const rangeMin = funnel === 'bofu' ? 1000 : funnel === 'mofu' ? 1300 : 1600
+    const rangeMax = funnel === 'bofu' ? 1500 : funnel === 'mofu' ? 1900 : 2400
 
     // ── Construir prompt del brief ────────────────────────────────────────────
     const lines: string[] = []
@@ -132,15 +142,10 @@ export async function POST(
       }
     }
 
-    // Extensión obligatoria
-    if (extMin != null) {
-      const extStr = extMax != null
-        ? `entre ${extMin.toLocaleString('es-ES')} y ${extMax.toLocaleString('es-ES')} palabras`
-        : `mínimo ${extMin.toLocaleString('es-ES')} palabras`
-      lines.push('')
-      lines.push('# ⚠️ EXTENSIÓN OBLIGATORIA')
-      lines.push(`El artículo DEBE tener ${extStr}. Adapta la profundidad, número de secciones y ejemplos para alcanzar exactamente este rango. Esta instrucción tiene prioridad sobre cualquier otra estimación de extensión.`)
-    }
+    // Extensión obligatoria — usa el rango del funnel real, nunca las columnas guardadas
+    lines.push('')
+    lines.push('# ⚠️ EXTENSIÓN OBLIGATORIA')
+    lines.push(`El artículo DEBE tener entre ${rangeMin.toLocaleString('es-ES')} y ${rangeMax.toLocaleString('es-ES')} palabras. Adapta la profundidad, número de secciones y ejemplos para alcanzar exactamente este rango. Esta instrucción tiene prioridad sobre cualquier otra estimación de extensión.`)
 
     // Comentario del editor — instrucción de máxima prioridad
     if (comentario) {
@@ -233,8 +238,8 @@ Sé específico, práctico y accionable. El redactor debe poder escribir el art�
     return NextResponse.json({
       ok            : true,
       texto_generado: briefText,
-      tamanyo_texto_min: newMin ?? extMin,
-      tamanyo_texto_max: newMax ?? extMax,
+      tamanyo_texto_min: newMin ?? rangeMin,
+      tamanyo_texto_max: newMax ?? rangeMax,
     })
   } catch (error) {
     console.error('[/api/contenidos/brief/regenerar] Error:', error instanceof Error ? error.stack : error)
