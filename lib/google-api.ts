@@ -32,8 +32,10 @@ const SCOPES_GMB = [
 
 /** Construye el redirect URI dinámicamente desde NEXT_PUBLIC_APP_URL */
 export function buildRedirectUri(): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  return `${base.replace(/\/$/, '')}/api/auth/google/callback`
+  const base = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').trim().replace(/\/$/, '')
+  const uri  = `${base}/api/auth/google/callback`
+  console.log('[GoogleAPI] redirect_uri:', uri)
+  return uri
 }
 
 /** Crea un cliente OAuth2 configurado */
