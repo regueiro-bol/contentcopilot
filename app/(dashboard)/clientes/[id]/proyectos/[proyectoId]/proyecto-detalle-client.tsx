@@ -36,6 +36,7 @@ import type {
   InspiracionSummary,
   StrategySummary,
   GeoradarSummary,
+  BriefRegeneracion,
 } from './page'
 
 const etiquetasModo: Record<string, string> = {
@@ -616,6 +617,7 @@ export default function ProyectoDetalleClient({
   lastInspiracion,
   lastStrategy,
   lastGeoradar,
+  regeneraciones,
 }: {
   proyecto: Proyecto
   contenidos: Contenido[]
@@ -624,6 +626,7 @@ export default function ProyectoDetalleClient({
   lastInspiracion: InspiracionSummary | null
   lastStrategy: StrategySummary | null
   lastGeoradar: GeoradarSummary[]
+  regeneraciones: BriefRegeneracion[]
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -1425,6 +1428,47 @@ export default function ProyectoDetalleClient({
               )}
             </CardContent>
           </Card>
+
+          {/* ── Comentarios de regeneración de brief ── */}
+          {regeneraciones.length > 0 && (
+            <Card className="mt-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold text-gray-900">
+                  Comentarios de regeneración de brief
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="divide-y divide-gray-100">
+                  {regeneraciones.map((r) => (
+                    <div key={r.id} className="py-3 first:pt-0 last:pb-0">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          {r.contenidos?.titulo && (
+                            <Link
+                              href={`/contenidos/${r.contenido_id}`}
+                              className="text-sm font-semibold text-indigo-700 hover:underline truncate block"
+                            >
+                              {r.contenidos.titulo}
+                            </Link>
+                          )}
+                          {r.comentario ? (
+                            <p className="mt-1 text-sm text-gray-700 leading-relaxed whitespace-pre-line">
+                              {r.comentario}
+                            </p>
+                          ) : (
+                            <p className="mt-1 text-xs text-gray-400 italic">Sin indicaciones — regeneración automática</p>
+                          )}
+                        </div>
+                        <span className="text-xs text-gray-400 shrink-0 mt-0.5">
+                          {formatearFecha(r.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 
