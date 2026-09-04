@@ -23,12 +23,18 @@ export async function POST(req: NextRequest) {
     .from('user_roles').select('role').eq('user_id', userId).maybeSingle()
   if (rol?.role !== 'admin') return NextResponse.json({ error: 'Solo admins' }, { status: 403 })
 
-  let body: { email?: string; role?: string; message?: string }
+  let body: {
+    email?             : string
+    role?              : string
+    message?           : string
+    permissions_preset?: Record<string, boolean>
+    client_ids_preset? : string[]
+  }
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Body JSON inválido' }, { status: 400 })
   }
 
-  const { email, role } = body
+  const { email, role, permissions_preset, client_ids_preset } = body
   if (!email) return NextResponse.json({ error: 'email requerido' }, { status: 400 })
   if (!role)  return NextResponse.json({ error: 'role requerido' }, { status: 400 })
 
@@ -96,6 +102,15 @@ export async function POST(req: NextRequest) {
   // ── Registrar en user_invitations ───────────────────────────────────────
   console.log('[invite] Guardando en user_invitations — clerk_id:', clerkInvitationId)
 
+  // Filtrar solo overrides reales (no vacíos)
+  const presetsLimpios = permissions_preset && Object.keys(permissions_preset).length > 0
+    ? permissions_preset
+    : null
+
+  const clientesLimpios = client_ids_preset && client_ids_preset.length > 0
+    ? client_ids_preset
+    : null
+
   const { error: dbErr } = await supabase
     .from('user_invitations')
     .upsert(
@@ -106,6 +121,8 @@ export async function POST(req: NextRequest) {
         clerk_invitation_id : clerkInvitationId,
         status              : 'pendiente',
         created_at          : new Date().toISOString(),
+        permissions_preset  : presetsLimpios,
+        client_ids_preset   : clientesLimpios,
       },
       { onConflict: 'email' },
     )

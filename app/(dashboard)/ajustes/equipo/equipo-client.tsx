@@ -4,13 +4,14 @@ import { useState, useEffect, useCallback } from 'react'
 import { useUser } from '@clerk/nextjs'
 import {
   Users, UserPlus, X, Loader2, AlertCircle, CheckCircle2,
-  Shield, ChevronRight, Pencil, Mail, Clock, Ban, Building2,
-  UserCheck,
+  Shield, ChevronRight, Pencil, Mail, Clock, Ban, UserCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { PERMISSIONS, ROL_COLORS, ROL_LABELS, roleHasPermission, type Permission } from '@/lib/permissions'
+import { ROL_COLORS, ROL_LABELS } from '@/lib/permissions'
 import { usePermissions } from '@/hooks/usePermissions'
+import { PermisosEditor } from '@/components/team/PermisosEditor'
+import type { ClienteItem } from '@/components/team/PermisosEditor'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -37,44 +38,9 @@ interface PermOverride {
   granted   : boolean
 }
 
-interface ClienteItem {
-  id    : string
-  nombre: string
-}
-
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const ROLES = ['admin', 'seo', 'redactor', 'consultor'] as const
-
-const PERMISO_LABELS: Record<string, string> = {
-  'module:dashboard'         : 'Dashboard',
-  'module:clientes'          : 'Clientes',
-  'module:inspiracion'       : 'Inspiración',
-  'module:estrategia'        : 'Estrategia',
-  'module:banco_contenidos'  : 'Banco de Contenidos',
-  'module:calendario'        : 'Calendario',
-  'module:contenidos'        : 'Contenidos',
-  'module:copiloto'          : 'Copiloto',
-  'module:georadar'          : 'GEORadar',
-  'module:social_media'      : 'Social Media',
-  'module:panel_diseno'      : 'Panel de Diseño',
-  'module:pedidos'           : 'Pedidos',
-  'module:costes'            : 'Costes',
-  'module:agentes'           : 'Agentes',
-  'module:ajustes'           : 'Ajustes',
-  'action:ver_coste_articulo': 'Ver coste por artículo',
-  'action:aprobar_contenidos': 'Aprobar contenidos',
-  'action:asignar_articulos' : 'Asignar artículos',
-  'action:crear_clientes'    : 'Crear clientes',
-  'action:ver_todos_clientes': 'Ver todos los clientes',
-  'action:invitar_usuarios'  : 'Invitar usuarios',
-  'action:gestionar_equipo'  : 'Gestionar equipo',
-  'action:ver_todos_pedidos' : 'Ver todos los pedidos',
-  'action:ver_todos_contenidos': 'Ver todos los contenidos',
-}
-
-const MODULOS_PERMS  = Object.keys(PERMISSIONS).filter(k => k.startsWith('module:'))
-const ACCIONES_PERMS = Object.keys(PERMISSIONS).filter(k => k.startsWith('action:'))
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -105,16 +71,18 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
   const { user: currentUser } = useUser()
 
   // Datos
-  const [miembros,    setMiembros]    = useState<Miembro[]>([])
+  const [miembros,     setMiembros]     = useState<Miembro[]>([])
   const [invitaciones, setInvitaciones] = useState<Invitacion[]>([])
-  const [cargando,    setCargando]    = useState(true)
-  const [error,       setError]       = useState<string | null>(null)
+  const [cargando,     setCargando]     = useState(true)
+  const [error,        setError]        = useState<string | null>(null)
 
   // Modal invitar
   const [modalInvitar, setModalInvitar] = useState(false)
   const [invEmail,     setInvEmail]     = useState('')
   const [invRol,       setInvRol]       = useState<string>('redactor')
   const [invMensaje,   setInvMensaje]   = useState('')
+  const [invOverrides, setInvOverrides] = useState<Record<string, boolean>>({})
+  const [invClientIds, setInvClientIds] = useState<string[]>([])
   const [invitando,    setInvitando]    = useState(false)
   const [invError,     setInvError]     = useState<string | null>(null)
   const [invOk,        setInvOk]        = useState<string | null>(null)
@@ -127,11 +95,11 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
   const [drawerError,     setDrawerError]     = useState<string | null>(null)
 
   // Clientes asignados en el drawer
-  const [drawerClientIds,      setDrawerClientIds]      = useState<string[]>([])
-  const [cargandoClientes,     setCargandoClientes]     = useState(false)
+  const [drawerClientIds,  setDrawerClientIds]  = useState<string[]>([])
+  const [cargandoClientes, setCargandoClientes] = useState(false)
 
   // Desactivación
-  const [desactivando, setDesactivando] = useState<string | null>(null)  // userId en curso
+  const [desactivando, setDesactivando] = useState<string | null>(null)
 
   // ── Cargar datos ────────────────────────────────────────────────────────
   const cargar = useCallback(async () => {
@@ -142,7 +110,7 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
         fetch('/api/team/members'),
         fetch('/api/team/invitations'),
       ])
-      const dataMiembros    = await resMiembros.json()
+      const dataMiembros     = await resMiembros.json()
       const dataInvitaciones = await resInv.json()
       if (!resMiembros.ok) throw new Error(dataMiembros.error ?? 'Error cargando miembros')
       setMiembros(dataMiembros.members ?? [])
@@ -166,12 +134,19 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
       const res  = await fetch('/api/team/invite', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ email: invEmail, role: invRol, message: invMensaje }),
+        body   : JSON.stringify({
+          email             : invEmail,
+          role              : invRol,
+          message           : invMensaje,
+          permissions_preset: invOverrides,
+          client_ids_preset : invClientIds,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error enviando invitación')
       setInvOk(`Invitación enviada a ${invEmail}`)
       setInvEmail(''); setInvRol('redactor'); setInvMensaje('')
+      setInvOverrides({}); setInvClientIds([])
       cargar()
     } catch (e) {
       setInvError(e instanceof Error ? e.message : 'Error')
@@ -195,13 +170,12 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
     setDrawerClientIds([])
     setCargandoClientes(true)
 
-    // Cargar overrides + clientes asignados en paralelo
     const [resPerms, resClientes] = await Promise.all([
       fetch(`/api/team/members?userId=${miembro.user_id}`),
       fetch(`/api/team/client-assignments?userId=${miembro.user_id}`),
     ])
 
-    const dataPerms   = await resPerms.json()
+    const dataPerms    = await resPerms.json()
     const dataClientes = await resClientes.json()
 
     const overrides: Record<string, boolean> = {}
@@ -219,7 +193,6 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
     setGuardandoDrawer(true)
     setDrawerError(null)
     try {
-      // Guardar rol + permisos, y clientes asignados en paralelo
       const [resPerms, resClientes] = await Promise.all([
         fetch('/api/team/update-member', {
           method : 'PATCH',
@@ -230,7 +203,6 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
             permissions: drawerOverrides,
           }),
         }),
-        // Solo guardar clientes si no es admin (admin ve todo sin restricción)
         drawerRol !== 'admin'
           ? fetch('/api/team/client-assignments', {
               method : 'POST',
@@ -282,20 +254,6 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
     }
   }
 
-  // ── Toggle permiso en drawer ────────────────────────────────────────────
-  function togglePermiso(perm: string) {
-    const rolBase    = roleHasPermission(drawerRol, perm as Permission)
-    const current    = perm in drawerOverrides ? drawerOverrides[perm] : rolBase
-    const nuevoValor = !current
-
-    if (nuevoValor === rolBase) {
-      // Coincide con rol base → eliminar override
-      setDrawerOverrides(prev => { const n = { ...prev }; delete n[perm]; return n })
-    } else {
-      setDrawerOverrides(prev => ({ ...prev, [perm]: nuevoValor }))
-    }
-  }
-
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6 max-w-4xl">
@@ -334,7 +292,7 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
         </div>
       ) : (
         <>
-          {/* ── Miembros activos ───────────────────────────────── */}
+          {/* ── Miembros (activos e inactivos) ─────────────────── */}
           {(() => {
             const activos   = miembros.filter(m => m.activo === true)
             const inactivos = miembros.filter(m => m.activo === false)
@@ -387,6 +345,16 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
               </tr>
             )
 
+            const Cabecera = () => (
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Miembro</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Email</th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Rol</th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Acciones</th>
+              </tr>
+            )
+
             return (
               <>
                 <div>
@@ -398,15 +366,7 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
                       <p className="text-sm text-gray-400 text-center py-8">Sin miembros activos</p>
                     ) : (
                       <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-gray-50">
-                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Miembro</th>
-                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Email</th>
-                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Rol</th>
-                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
-                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Acciones</th>
-                          </tr>
-                        </thead>
+                        <thead><Cabecera /></thead>
                         <tbody className="divide-y divide-gray-50">
                           {activos.map(m => <FilaMiembro key={m.user_id} m={m} />)}
                         </tbody>
@@ -422,15 +382,7 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
                     </h2>
                     <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
                       <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-gray-50">
-                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Miembro</th>
-                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 hidden sm:table-cell">Email</th>
-                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Rol</th>
-                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Estado</th>
-                            <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Acciones</th>
-                          </tr>
-                        </thead>
+                        <thead><Cabecera /></thead>
                         <tbody className="divide-y divide-gray-50">
                           {inactivos.map(m => <FilaMiembro key={m.user_id} m={m} />)}
                         </tbody>
@@ -502,8 +454,8 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setModalInvitar(false) }}
         >
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <div className="flex items-center gap-2">
                 <UserPlus className="h-5 w-5 text-indigo-600" />
                 <h2 className="text-base font-bold text-gray-900">Invitar miembro</h2>
@@ -513,55 +465,84 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
               </button>
             </div>
 
-            <form onSubmit={handleInvitar} className="p-6 space-y-4">
-              {invError && (
-                <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
-                  <AlertCircle className="h-4 w-4 shrink-0" />{invError}
+            <form onSubmit={handleInvitar} className="flex flex-col flex-1 overflow-hidden">
+              <div className="overflow-y-auto flex-1 p-6 space-y-5">
+                {invError && (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
+                    <AlertCircle className="h-4 w-4 shrink-0" />{invError}
+                  </div>
+                )}
+                {invOk && (
+                  <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />{invOk}
+                  </div>
+                )}
+
+                {/* Email */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Email *</label>
+                  <input
+                    required
+                    type="email"
+                    placeholder="nombre@empresa.com"
+                    value={invEmail}
+                    onChange={(e) => setInvEmail(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                  />
                 </div>
-              )}
-              {invOk && (
-                <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />{invOk}
+
+                {/* Rol */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Rol</label>
+                  <select
+                    value={invRol}
+                    onChange={(e) => {
+                      const newRol = e.target.value
+                      setInvRol(newRol)
+                      setInvOverrides({})
+                      if (newRol === 'admin') setInvClientIds([])
+                    }}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none bg-white"
+                  >
+                    {ROLES.map(r => (
+                      <option key={r} value={r}>{ROL_LABELS[r]}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Email *</label>
-                <input
-                  required
-                  type="email"
-                  placeholder="nombre@empresa.com"
-                  value={invEmail}
-                  onChange={(e) => setInvEmail(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400"
-                />
+                {/* Permisos preconfigurados */}
+                <div className="border-t border-gray-100 pt-4">
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                    Permisos iniciales
+                  </p>
+                  <p className="text-[11px] text-gray-400 mb-4">
+                    Parten del rol seleccionado. Ajusta antes de invitar — se aplicarán en cuanto la persona acepte.
+                  </p>
+                  <PermisosEditor
+                    rol={invRol}
+                    overrides={invOverrides}
+                    clientIds={invClientIds}
+                    todosClientes={todosClientes}
+                    onOverridesChange={setInvOverrides}
+                    onClientIdsChange={setInvClientIds}
+                  />
+                </div>
+
+                {/* Mensaje opcional */}
+                <div className="border-t border-gray-100 pt-4">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Mensaje personalizado (opcional)</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Te invito a unirte a ContentCopilot…"
+                    value={invMensaje}
+                    onChange={(e) => setInvMensaje(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none resize-none focus:border-indigo-400"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Rol</label>
-                <select
-                  value={invRol}
-                  onChange={(e) => setInvRol(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none bg-white"
-                >
-                  {ROLES.map(r => (
-                    <option key={r} value={r}>{ROL_LABELS[r]}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Mensaje personalizado (opcional)</label>
-                <textarea
-                  rows={3}
-                  placeholder="Te invito a unirte a ContentCopilot…"
-                  value={invMensaje}
-                  onChange={(e) => setInvMensaje(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none resize-none focus:border-indigo-400"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-1">
+              {/* Footer fijo */}
+              <div className="shrink-0 flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
                 <Button type="button" variant="outline" size="sm" onClick={() => setModalInvitar(false)}>
                   Cancelar
                 </Button>
@@ -622,114 +603,16 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
                 </div>
               </div>
 
-              {/* Módulos */}
-              <div>
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Módulos</p>
-                <div className="space-y-1">
-                  {MODULOS_PERMS.map(perm => {
-                    const rolBase    = roleHasPermission(drawerRol, perm as Permission)
-                    const hasOverride = perm in drawerOverrides
-                    const efectivo    = hasOverride ? drawerOverrides[perm] : rolBase
-                    return (
-                      <PermisoRow
-                        key={perm}
-                        label={PERMISO_LABELS[perm] ?? perm}
-                        rolBase={rolBase}
-                        hasOverride={hasOverride}
-                        efectivo={efectivo}
-                        onToggle={() => togglePermiso(perm)}
-                      />
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Acciones */}
-              <div>
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Permisos adicionales</p>
-                <div className="space-y-1">
-                  {ACCIONES_PERMS.map(perm => {
-                    const rolBase    = roleHasPermission(drawerRol, perm as Permission)
-                    const hasOverride = perm in drawerOverrides
-                    const efectivo    = hasOverride ? drawerOverrides[perm] : rolBase
-                    return (
-                      <PermisoRow
-                        key={perm}
-                        label={PERMISO_LABELS[perm] ?? perm}
-                        rolBase={rolBase}
-                        hasOverride={hasOverride}
-                        efectivo={efectivo}
-                        onToggle={() => togglePermiso(perm)}
-                      />
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Clientes asignados */}
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Building2 className="h-3.5 w-3.5 text-gray-400" />
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
-                    Clientes asignados
-                  </p>
-                </div>
-
-                {drawerRol === 'admin' ? (
-                  <p className="text-xs text-gray-400 italic px-2">
-                    Los administradores ven todos los clientes sin restricción.
-                  </p>
-                ) : cargandoClientes ? (
-                  <div className="flex items-center gap-2 text-xs text-gray-400 px-2 py-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Cargando clientes…
-                  </div>
-                ) : todosClientes.length === 0 ? (
-                  <p className="text-xs text-gray-400 italic px-2">No hay clientes activos.</p>
-                ) : (
-                  <div className="space-y-0.5 max-h-52 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-2">
-                    {/* Acceso total toggle */}
-                    <label className="flex items-center gap-2.5 px-2 py-1.5 rounded cursor-pointer hover:bg-white select-none">
-                      <input
-                        type="checkbox"
-                        checked={drawerClientIds.length === 0}
-                        onChange={() => setDrawerClientIds([])}
-                        className="h-3.5 w-3.5 accent-indigo-600"
-                      />
-                      <span className="text-xs font-semibold text-indigo-700">Todos los clientes</span>
-                    </label>
-                    <div className="border-t border-gray-200 my-1" />
-                    {todosClientes.map((c) => (
-                      <label key={c.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded cursor-pointer hover:bg-white select-none">
-                        <input
-                          type="checkbox"
-                          checked={drawerClientIds.includes(c.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setDrawerClientIds(prev => [...prev, c.id])
-                            } else {
-                              setDrawerClientIds(prev => prev.filter(id => id !== c.id))
-                            }
-                          }}
-                          className="h-3.5 w-3.5 accent-indigo-600"
-                        />
-                        <span className="text-xs text-gray-700">{c.nombre}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-
-                {drawerRol !== 'admin' && drawerClientIds.length === 0 && !cargandoClientes && (
-                  <p className="text-[10px] text-emerald-600 mt-1.5 px-2">
-                    Sin restricción — verá todos los clientes
-                  </p>
-                )}
-                {drawerRol !== 'admin' && drawerClientIds.length > 0 && (
-                  <p className="text-[10px] text-amber-600 mt-1.5 px-2">
-                    Restringido a {drawerClientIds.length} cliente{drawerClientIds.length !== 1 ? 's' : ''}
-                  </p>
-                )}
-              </div>
+              {/* Módulos, acciones y clientes — componente compartido */}
+              <PermisosEditor
+                rol={drawerRol}
+                overrides={drawerOverrides}
+                clientIds={drawerClientIds}
+                todosClientes={todosClientes}
+                cargandoClientes={cargandoClientes}
+                onOverridesChange={setDrawerOverrides}
+                onClientIdsChange={setDrawerClientIds}
+              />
 
             </div>
 
@@ -755,7 +638,7 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
                 </Button>
               </div>
               {/* Desactivar — solo si no es el propio usuario */}
-              {drawerMiembro && drawerMiembro.user_id !== currentUser?.id && (
+              {drawerMiembro.user_id !== currentUser?.id && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -777,54 +660,6 @@ export default function EquipoClient({ todosClientes }: { todosClientes: Cliente
           </div>
         </>
       )}
-    </div>
-  )
-}
-
-// ─── Fila de permiso con toggle ───────────────────────────────────────────────
-
-function PermisoRow({
-  label, rolBase, hasOverride, efectivo, onToggle,
-}: {
-  label      : string
-  rolBase    : boolean
-  hasOverride: boolean
-  efectivo   : boolean
-  onToggle   : () => void
-}) {
-  return (
-    <div className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-gray-50">
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-700">{label}</span>
-        {hasOverride && (
-          <span className="text-[9px] font-bold bg-indigo-100 text-indigo-600 rounded-full px-1.5 py-0">
-            Personalizado
-          </span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        {/* Estado heredado del rol */}
-        <span className={cn('text-[10px] text-gray-400', rolBase ? 'text-emerald-500' : '')}>
-          {rolBase ? '✓ rol' : ''}
-        </span>
-        {/* Toggle */}
-        <button
-          type="button"
-          onClick={onToggle}
-          className={cn(
-            'relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0',
-            efectivo ? 'bg-indigo-500' : 'bg-gray-200',
-          )}
-          aria-checked={efectivo}
-        >
-          <span
-            className={cn(
-              'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
-              efectivo ? 'translate-x-4' : 'translate-x-0.5',
-            )}
-          />
-        </button>
-      </div>
     </div>
   )
 }

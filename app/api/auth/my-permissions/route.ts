@@ -10,7 +10,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth, createClerkClient } from '@clerk/nextjs/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
@@ -42,17 +42,72 @@ export async function GET() {
   let role: string
 
   if (!rolRow) {
-    // Fila inexistente (invite-only: solo llega aquí un usuario recién creado
-    // cuyo webhook aún no procesó). Provisionar con rol mínimo.
+    // No existe fila: modo invite-only → buscar invitación para este email.
+    // Puede ocurrir si el webhook aún no procesó la creación del usuario.
+    const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
+    let email: string | null = null
+    try {
+      const user = await clerk.users.getUser(userId)
+      email = user.emailAddresses[0]?.emailAddress ?? null
+    } catch (e) {
+      console.error('[my-permissions] Error obteniendo usuario Clerk:', e)
+    }
+
+    if (!email) {
+      console.warn('[my-permissions] Sin email para userId:', userId)
+      return NextResponse.json({ error: 'Acceso denegado' }, { status: 403 })
+    }
+
+    const { data: inv } = await supabase
+      .from('user_invitations')
+      .select('role, permissions_preset, client_ids_preset')
+      .eq('email', email.toLowerCase())
+      .in('status', ['pendiente', 'aceptada'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!inv) {
+      console.warn('[my-permissions] Sin invitación para email:', email)
+      return NextResponse.json({ error: 'Acceso denegado' }, { status: 403 })
+    }
+
+    // Provisionar user_roles con el rol de la invitación
+    const rolInv = inv.role ?? 'redactor'
     const { error: insErr } = await supabase
       .from('user_roles')
-      .insert({ user_id: userId, role: 'redactor', activo: true })
+      .insert({ user_id: userId, role: rolInv, activo: true })
 
-    if (insErr) {
+    if (insErr && insErr.code !== '23505') {
       console.error('[my-permissions] Error provisionando user_roles:', insErr.message)
       return NextResponse.json({ error: 'Error interno' }, { status: 500 })
     }
-    role = 'redactor'
+
+    // Aplicar overrides de permisos de la invitación
+    if (inv.permissions_preset && typeof inv.permissions_preset === 'object') {
+      const overrides = inv.permissions_preset as Record<string, boolean>
+      const rows = Object.entries(overrides).map(([permission, granted]) => ({
+        user_id: userId, permission, granted,
+      }))
+      if (rows.length > 0) {
+        await supabase
+          .from('user_permissions')
+          .upsert(rows, { onConflict: 'user_id,permission' })
+      }
+    }
+
+    // Aplicar restricción de clientes
+    if (rolInv !== 'admin' && Array.isArray(inv.client_ids_preset) && inv.client_ids_preset.length > 0) {
+      const rows = (inv.client_ids_preset as string[]).map((clientId) => ({
+        user_id: userId, client_id: clientId,
+      }))
+      await supabase
+        .from('client_assignments')
+        .upsert(rows, { onConflict: 'user_id,client_id' })
+    }
+
+    console.log(`[my-permissions] Provisionado desde invitación — email:${email} role:${rolInv}`)
+    role = rolInv
   } else {
     role = rolRow.role
   }

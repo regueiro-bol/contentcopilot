@@ -78,8 +78,38 @@ export async function POST(req: NextRequest) {
         { onConflict: 'user_id' },
       )
 
-    // Marcar invitación como aceptada
+    // Aplicar presets de la invitación y marcarla como aceptada
     if (email) {
+      const { data: inv } = await supabase
+        .from('user_invitations')
+        .select('permissions_preset, client_ids_preset')
+        .eq('email', email.toLowerCase())
+        .eq('status', 'pendiente')
+        .maybeSingle()
+
+      // Aplicar overrides de permisos
+      if (inv?.permissions_preset && typeof inv.permissions_preset === 'object') {
+        const overrides = inv.permissions_preset as Record<string, boolean>
+        const rows = Object.entries(overrides).map(([permission, granted]) => ({
+          user_id: clerkUserId, permission, granted,
+        }))
+        if (rows.length > 0) {
+          await supabase
+            .from('user_permissions')
+            .upsert(rows, { onConflict: 'user_id,permission' })
+        }
+      }
+
+      // Aplicar restricción de clientes (solo si no es admin)
+      if (role !== 'admin' && Array.isArray(inv?.client_ids_preset) && inv.client_ids_preset.length > 0) {
+        const rows = (inv.client_ids_preset as string[]).map((clientId) => ({
+          user_id: clerkUserId, client_id: clientId,
+        }))
+        await supabase
+          .from('client_assignments')
+          .upsert(rows, { onConflict: 'user_id,client_id' })
+      }
+
       await supabase
         .from('user_invitations')
         .update({ status: 'aceptada', accepted_at: new Date().toISOString() })
