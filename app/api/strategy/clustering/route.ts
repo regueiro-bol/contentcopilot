@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { claveCluster, CLUSTER_FUERA_DE_NEGOCIO } from '@/lib/strategy/dedup'
 
 export const maxDuration = 300
 
@@ -39,6 +40,15 @@ Para cada keyword asigna:
 - cluster_name: nombre descriptivo del cluster (máx 5 palabras, en español, primera letra mayúscula).
   * Keywords del mismo tema DEBEN tener el mismo cluster_name EXACTO.
   * Usa el vocabulario del propio negocio del cliente, no términos genéricos.
+  * Usa SIEMPRE singular y el mismo orden de palabras para un mismo concepto:
+    "Precio incineración mascotas" y "Precios Incineración Mascotas" son el
+    MISMO cluster y deben compartir nombre.
+  * Si la keyword no guarda ninguna relación con lo que vende el cliente
+    (otro sector, otro público, otra categoría de producto), asígnale
+    exactamente este cluster_name, sin variantes:
+      "${CLUSTER_FUERA_DE_NEGOCIO}"
+    Estas keywords quedarán fuera del plan editorial, así que no intentes
+    encajarlas en un cluster del negocio para "aprovecharlas".
 
 - funnel_stage: aplica estas reglas EN ESTE ORDEN.
 
@@ -278,6 +288,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Claude no devolvió clasificaciones válidas. Inténtalo de nuevo.' },
         { status: 502 },
+      )
+    }
+
+    // ── Fusionar clusters equivalentes ────────────────────────
+    // Los lotes corren en paralelo y cada uno bautiza sus clusters sin ver
+    // los nombres elegidos por los demás, así que el mismo concepto llega
+    // con varias grafías ("Precio Incineración Mascotas" / "Precios
+    // incineración mascotas"). Agrupamos por clave normalizada y adoptamos
+    // como canónica la grafía más repetida.
+    {
+      const porClave = new Map<string, Map<string, number>>()
+      for (const r of allResults) {
+        const clave = claveCluster(r.cluster_name)
+        if (!clave) continue
+        if (!porClave.has(clave)) porClave.set(clave, new Map())
+        const grafias = porClave.get(clave)!
+        grafias.set(r.cluster_name, (grafias.get(r.cluster_name) ?? 0) + 1)
+      }
+
+      const canonico = new Map<string, string>()
+      let fusionados = 0
+      for (const [clave, grafias] of Array.from(porClave.entries())) {
+        // Más frecuente; a igualdad, la primera vista (Map conserva orden)
+        let mejor = ''
+        let mejorN = -1
+        for (const [grafia, n] of Array.from(grafias.entries())) {
+          if (n > mejorN) { mejor = grafia; mejorN = n }
+        }
+        canonico.set(clave, mejor)
+        if (grafias.size > 1) {
+          fusionados += grafias.size - 1
+          console.log(
+            `[Clustering] Fusionando ${grafias.size} grafías → "${mejor}": ` +
+            Array.from(grafias.keys()).filter((g) => g !== mejor).map((g) => `"${g}"`).join(', '),
+          )
+        }
+      }
+
+      for (const r of allResults) {
+        const c = canonico.get(claveCluster(r.cluster_name))
+        if (c) r.cluster_name = c
+      }
+
+      console.log(
+        `[Clustering] Clusters: ${porClave.size} tras fusionar ` +
+        `(${fusionados} grafías duplicadas absorbidas)`,
       )
     }
 
