@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import * as cheerio from 'cheerio'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { USER_AGENT } from '@/lib/user-agent'
 import {
   guardarRegistroCoste,
   calcularCosteClaudeUSD,
@@ -25,6 +26,14 @@ import {
 export const maxDuration = 120
 
 const SERPAPI_BASE = 'https://serpapi.com/search.json'
+
+/**
+ * Tope del cuerpo que se conserva por artículo.
+ * Suficiente para dar contexto real al análisis temático sin inflar el JSONB.
+ * El RAG NO se alimenta de aquí: /api/rag/indexar-web vuelve a descargar
+ * cada URL para quedarse con el texto completo.
+ */
+const TEXTO_LIMPIO_MAX = 3000
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,7 +45,7 @@ async function fetchWithTimeout(url: string, ms = 10000): Promise<Response> {
   try {
     return await fetch(url, {
       signal  : ctrl.signal,
-      headers : { 'User-Agent': 'Mozilla/5.0 (compatible; ContentCopilot/1.0; +https://contentcopilot.ai)' },
+      headers : { 'User-Agent': USER_AGENT },
     })
   } finally {
     clearTimeout(timer)
@@ -231,7 +240,7 @@ async function extraerArticulo(art: ArticuloBasico): Promise<ArticuloExtraido | 
 
     let texto_limpio = ''
     $('article p, main p, .content p, .post-content p, .entry-content p, p').each((_, el) => {
-      if (texto_limpio.length >= 300) return false as unknown as void
+      if (texto_limpio.length >= TEXTO_LIMPIO_MAX) return false as unknown as void
       const t = $(el).text().trim()
       if (t.length > 60) texto_limpio += (texto_limpio ? ' ' : '') + t
     })
@@ -241,7 +250,7 @@ async function extraerArticulo(art: ArticuloBasico): Promise<ArticuloExtraido | 
       titulo: titulo.slice(0, 200),
       h1,
       h2s,
-      texto_limpio: texto_limpio.slice(0, 500),
+      texto_limpio: texto_limpio.slice(0, TEXTO_LIMPIO_MAX),
       fecha,
       meta_description,
     }
@@ -475,6 +484,7 @@ export async function POST(request: NextRequest) {
         titulo: a.titulo,
         fecha : a.fecha,
         h2s   : (a as ArticuloExtraido).h2s?.slice(0, 4),
+        texto : (a as ArticuloExtraido).texto_limpio?.slice(0, TEXTO_LIMPIO_MAX),
       })),
       informe_completo: analisis?.resumen_ejecutivo ?? null,
       resumen         : analisis ?? {},

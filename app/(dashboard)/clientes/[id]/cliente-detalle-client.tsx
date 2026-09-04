@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Edit, Trash2, Plus, Sparkles, ChevronRight, ChevronDown, ChevronUp,
@@ -1800,6 +1800,163 @@ const MENSAJES_CARGA_WEB = [
   'Casi listo...',
 ]
 
+// ---------------------------------------------------------------------------
+// Indexación del contenido publicado en el RAG
+//
+// Alimenta la detección de solapamiento de "Analizar gaps": sin estos
+// documentos, check-existing no tiene contra qué comparar y devuelve todo
+// como contenido nuevo.
+// ---------------------------------------------------------------------------
+
+/** A partir de aquí el análisis se considera viejo y puede haber artículos sin indexar */
+const DIAS_ANALISIS_ANTIGUO = 45
+
+interface EstadoIndexado {
+  articulos_en_analisis: number
+  articulos_indexados  : number
+  ultima_indexacion    : string | null
+  proyecto_destino     : { id: string; nombre: string } | null
+}
+
+interface ResultadoIndexado {
+  articulos_indexados: number
+  chunks_creados     : number
+  fallidos           : Array<{ url: string; motivo: string }>
+  omitidos           : Array<{ url: string; motivo: string }>
+}
+
+function IndexarWebRagBlock({
+  clienteId, fechaAnalisis,
+}: { clienteId: string; fechaAnalisis: string }) {
+  const [estado,    setEstado]    = useState<EstadoIndexado | null>(null)
+  const [indexando, setIndexando] = useState(false)
+  const [resultado, setResultado] = useState<ResultadoIndexado | null>(null)
+  const [error,     setError]     = useState<string | null>(null)
+  const [verFallos, setVerFallos] = useState(false)
+
+  const cargarEstado = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/rag/indexar-web?cliente_id=${clienteId}`)
+      if (res.ok) setEstado(await res.json() as EstadoIndexado)
+    } catch { /* silencioso */ }
+  }, [clienteId])
+
+  useEffect(() => { cargarEstado() }, [cargarEstado])
+
+  const diasDesdeAnalisis = Math.floor(
+    (Date.now() - new Date(fechaAnalisis).getTime()) / 86_400_000,
+  )
+  const analisisAntiguo = diasDesdeAnalisis > DIAS_ANALISIS_ANTIGUO
+
+  async function indexar() {
+    setIndexando(true)
+    setError(null)
+    setResultado(null)
+    try {
+      const res = await fetch('/api/rag/indexar-web', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ cliente_id: clienteId }),
+      })
+      const data = await res.json() as ResultadoIndexado & { error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Error indexando')
+      setResultado(data)
+      cargarEstado()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error')
+    } finally {
+      setIndexando(false)
+    }
+  }
+
+  const yaIndexado = (estado?.articulos_indexados ?? 0) > 0
+
+  return (
+    <div className="rounded-lg border border-gray-200 p-3 space-y-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+            <Search className="h-3.5 w-3.5 text-indigo-600" />
+            Indexado para detección de duplicados
+          </p>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            {yaIndexado
+              ? `${estado?.articulos_indexados} artículos indexados${estado?.proyecto_destino ? ` en «${estado.proyecto_destino.nombre}»` : ''}.`
+              : 'Sin indexar. «Analizar gaps» no puede detectar solapamientos hasta que se indexe.'}
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant={yaIndexado ? 'outline' : 'default'}
+          className="gap-1.5 text-xs shrink-0"
+          onClick={indexar}
+          disabled={indexando}
+        >
+          {indexando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+          {indexando ? 'Indexando…' : yaIndexado ? 'Reindexar' : 'Indexar contenido'}
+        </Button>
+      </div>
+
+      {/* Aviso de análisis desactualizado */}
+      {analisisAntiguo && (
+        <div className="flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+          <span>
+            Las URLs proceden del análisis del{' '}
+            {new Date(fechaAnalisis).toLocaleDateString('es-ES')} ({diasDesdeAnalisis} días).
+            Lo publicado desde entonces no se indexará: lanza <strong>Reanalizar</strong> antes
+            para incorporar los artículos nuevos.
+          </span>
+        </div>
+      )}
+
+      {error && (
+        <p className="text-[11px] text-red-600 flex items-center gap-1.5">
+          <AlertCircle className="h-3 w-3 shrink-0" />{error}
+        </p>
+      )}
+
+      {/* Resultado */}
+      {resultado && (
+        <div className="text-[11px] text-gray-600 space-y-1">
+          <p>
+            <span className="text-emerald-600 font-medium">
+              {resultado.articulos_indexados} artículos
+            </span>{' '}
+            indexados · {resultado.chunks_creados} fragmentos
+            {resultado.fallidos.length > 0 && (
+              <> · <span className="text-red-600">{resultado.fallidos.length} fallidos</span></>
+            )}
+            {resultado.omitidos.length > 0 && (
+              <> · <span className="text-amber-600">{resultado.omitidos.length} omitidos</span></>
+            )}
+          </p>
+          {(resultado.fallidos.length > 0 || resultado.omitidos.length > 0) && (
+            <>
+              <button
+                type="button"
+                onClick={() => setVerFallos(!verFallos)}
+                className="text-indigo-600 hover:underline"
+              >
+                {verFallos ? 'Ocultar detalle' : 'Ver qué URLs no se indexaron'}
+              </button>
+              {verFallos && (
+                <ul className="space-y-0.5 pl-3 border-l-2 border-gray-100 max-h-40 overflow-y-auto">
+                  {[...resultado.fallidos, ...resultado.omitidos].map((f, i) => (
+                    <li key={i} className="text-gray-500 truncate">
+                      <span className="text-gray-400">{f.motivo}</span> — {f.url}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AnalisisWebClienteCard({ clienteId, urlWeb }: { clienteId: string; urlWeb?: string }) {
   const [analisis, setAnalisis]       = useState<AnalisisWebResumen | null | undefined>(undefined)
   const [analizando, setAnalizando]   = useState(false)
@@ -1925,6 +2082,9 @@ function AnalisisWebClienteCard({ clienteId, urlWeb }: { clienteId: string; urlW
                 {analisis.resumen.resumen_ejecutivo}
               </p>
             )}
+
+            {/* Indexación en el RAG */}
+            <IndexarWebRagBlock clienteId={clienteId} fechaAnalisis={analisis.fecha_analisis} />
 
             {/* Expandible */}
             {expanded && (
