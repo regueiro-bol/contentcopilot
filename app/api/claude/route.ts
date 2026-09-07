@@ -110,6 +110,11 @@ export async function POST(request: NextRequest) {
       })
       if (clientCtx) {
         systemPrompt = `${systemPrompt}\n\n${contextToPrompt(clientCtx)}`
+      } else {
+        console.error(
+          `[Claude] ⚠️  buildClientContext devolvió null para client ${client_id.trim()}. ` +
+          `La respuesta se generará SIN contexto de cliente.`,
+        )
       }
     }
 

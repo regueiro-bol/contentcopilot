@@ -33,12 +33,19 @@ export function contextToPrompt(ctx: ClientContext): string {
     ctx.client.web                   ? `Web: ${ctx.client.web}` : null,
     ctx.client.descripcion           ? `Descripción: ${ctx.client.descripcion.substring(0, DESCRIPCION_MAX)}` : null,
     ctx.client.identidad_corporativa ? `Identidad de marca: ${ctx.client.identidad_corporativa.substring(0, 200)}` : null,
-    ctx.client.tono_voz              ? `Tono de voz: ${ctx.client.tono_voz}` : null,
-    ctx.client.perfil_lector         ? `Perfil lector: ${ctx.client.perfil_lector}` : null,
-    ctx.client.competidores          ? `Competidores editoriales: ${ctx.client.competidores.substring(0, 200)}` : null,
   ].filter((l): l is string => l !== null)
 
   sections.push(identityLines.join('\n'))
+
+  // ── Restricciones globales ───────────────────────────────
+  // Vetos que aplican a TODOS los proyectos del cliente. Estaban en la tabla
+  // pero no se leían, así que nunca llegaban a ningún prompt.
+  if (ctx.client.restricciones_globales.length > 0) {
+    sections.push(
+      'RESTRICCIONES GLOBALES DEL CLIENTE (de obligado cumplimiento):\n' +
+      ctx.client.restricciones_globales.map((r) => `  - ${r}`).join('\n'),
+    )
+  }
 
   // ── Servicios y productos ────────────────────────────────
   // Sin truncar: define la intención comercial del cliente y determina
