@@ -298,7 +298,24 @@ export async function POST(request: NextRequest) {
       includeAnalytics  : true,
       includeGMB        : true,
     })
+    // Generar sin contexto de cliente es un fallo, no una alternativa válida:
+    // el mapa sale sin servicios, sin restricciones globales y sin inventario
+    // de lo ya publicado. Que se vea en los logs en vez de degradarse callando.
+    if (!clientCtx) {
+      console.error(
+        `[GenerateMap] ⚠️  buildClientContext devolvió null para client ${session.client_id}. ` +
+        `El mapa se generará SIN contexto de cliente: sin servicios y productos, ` +
+        `sin restricciones globales y sin marca. Revisa el error de buildClientContext.`,
+      )
+    }
+
     const clientContextStr = clientCtx ? contextToPrompt(clientCtx) : undefined
+
+    console.log(
+      `[GenerateMap] Contexto de cliente: ${clientCtx ? `OK (${clientContextStr!.length} chars, ` +
+      `${clientCtx.client.servicios_productos.length} servicios, ` +
+      `${clientCtx.client.restricciones_globales.length} restricciones)` : 'AUSENTE'}`,
+    )
 
     // ── Contenido que YA existe ──────────────────────────────
     // Dos fuentes que hasta ahora no llegaban al generador:

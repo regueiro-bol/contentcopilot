@@ -22,11 +22,10 @@ export interface ClientContext {
     sector               : string | null
     descripcion          : string | null
     identidad_corporativa: string | null
-    tono_voz             : string | null
-    perfil_lector        : string | null
+    /** clientes.url_web */
     web                  : string | null
-    /** Text / JSONB field with editorial SEO competitors */
-    competidores         : string | null
+    /** Palabras y temas vetados en TODOS los proyectos del cliente */
+    restricciones_globales: string[]
     /**
      * Services and products the client actually sells. Drives commercial
      * intent in funnel classification — a keyword about one of these is
@@ -154,13 +153,34 @@ export async function buildClientContext(
   } = options
 
   // ── Core client (mandatory, fail fast if not found) ──────
-  const { data: cliente } = await supabase
+  //
+  // OJO con las columnas: esta consulta pedía `tono_voz`, `perfil_lector`,
+  // `web` y `competidores`, que NO existen en `clientes`. PostgREST rechazaba
+  // la consulta entera con 42703, `data` venía null y la función devolvía null
+  // para CUALQUIER cliente — es decir, no funcionó nunca.
+  //   - `web`                        → la columna real es `url_web`
+  //   - `tono_voz` / `perfil_lector` → viven en `proyectos`, no en `clientes`.
+  //     El tono a nivel de cliente llega por brand_context.tone_of_voice.
+  //   - `competidores`               → no existe; los competidores llegan por
+  //     la tabla `competitors` (ver socialCompetitors más abajo).
+  const { data: cliente, error: clienteErr } = await supabase
     .from('clientes')
-    .select('id, nombre, sector, descripcion, identidad_corporativa, tono_voz, perfil_lector, web, competidores, servicios_productos')
+    .select('id, nombre, sector, descripcion, identidad_corporativa, url_web, restricciones_globales, servicios_productos')
     .eq('id', clientId)
     .single()
 
-  if (!cliente) return null
+  if (clienteErr) {
+    console.error(
+      `[buildClientContext] Error leyendo clientes para ${clientId}:`,
+      clienteErr.message, clienteErr.details ?? '', clienteErr.hint ?? '',
+    )
+    return null
+  }
+
+  if (!cliente) {
+    console.error(`[buildClientContext] Cliente ${clientId} no existe en la tabla clientes`)
+    return null
+  }
 
   // ── Optional parallel queries ────────────────────────────
   const [
@@ -392,14 +412,10 @@ export async function buildClientContext(
       sector               : cliente.sector               ?? null,
       descripcion          : cliente.descripcion          ?? null,
       identidad_corporativa: cliente.identidad_corporativa ?? null,
-      tono_voz             : cliente.tono_voz             ?? null,
-      perfil_lector        : cliente.perfil_lector        ?? null,
-      web                  : cliente.web                  ?? null,
-      competidores         : cliente.competidores != null
-        ? (typeof cliente.competidores === 'string'
-            ? cliente.competidores
-            : JSON.stringify(cliente.competidores))
-        : null,
+      web                  : cliente.url_web              ?? null,
+      restricciones_globales: Array.isArray(cliente.restricciones_globales)
+        ? (cliente.restricciones_globales as string[]).filter(Boolean)
+        : [],
       servicios_productos  : Array.isArray(cliente.servicios_productos)
         ? (cliente.servicios_productos as string[]).filter(Boolean)
         : [],

@@ -366,7 +366,9 @@ export async function POST(request: NextRequest) {
       // Generar brief SEO con contexto de actualidad
       const { data: clienteOp } = await supabase
         .from('clientes')
-        .select('nombre, sector, descripcion, tono_voz, perfil_lector, competidores')
+        // tono_voz/perfil_lector/competidores NO existen en `clientes` (viven en
+      // `proyectos`); pedirlas rompía la consulta entera y `cliente` venía null.
+      .select('nombre, sector, descripcion, restricciones_globales, servicios_productos')
         .eq('id', client_id)
         .single()
 
@@ -394,9 +396,13 @@ export async function POST(request: NextRequest) {
         clienteNombre   : clienteOp?.nombre ?? 'Cliente',
         clienteSector   : clienteOp?.sector ?? null,
         clienteDescripcion: clienteOp?.descripcion ?? null,
-        tonoVoz         : (proyActualidad.tono_voz as string | null) || (clienteOp?.tono_voz as string | null) || null,
-        perfilLector    : (proyActualidad.perfil_lector as string | null) || (clienteOp?.perfil_lector as string | null) || null,
-        competidores    : Array.isArray(clienteOp?.competidores) ? clienteOp.competidores as string[] : null,
+        // tono y perfil son de proyecto; el cliente no los tiene
+        tonoVoz         : (proyActualidad.tono_voz as string | null) ?? null,
+        perfilLector    : (proyActualidad.perfil_lector as string | null) ?? null,
+        // `competidores` no existe en clientes; usamos las restricciones globales
+        competidores    : Array.isArray(clienteOp?.restricciones_globales)
+          ? clienteOp.restricciones_globales as string[]
+          : null,
         publicados      : [],
         extraContext    : `OPORTUNIDAD DE ACTUALIDAD: ${op.titulo}\nContexto: ${contextoOp}${urgenciaContext ? `\nUrgencia: ${urgenciaContext}` : ''}${fechaContext ? `\nFecha relevante: ${fechaContext}` : ''}`,
         extensionMin    : body.extension_min,
@@ -573,7 +579,9 @@ export async function POST(request: NextRequest) {
     // 2. Datos del cliente
     const { data: cliente } = await supabase
       .from('clientes')
-      .select('nombre, sector, descripcion, tono_voz, perfil_lector, competidores')
+      // tono_voz/perfil_lector/competidores NO existen en `clientes` (viven en
+      // `proyectos`); pedirlas rompía la consulta entera y `cliente` venía null.
+      .select('nombre, sector, descripcion, restricciones_globales, servicios_productos')
       .eq('id', client_id)
       .single()
 
@@ -609,9 +617,13 @@ export async function POST(request: NextRequest) {
       clienteNombre     : cliente?.nombre ?? 'Cliente',
       clienteSector     : cliente?.sector ?? null,
       clienteDescripcion: cliente?.descripcion ?? null,
-      tonoVoz           : (proyecto.tono_voz as string | null) || (cliente?.tono_voz as string | null) || null,
-      perfilLector      : (proyecto.perfil_lector as string | null) || (cliente?.perfil_lector as string | null) || null,
-      competidores      : Array.isArray(cliente?.competidores) ? cliente.competidores as string[] : null,
+      // tono y perfil son de proyecto; el cliente no los tiene
+      tonoVoz           : (proyecto.tono_voz as string | null) ?? null,
+      perfilLector      : (proyecto.perfil_lector as string | null) ?? null,
+      // `competidores` no existe en clientes; usamos las restricciones globales
+      competidores      : Array.isArray(cliente?.restricciones_globales)
+        ? cliente.restricciones_globales as string[]
+        : null,
       publicados        : (publicados ?? []).map((p) => ({
         titulo : String(p.titulo),
         keyword: (p.keyword_principal as string | null) ?? null,

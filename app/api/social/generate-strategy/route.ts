@@ -49,7 +49,10 @@ export async function POST(request: NextRequest) {
       }),
     ])
 
-    if (!clientCtx) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+    if (!clientCtx) {
+    console.error(`[SocialStrategy] buildClientContext devolvió null para client ${clientId}`)
+    return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+  }
 
     const clienteContext = contextToPrompt(clientCtx)
 

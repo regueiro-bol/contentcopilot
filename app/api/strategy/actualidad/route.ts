@@ -65,7 +65,10 @@ export async function POST(request: NextRequest) {
     includeBrand      : true,
   })
 
-  if (!clientCtx) return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+  if (!clientCtx) {
+    console.error(`[Actualidad] buildClientContext devolvió null para client ${client_id}`)
+    return NextResponse.json({ error: 'Cliente no encontrado' }, { status: 404 })
+  }
 
   // Alias para código legado que usa cliente.nombre/sector/descripcion
   const cliente = {
