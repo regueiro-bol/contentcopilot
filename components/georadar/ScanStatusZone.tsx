@@ -38,6 +38,7 @@ export function ScanStatusZone({
   const router = useRouter();
   const [scan, setScan] = useState(scanActivoInicial);
   const [lanzando, setLanzando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
 
   const queriesTotales = keywords.length * llms.length;
   const costeEst = queriesTotales * 0.002;
@@ -95,6 +96,25 @@ export function ScanStatusZone({
       console.error(e);
     } finally {
       setLanzando(false);
+    }
+  }
+
+  // Libera un scan que se ha quedado bloqueado (misma ruta que usa ScanLauncher).
+  async function cancelarScan() {
+    if (!scan) return;
+    setCancelando(true);
+    try {
+      await fetch('/api/georadar/scan', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanId: scan.id }),
+      });
+      setScan(null);
+      router.refresh();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCancelando(false);
     }
   }
 
@@ -164,6 +184,12 @@ export function ScanStatusZone({
               >
                 {lanzando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
                 Lanzar scan
+              </Button>
+            )}
+            {estaActivo && (
+              <Button variant="outline" size="sm" onClick={cancelarScan} disabled={cancelando}>
+                {cancelando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Cancelar scan
               </Button>
             )}
           </div>
