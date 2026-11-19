@@ -93,18 +93,31 @@ export async function executeScan(scanId: string): Promise<void> {
   let queriesCompletadas = 0;
   const allScores: number[] = [];
 
+  // La función serverless se corta sin avisar al llegar a maxDuration (300 s en
+  // /scan/ejecutar) y el scan se quedaba para siempre en "ejecutando". Se reserva
+  // margen para generar el informe y cerrar el scan con lo que haya.
+  const inicioScan = Date.now();
+  const PRESUPUESTO_MS = 230_000;
+
   for (const query of (queries || [])) {
-    for (const llm of llmsActivos) {
+    if (Date.now() - inicioScan > PRESUPUESTO_MS) {
+      console.warn(`[GEORadar] Scan ${scanId}: tiempo agotado tras ${queriesCompletadas} queries. Se cierra con resultados parciales.`);
+      break;
+    }
+
+    // Los LLMs de una misma query se consultan en paralelo: antes iban en serie
+    // (~11 s por query) y un scan de 10 queries no cabía en el tiempo máximo.
+    await Promise.all(llmsActivos.map(async (llm) => {
       try {
         const adapter = LLM_ADAPTERS[llm];
-        if (!adapter) continue;
+        if (!adapter) return;
 
         const llmResponse = await adapter(query.query);
 
         // Adapter puede devolver null (ej: Gemini no disponible)
         if (!llmResponse) {
           console.log(`[GEORadar] ${llm} devolvio null para "${query.query.substring(0, 40)}" — omitiendo`);
-          continue;
+          return;
         }
 
         // Registrar coste del LLM (fire-and-forget)
@@ -176,13 +189,10 @@ export async function executeScan(scanId: string): Promise<void> {
         totalCoste += llmResponse.coste_usd;
         totalTokens += llmResponse.tokens_entrada + llmResponse.tokens_salida;
 
-        // Rate limiting entre llamadas
-        await new Promise(r => setTimeout(r, 500));
-
       } catch (err) {
-        console.error(`[GEORadar] Error scan ${scanId} query ${query.id} llm ${llm}:`, err);
+        console.error(`[GEORadar] Error scan ${scanId} query ${query.id} llm ${llm}:`, err instanceof Error ? err.message : err);
       }
-    }
+    }));
 
     queriesCompletadas++;
     await supabase
