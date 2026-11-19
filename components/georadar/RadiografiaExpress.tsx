@@ -311,6 +311,23 @@ export function RadiografiaExpress() {
     setError(null);
   }
 
+  // Coste estimado del informe (dato interno: no se imprime en el PDF).
+  const coste = useMemo(() => {
+    const porMotor = {} as Record<Motor, number>;
+    let analisis = 0;
+    for (const p of hechos) {
+      for (const r of p.resultados) {
+        porMotor[r.motor] = (porMotor[r.motor] || 0) + (r.coste_usd || 0);
+        analisis += r.coste_analisis_usd || 0;
+      }
+    }
+    const redaccion = (prep?.coste_usd || 0) + (resumen?.coste_usd || 0);
+    const total = Object.values(porMotor).reduce((a, b) => a + b, 0) + analisis + redaccion;
+    return { porMotor, analisis, redaccion, total };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultados, prep, resumen]);
+  const usd = (n: number) => `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: n < 0.1 ? 3 : 2 })} $`;
+
   const circunferencia = 2 * Math.PI * 50;
   const totalCitas = agg.grupos.reduce((n, g) => n + g.citas, 0);
   const hayTipos = agg.grupos.some((g) => g.tipo !== 'otro' && g.tipo !== 'propia');
@@ -823,6 +840,24 @@ export function RadiografiaExpress() {
                   </details>
                 );
               })}
+            </section>
+          )}
+
+          {hechos.length > 0 && !enCurso && (
+            <section aria-label="Coste del informe" className="rounded-2xl border border-dashed border-gray-300 bg-white p-5 print:hidden">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-gray-900">Coste estimado de este informe</h2>
+                <span className="text-xl font-bold text-gray-900">{usd(coste.total)}</span>
+              </div>
+              <p className="mt-2 text-[13px] leading-relaxed text-gray-600">
+                {MOTORES.filter((m) => coste.porMotor[m] > 0)
+                  .map((m) => `${MOTOR_LABEL[m]} ${usd(coste.porMotor[m])}`)
+                  .concat([`Análisis de respuestas ${usd(coste.analisis)}`, `Preguntas y diagnóstico ${usd(coste.redaccion)}`])
+                  .join(' · ')}
+              </p>
+              <p className="mt-1 text-xs text-gray-600">
+                Calculado con las tarifas públicas de cada proveedor; la factura real puede variar. Solo visible internamente: no sale en el PDF.
+              </p>
             </section>
           )}
 

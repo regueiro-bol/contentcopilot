@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { analizarPregunta } from '@/lib/georadar/radiografia/analizar';
 import { normalizarDominio } from '@/lib/georadar/radiografia/preparar';
+import { redondear } from '@/lib/georadar/radiografia/precios';
+import { guardarRegistroCoste } from '@/lib/costes';
 import { MOTORES, type Motor } from '@/lib/georadar/radiografia/types';
 
 // Tres motores con búsqueda web en paralelo + análisis. Suele tardar 20-60 s.
@@ -47,5 +49,24 @@ export async function POST(req: NextRequest) {
     competidores,
     motores.length ? motores : MOTORES,
   );
+  // Coste estimado de esta pregunta: consultas a los asistentes + análisis.
+  const porMotor: Record<string, number> = {};
+  let analisis = 0;
+  for (const r of resultado.resultados) {
+    porMotor[r.motor] = redondear((porMotor[r.motor] || 0) + r.coste_usd);
+    analisis += r.coste_analisis_usd;
+  }
+  const total = redondear(Object.values(porMotor).reduce((a, b) => a + b, 0) + analisis);
+  if (total > 0) {
+    await guardarRegistroCoste({
+      tipo_operacion: 'radiografia_express',
+      agente: 'radiografia_pregunta',
+      modelo: 'varios',
+      unidades: resultado.resultados.length,
+      coste_usd: total,
+      metadatos: { dominio, pregunta, por_motor: porMotor, analisis: redondear(analisis) },
+    });
+  }
+
   return NextResponse.json(resultado);
 }

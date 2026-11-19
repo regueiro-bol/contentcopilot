@@ -79,6 +79,7 @@ const ETIQUETAS_TIPO: Record<string, string> = {
   dataforseo_volume  : 'DataForSEO Volúmenes',
   competitor_keywords: 'DataForSEO Competidores',
   analisis_web       : 'Análisis web (Claude)',
+  radiografia_express: 'Radiografía Express',
 }
 
 const SERVICIOS_GRUPOS: Array<{ id: string; label: string; color: string; tipos: string[] }> = [
@@ -89,6 +90,7 @@ const SERVICIOS_GRUPOS: Array<{ id: string; label: string; color: string; tipos:
   { id: 'gpt4',       label: 'GPT-4o (OpenAI)',      color: 'bg-emerald-500', tipos: ['georadar_gpt4'] },
   { id: 'gemini',     label: 'Gemini (Google)',       color: 'bg-blue-500',    tipos: ['georadar_gemini'] },
   { id: 'perplexity', label: 'Perplexity',            color: 'bg-purple-500',  tipos: ['georadar_perplexity'] },
+  { id: 'radiografia', label: 'Radiografía Express',  color: 'bg-violet-500',  tipos: ['radiografia_express'] },
 ]
 
 const POR_PAGINA = 20

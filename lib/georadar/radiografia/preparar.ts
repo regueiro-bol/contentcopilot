@@ -217,7 +217,7 @@ Tarea:
 Devuelve SOLO un objeto JSON:
 {"marca": "...", "alias": ["..."], "descripcion": "...", "preguntas": [{"etiqueta": "General", "pregunta": "..."}, {"etiqueta": "Servicio", "pregunta": "..."}, {"etiqueta": "Urgencia", "pregunta": "..."}, {"etiqueta": "Precio", "pregunta": "..."}, {"etiqueta": "Confianza", "pregunta": "..."}]}`;
 
-  const ia = await claudeJson<PreparacionIA>(prompt, 1000);
+  const { json: ia, coste_usd } = await claudeJson<PreparacionIA>(prompt, 1000);
 
   const pares = (ia?.preguntas || [])
     .map((p) => (typeof p === 'string' ? { etiqueta: '', pregunta: p } : { etiqueta: p?.etiqueta || '', pregunta: p?.pregunta || '' }))
@@ -242,5 +242,6 @@ Devuelve SOLO un objeto JSON:
     tecnico,
     preguntas: pares.map((p) => p.pregunta.trim()),
     etiquetas: pares.map((p) => String(p.etiqueta).trim().slice(0, 24)),
+    coste_usd,
   };
 }

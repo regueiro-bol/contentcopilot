@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { resumirRadiografia } from '@/lib/georadar/radiografia/analizar';
 import { normalizarDominio } from '@/lib/georadar/radiografia/preparar';
+import { guardarRegistroCoste } from '@/lib/costes';
 
 export const maxDuration = 90;
 
@@ -40,5 +41,13 @@ export async function POST(req: NextRequest) {
       }))
       .filter((p: { ruta: string }) => p.ruta.startsWith('/')),
   );
+  if (resumen.coste_usd > 0) {
+    await guardarRegistroCoste({
+      tipo_operacion: 'radiografia_express',
+      agente: 'radiografia_resumen',
+      coste_usd: resumen.coste_usd,
+      metadatos: { dominio },
+    });
+  }
   return NextResponse.json(resumen);
 }

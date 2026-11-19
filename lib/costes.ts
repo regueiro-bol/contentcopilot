@@ -85,6 +85,7 @@ export type TipoOperacion =
   | 'dataforseo_volume'     // DataForSEO search volume
   | 'competitor_keywords'   // DataForSEO competitor keywords
   | 'analisis_web'          // Análisis de contenido web (Claude)
+  | 'radiografia_express'   // GEORadar — Radiografía Express (asistentes + análisis)
 
 // ─── Cálculo ─────────────────────────────────────────────────────────────────
 
