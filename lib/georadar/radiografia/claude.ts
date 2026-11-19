@@ -40,11 +40,27 @@ export async function claudeJson<T>(
       const texto = bloque && bloque.type === 'text' ? bloque.text : '';
       const inicio = texto.indexOf('{');
       const fin = texto.lastIndexOf('}');
-      if (inicio === -1 || fin <= inicio) return { json: null, coste_usd, modelo: model };
-      try {
-        return { json: JSON.parse(texto.slice(inicio, fin + 1)) as T, coste_usd, modelo: model };
-      } catch {
+      const rastro = () =>
+        console.error(
+          `[Radiografía] JSON ilegible (${model}, fin: ${res.stop_reason}, ${res.usage?.output_tokens} tokens). Inicio: ${texto.slice(0, 160).replace(/\s+/g, ' ')} … Final: ${texto.slice(-120).replace(/\s+/g, ' ')}`,
+        );
+      if (inicio === -1 || fin <= inicio) {
+        rastro();
         return { json: null, coste_usd, modelo: model };
+      }
+      const crudo = texto.slice(inicio, fin + 1);
+      try {
+        return { json: JSON.parse(crudo) as T, coste_usd, modelo: model };
+      } catch {
+        // Segundo intento: quitar comentarios de línea y comas finales, que es
+        // lo que suele colarse cuando el modelo imita una plantilla.
+        try {
+          const limpio = crudo.replace(/^\s*\/\/.*$/gm, '').replace(/([,{\[])\s*\/\/[^\n]*$/gm, '$1').replace(/,(\s*[}\]])/g, '$1');
+          return { json: JSON.parse(limpio) as T, coste_usd, modelo: model };
+        } catch {
+          rastro();
+          return { json: null, coste_usd, modelo: model };
+        }
       }
     } catch (e) {
       ultimo = e;
