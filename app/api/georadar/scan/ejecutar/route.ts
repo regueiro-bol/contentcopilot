@@ -3,7 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { executeScan } from '@/lib/georadar/scan-engine';
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 /**
  * POST /api/georadar/scan/ejecutar
@@ -12,7 +12,7 @@ export const maxDuration = 120;
  * El frontend dispara esta llamada sin await (fire-and-forget desde el cliente)
  * y hace polling al GET /api/georadar/scan para ver el progreso.
  *
- * maxDuration=120 mantiene la funcion serverless viva.
+ * maxDuration=300 mantiene la funcion serverless viva.
  *
  * Body: { scanId: string }
  */
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   const { scanId } = await req.json();
   if (!scanId) return NextResponse.json({ error: 'scanId requerido' }, { status: 400 });
 
-  console.log(`[GEORadar] Ejecutando scan ${scanId} sincrono (maxDuration=120)...`);
+  console.log(`[GEORadar] Ejecutando scan ${scanId} sincrono (maxDuration=300)...`);
 
   try {
     await executeScan(scanId);
