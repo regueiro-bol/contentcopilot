@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Radio, Settings, BarChart2 } from 'lucide-react';
+import { Radio, Settings, BarChart2, ScanSearch } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +61,12 @@ export default async function GeoRadarPage() {
           <h1 className="text-xl font-semibold text-gray-900">GEORadar</h1>
           <p className="text-sm text-gray-500">Monitor de presencia de marca en LLMs</p>
         </div>
+        <Link href="/georadar/radiografia" className="ml-auto">
+          <Button variant="outline" size="sm">
+            <ScanSearch className="h-3.5 w-3.5" />
+            Radiografía Express
+          </Button>
+        </Link>
       </div>
 
       {configurados.length > 0 && (
