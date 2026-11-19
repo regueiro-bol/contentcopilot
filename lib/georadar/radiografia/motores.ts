@@ -9,33 +9,46 @@
  *
  * Los modelos se pueden cambiar sin tocar código con variables de entorno:
  *   RADIOGRAFIA_OPENAI_MODEL, RADIOGRAFIA_GEMINI_MODEL, RADIOGRAFIA_PERPLEXITY_MODEL
- * Si el modelo principal falla se prueba uno de reserva.
+ * Si el modelo principal falla se prueba uno de reserva. Los errores de límite
+ * de peticiones (429) se reintentan con espera.
  */
 
 import type { Fuente, Motor, RespuestaMotor } from './types';
 
 const TIMEOUT_MS = 90_000;
 
-const OPENAI_MODELOS = [process.env.RADIOGRAFIA_OPENAI_MODEL || 'gpt-6.2-astra'];
-const OPENAI_RESERVA_CHAT = 'gpt-5-search-api';
+// Modelo de búsqueda por Chat Completions: es el que respondió en las pruebas reales.
+const OPENAI_CHAT_SEARCH = process.env.RADIOGRAFIA_OPENAI_MODEL || 'gpt-5-search-api';
+// Reserva opcional por Responses API + web_search (solo si se define la variable).
+const OPENAI_RESPONSES = process.env.RADIOGRAFIA_OPENAI_RESPONSES_MODEL || '';
 const GEMINI_MODELOS = [
   process.env.RADIOGRAFIA_GEMINI_MODEL || 'gemini-3.8-flash',
   'gemini-2.5-flash',
 ];
 const PERPLEXITY_MODELOS = [process.env.RADIOGRAFIA_PERPLEXITY_MODEL || 'sonar-pro', 'sonar'];
 
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// 429 (límite de peticiones) y 503 se reintentan con espera creciente: la
+// radiografía lanza varias preguntas casi a la vez y Perplexity rechazaba parte.
+const ESPERAS_REINTENTO_MS = [2500, 6000, 11000];
+
 async function postJson(url: string, headers: Record<string, string>, body: unknown) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!res.ok) {
+  for (let intento = 0; ; intento++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (res.ok) return res.json();
     const txt = await res.text().catch(() => '');
+    if ((res.status === 429 || res.status === 503) && intento < ESPERAS_REINTENTO_MS.length) {
+      await esperar(ESPERAS_REINTENTO_MS[intento] + Math.random() * 1500);
+      continue;
+    }
     throw new Error(`HTTP ${res.status}: ${txt.substring(0, 300)}`);
   }
-  return res.json();
 }
 
 function dedupe(fuentes: Fuente[]): Fuente[] {
@@ -83,14 +96,14 @@ async function chatgptChatSearch(pregunta: string): Promise<Parcial> {
   const data = await postJson(
     'https://api.openai.com/v1/chat/completions',
     { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    { model: OPENAI_RESERVA_CHAT, messages: [{ role: 'user', content: pregunta }] },
+    { model: OPENAI_CHAT_SEARCH, messages: [{ role: 'user', content: pregunta }] },
   );
   const msg = data.choices?.[0]?.message || {};
   const fuentes: Fuente[] = (msg.annotations || [])
     .filter((a: any) => a.type === 'url_citation' && a.url_citation?.url)
     .map((a: any) => ({ url: a.url_citation.url, titulo: a.url_citation.title }));
   return {
-    modelo: OPENAI_RESERVA_CHAT,
+    modelo: OPENAI_CHAT_SEARCH,
     respuesta: msg.content || '',
     fuentes: dedupe(fuentes),
     tokens_entrada: data.usage?.prompt_tokens || 0,
@@ -100,18 +113,11 @@ async function chatgptChatSearch(pregunta: string): Promise<Parcial> {
 
 async function chatgpt(pregunta: string): Promise<Parcial> {
   if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY no configurada');
-  let ultimo: unknown;
-  for (const modelo of OPENAI_MODELOS) {
-    try {
-      return await chatgptResponses(pregunta, modelo);
-    } catch (e) {
-      ultimo = e;
-    }
-  }
   try {
     return await chatgptChatSearch(pregunta);
-  } catch {
-    throw ultimo;
+  } catch (e) {
+    if (!OPENAI_RESPONSES) throw e;
+    return chatgptResponses(pregunta, OPENAI_RESPONSES);
   }
 }
 
