@@ -2,19 +2,42 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, Loader2, Printer, RotateCcw, ScanSearch, X, AlertTriangle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { ArrowLeft, AlertTriangle, Check, Loader2, Minus, Printer, RotateCcw, ScanSearch, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
-import { MOTORES, MOTOR_LABEL } from '@/lib/georadar/radiografia/types';
-import type { Motor, Preparacion, ResultadoMotor, ResultadoPregunta, Resumen } from '@/lib/georadar/radiografia/types';
+import { agregar } from '@/lib/georadar/radiografia/agregar';
+import { MOTORES, MOTOR_LABEL, TIPO_FUENTE_LABEL } from '@/lib/georadar/radiografia/types';
+import type {
+  Motor,
+  Preparacion,
+  ResultadoMotor,
+  ResultadoPregunta,
+  Resumen,
+  TipoFuente,
+} from '@/lib/georadar/radiografia/types';
 
 const SECTORES_EJEMPLO = ['Óptica', 'Clínica dental', 'Centro de estética', 'Inmobiliaria', 'Taller mecánico', 'Fisioterapia'];
 
+// Separación entre el lanzamiento de una pregunta y la siguiente, para no
+// chocar con el límite de peticiones simultáneas de los proveedores.
+const ESCALON_MS = 1500;
+
 type Paso = 'formulario' | 'preguntas' | 'resultado';
 type EstadoPregunta = 'pendiente' | 'ok' | 'error';
+
+const COLOR_TIPO: Record<TipoFuente, string> = {
+  prensa: '#1d4ed8',
+  propia: '#7c3aed',
+  competidor: '#c2410c',
+  directorio: '#6b7280',
+  otro: '#9ca3af',
+};
+
+const RAYADO = 'repeating-linear-gradient(135deg, #e5e7eb 0 6px, #f9fafb 6px 12px)';
 
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -27,22 +50,97 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return data as T;
 }
 
-function media(valores: number[]): number {
-  return valores.length ? Math.round(valores.reduce((a, b) => a + b, 0) / valores.length) : 0;
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function colorNota(n: number): { texto: string; barra: string } {
+  if (n >= 60) return { texto: 'text-green-800', barra: '#16a34a' };
+  if (n >= 30) return { texto: 'text-amber-800', barra: '#d97706' };
+  return { texto: 'text-red-800', barra: '#dc2626' };
 }
 
-function colorNota(n: number): string {
-  if (n >= 60) return 'text-green-600';
-  if (n >= 30) return 'text-amber-600';
-  return 'text-red-600';
+/** Mensaje corto y sin jerga a partir del error técnico de un asistente */
+function motivoFallo(error: string | null): string {
+  if (!error) return 'No respondió.';
+  if (error.includes('402') || /credit|billing|prepay/i.test(error)) return 'No respondió: la cuenta de la API no tiene saldo.';
+  if (error.includes('429') || /rate limit/i.test(error)) return 'Rechazó la petición por exceso de consultas simultáneas.';
+  if (/no configurada/i.test(error)) return 'Falta configurar su clave de API.';
+  if (/timeout|aborted/i.test(error)) return 'Tardó demasiado en responder.';
+  return 'No respondió por un error del proveedor.';
 }
 
-function dominioDe(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
+/** Quita el ruido de seguimiento de los enlaces para que la respuesta se lea limpia */
+function limpiarRespuesta(texto: string): string {
+  return texto.replace(/[?&]utm_source=[a-z0-9_.-]+/gi, '');
+}
+
+function CeldaMatriz({ estado, r }: { estado: EstadoPregunta | undefined; r: ResultadoMotor | undefined }) {
+  const base = 'h-[52px] rounded-[10px] flex items-center justify-center';
+  if (!r && estado === 'pendiente') {
+    return <div className={`${base} bg-gray-50`}><Loader2 className="h-4 w-4 animate-spin text-gray-400" aria-label="Preguntando" /></div>;
   }
+  if (!r || r.error) {
+    return <div className={`${base} text-xs font-medium text-gray-700`} style={{ background: RAYADO }} title={r?.error || undefined}>Sin respuesta</div>;
+  }
+  if (r.marca_mencionada) {
+    return (
+      <div className={`${base} text-lg font-bold ${r.posicion === 1 ? 'bg-green-200 text-green-900' : 'bg-green-100 text-green-800'}`}>
+        {r.posicion ? `${r.posicion}.º` : 'Sí'}
+      </div>
+    );
+  }
+  return <div className={`${base} bg-red-100 text-[13px] font-semibold text-red-800`}>No apareces</div>;
+}
+
+function RespuestaMotorCard({ r, fecha }: { r: ResultadoMotor; fecha: string }) {
+  const [abierta, setAbierta] = useState(false);
+  return (
+    <div className="flex-1 basis-[420px] min-w-0 rounded-xl border border-gray-200 p-4 space-y-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-gray-900">{MOTOR_LABEL[r.motor]}</span>
+        {r.marca_mencionada ? (
+          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800">
+            Te recomienda{r.posicion ? `, ${r.posicion}.º` : ''}
+          </span>
+        ) : (
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">No apareces</span>
+        )}
+        <span className="text-xs text-gray-600">
+          {new Date(fecha).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+          {r.modelo ? ` · ${r.modelo}` : ''}
+        </span>
+      </div>
+      {r.resumen && <p className="text-sm leading-relaxed text-gray-700">{r.resumen}</p>}
+      {abierta && (
+        <div className="rx-respuesta max-w-none overflow-x-auto border-t border-gray-100 pt-3 text-sm leading-relaxed text-gray-700">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              h1: (p) => <p className="mt-3 text-sm font-semibold text-gray-900" {...p} />,
+              h2: (p) => <p className="mt-3 text-sm font-semibold text-gray-900" {...p} />,
+              h3: (p) => <p className="mt-3 text-sm font-semibold text-gray-900" {...p} />,
+              p: (p) => <p className="mt-2" {...p} />,
+              ul: (p) => <ul className="mt-2 list-disc space-y-1 pl-5" {...p} />,
+              ol: (p) => <ol className="mt-2 list-decimal space-y-1 pl-5" {...p} />,
+              a: ({ href, children }) => (
+                <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-700 underline underline-offset-2">
+                  {children}
+                </a>
+              ),
+              table: (p) => <table className="mt-3 w-full border-collapse text-xs" {...p} />,
+              th: (p) => <th className="border border-gray-200 bg-gray-50 px-2 py-1 text-left font-semibold" {...p} />,
+              td: (p) => <td className="border border-gray-200 px-2 py-1 align-top" {...p} />,
+              hr: () => <hr className="my-3 border-gray-100" />,
+            }}
+          >
+            {limpiarRespuesta(r.respuesta)}
+          </ReactMarkdown>
+        </div>
+      )}
+      <Button variant="outline" size="sm" onClick={() => setAbierta((v) => !v)} className="print:hidden">
+        {abierta ? 'Ocultar respuesta completa' : 'Ver respuesta completa'}
+      </Button>
+    </div>
+  );
 }
 
 export function RadiografiaExpress() {
@@ -57,16 +155,26 @@ export function RadiografiaExpress() {
 
   const [prep, setPrep] = useState<Preparacion | null>(null);
   const [marca, setMarca] = useState('');
+  const [aliasTexto, setAliasTexto] = useState('');
   const [preguntas, setPreguntas] = useState<string[]>([]);
+  const [etiquetas, setEtiquetas] = useState<string[]>([]);
 
   const [estados, setEstados] = useState<EstadoPregunta[]>([]);
   const [resultados, setResultados] = useState<(ResultadoPregunta | null)[]>([]);
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [resumiendo, setResumiendo] = useState(false);
+  const [reintentando, setReintentando] = useState<number | null>(null);
 
   const competidores = [competidor1, competidor2].map((c) => c.trim()).filter(Boolean);
+  const alias = aliasTexto.split(',').map((a) => a.trim()).filter(Boolean).slice(0, 5);
   const hechos = resultados.filter((r): r is ResultadoPregunta => r !== null);
   const enCurso = estados.some((e) => e === 'pendiente');
+
+  const agg = useMemo(
+    () => agregar(hechos, marca.trim(), alias, prep?.dominio || '', resumen?.tipos_fuente || {}),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resultados, marca, aliasTexto, prep, resumen],
+  );
 
   async function preparar(e: React.FormEvent) {
     e.preventDefault();
@@ -76,7 +184,9 @@ export function RadiografiaExpress() {
       const p = await post<Preparacion>('/api/georadar/radiografia/preparar', { dominio, sector, zona });
       setPrep(p);
       setMarca(p.marca);
+      setAliasTexto((p.alias || []).join(', '));
       setPreguntas(p.preguntas);
+      setEtiquetas(p.etiquetas || []);
       setPaso('preguntas');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo preparar la radiografía');
@@ -85,15 +195,56 @@ export function RadiografiaExpress() {
     }
   }
 
+  function cuerpoPregunta(pregunta: string, motores?: Motor[]) {
+    return {
+      dominio: prep!.dominio,
+      marca: marca.trim(),
+      alias,
+      competidores,
+      pregunta,
+      ...(motores ? { motores } : {}),
+    };
+  }
+
+  async function pedirResumen(validos: ResultadoPregunta[]) {
+    if (!prep || validos.length === 0) return;
+    setResumiendo(true);
+    try {
+      // Se envían los resultados sin el texto completo de las respuestas para aligerar la petición.
+      const compactos = validos.map((p) => ({
+        ...p,
+        resultados: p.resultados.map((r) => ({ ...r, respuesta: '', resumen: '' })),
+      }));
+      const dominios = agregar(validos, marca.trim(), alias, prep.dominio, {}).fuentes.map((f) => f.dominio);
+      const res = await post<Resumen>('/api/georadar/radiografia/resumen', {
+        dominio: prep.dominio,
+        marca: marca.trim(),
+        descripcion: prep.descripcion,
+        web_legible: prep.web_legible,
+        preguntas: compactos,
+        dominios,
+      });
+      setResumen(res);
+    } catch {
+      setResumen(null);
+    } finally {
+      setResumiendo(false);
+    }
+  }
+
   async function lanzar() {
     if (!prep) return;
-    const lista = preguntas.map((p) => p.trim()).filter((p) => p.length >= 8);
-    if (lista.length === 0 || !marca.trim()) {
+    const pares = preguntas
+      .map((p, i) => ({ p: p.trim(), e: etiquetas[i] || '' }))
+      .filter((x) => x.p.length >= 8);
+    if (pares.length === 0 || !marca.trim()) {
       setError('Hace falta el nombre de la marca y al menos una pregunta.');
       return;
     }
+    const lista = pares.map((x) => x.p);
     setError(null);
     setPreguntas(lista);
+    setEtiquetas(pares.map((x) => x.e));
     setResumen(null);
     setEstados(lista.map(() => 'pendiente'));
     setResultados(lista.map(() => null));
@@ -101,13 +252,9 @@ export function RadiografiaExpress() {
 
     const finales = await Promise.all(
       lista.map(async (pregunta, i) => {
+        await esperar(i * ESCALON_MS);
         try {
-          const r = await post<ResultadoPregunta>('/api/georadar/radiografia/pregunta', {
-            dominio: prep.dominio,
-            marca: marca.trim(),
-            competidores,
-            pregunta,
-          });
+          const r = await post<ResultadoPregunta>('/api/georadar/radiografia/pregunta', cuerpoPregunta(pregunta));
           setResultados((prev) => prev.map((x, j) => (j === i ? r : x)));
           setEstados((prev) => prev.map((x, j) => (j === i ? 'ok' : x)));
           return r;
@@ -118,27 +265,32 @@ export function RadiografiaExpress() {
       }),
     );
 
-    const validos = finales.filter((r): r is ResultadoPregunta => r !== null);
-    if (validos.length === 0) return;
-    setResumiendo(true);
+    await pedirResumen(finales.filter((r): r is ResultadoPregunta => r !== null));
+  }
+
+  /** Vuelve a preguntar solo a los asistentes que fallaron en una pregunta */
+  async function reintentar(i: number) {
+    const actual = resultados[i];
+    if (!actual || !prep) return;
+    const fallidos = actual.resultados.filter((r) => r.error).map((r) => r.motor);
+    if (fallidos.length === 0) return;
+    setReintentando(i);
     try {
-      // Se envían los resultados sin el texto completo de las respuestas para aligerar la petición.
-      const compactos = validos.map((p) => ({
-        ...p,
-        resultados: p.resultados.map((r) => ({ ...r, respuesta: '' })),
-      }));
-      const res = await post<Resumen>('/api/georadar/radiografia/resumen', {
-        dominio: prep.dominio,
-        marca: marca.trim(),
-        descripcion: prep.descripcion,
-        web_legible: prep.web_legible,
-        preguntas: compactos,
-      });
-      setResumen(res);
+      const nuevo = await post<ResultadoPregunta>(
+        '/api/georadar/radiografia/pregunta',
+        cuerpoPregunta(actual.pregunta, fallidos),
+      );
+      const fusion: ResultadoPregunta = {
+        ...actual,
+        resultados: actual.resultados.map((r) => nuevo.resultados.find((n) => n.motor === r.motor && !n.error) || r),
+      };
+      const siguientes = resultados.map((x, j) => (j === i ? fusion : x));
+      setResultados(siguientes);
+      await pedirResumen(siguientes.filter((r): r is ResultadoPregunta => r !== null));
     } catch {
-      setResumen(null);
+      /* se deja como estaba */
     } finally {
-      setResumiendo(false);
+      setReintentando(null);
     }
   }
 
@@ -151,64 +303,15 @@ export function RadiografiaExpress() {
     setError(null);
   }
 
-  // ── Agregados ────────────────────────────────────────────────────────────
-  const { notaGlobal, notaPorMotor, apariciones, totalValidas, ranking, fuentesTop } = useMemo(() => {
-    const todos: ResultadoMotor[] = hechos.flatMap((p) => p.resultados).filter((r) => !r.error);
-    const porMotor = {} as Record<Motor, number | null>;
-    for (const m of MOTORES) {
-      const del = todos.filter((r) => r.motor === m);
-      porMotor[m] = del.length ? media(del.map((r) => r.score)) : null;
-    }
-
-    const marcaLower = marca.trim().toLowerCase();
-    const conteo = new Map<string, { nombre: string; veces: number; propio: boolean; indicado: boolean }>();
-    for (const r of todos) {
-      const vistos = new Set<string>();
-      for (const n of r.negocios) {
-        const clave = n.nombre.toLowerCase();
-        if (vistos.has(clave)) continue;
-        vistos.add(clave);
-        const propio = !!marcaLower && (clave.includes(marcaLower) || marcaLower.includes(clave));
-        const previo = conteo.get(clave);
-        if (previo) {
-          previo.veces += 1;
-          previo.indicado = previo.indicado || n.es_competidor_indicado;
-        } else {
-          conteo.set(clave, { nombre: n.nombre, veces: 1, propio, indicado: n.es_competidor_indicado });
-        }
-      }
-    }
-
-    const fuentes = new Map<string, number>();
-    for (const r of todos) {
-      const vistos = new Set<string>();
-      for (const f of r.fuentes) {
-        // Gemini devuelve URLs de redirección: el dominio real viene en el título.
-        const d = r.motor === 'gemini' && f.titulo ? f.titulo.toLowerCase() : dominioDe(f.url);
-        if (!d || vistos.has(d)) continue;
-        vistos.add(d);
-        fuentes.set(d, (fuentes.get(d) || 0) + 1);
-      }
-    }
-
-    return {
-      notaGlobal: media(todos.map((r) => r.score)),
-      notaPorMotor: porMotor,
-      apariciones: todos.filter((r) => r.marca_mencionada).length,
-      totalValidas: todos.length,
-      ranking: Array.from(conteo.values()).sort((a, b) => b.veces - a.veces).slice(0, 10),
-      fuentesTop: Array.from(fuentes.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10),
-    };
-  }, [hechos, marca]);
-
-  const fallosMotor = MOTORES.filter(
-    (m) => hechos.length > 0 && hechos.every((p) => p.resultados.find((r) => r.motor === m)?.error),
-  );
+  const circunferencia = 2 * Math.PI * 50;
+  const totalCitas = agg.grupos.reduce((n, g) => n + g.citas, 0);
+  const hayTipos = agg.grupos.some((g) => g.tipo !== 'otro' && g.tipo !== 'propia');
+  const maxRanking = Math.max(agg.totalValidas, 1);
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="p-6 space-y-6 max-w-[1168px]">
       <div className="flex items-center gap-3 print:hidden">
-        <Link href="/georadar" className="text-gray-400 hover:text-gray-600" aria-label="Volver a GEORadar">
+        <Link href="/georadar" className="text-gray-500 hover:text-gray-700" aria-label="Volver a GEORadar">
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <div className="p-2 bg-violet-100 rounded-lg">
@@ -216,7 +319,7 @@ export function RadiografiaExpress() {
         </div>
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Radiografía Express</h1>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-600">
             ¿Recomiendan ChatGPT, Gemini y Perplexity a este negocio, o a su competencia?
           </p>
         </div>
@@ -224,313 +327,472 @@ export function RadiografiaExpress() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       )}
 
       {/* ── Paso 1: datos del negocio ─────────────────────────────────────── */}
       {paso === 'formulario' && (
-        <Card>
-          <CardContent className="p-6">
-            <form onSubmit={preparar} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="rx-dominio">Dominio *</Label>
-                  <Input id="rx-dominio" required placeholder="tunegocio.es" value={dominio} onChange={(e) => setDominio(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="rx-sector">Sector</Label>
-                  <Input id="rx-sector" placeholder="Óptica" value={sector} onChange={(e) => setSector(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="rx-zona">Ciudad o zona</Label>
-                  <Input id="rx-zona" placeholder="Ourense" value={zona} onChange={(e) => setZona(e.target.value)} />
-                </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-6">
+          <form onSubmit={preparar} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-dominio">Dominio *</Label>
+                <Input id="rx-dominio" required placeholder="tunegocio.es" value={dominio} onChange={(e) => setDominio(e.target.value)} />
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-gray-400">Prueba:</span>
-                {SECTORES_EJEMPLO.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setSector(s)}
-                    className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs text-gray-600 hover:bg-gray-50"
-                  >
-                    {s}
-                  </button>
-                ))}
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-sector">Sector</Label>
+                <Input id="rx-sector" placeholder="Óptica" value={sector} onChange={(e) => setSector(e.target.value)} />
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="rx-c1">Competidor 1 (opcional)</Label>
-                  <Input id="rx-c1" placeholder="Nombre del negocio" value={competidor1} onChange={(e) => setCompetidor1(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="rx-c2">Competidor 2 (opcional)</Label>
-                  <Input id="rx-c2" placeholder="Nombre del negocio" value={competidor2} onChange={(e) => setCompetidor2(e.target.value)} />
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-zona">Ciudad o zona</Label>
+                <Input id="rx-zona" placeholder="Ourense" value={zona} onChange={(e) => setZona(e.target.value)} />
               </div>
-              <Button type="submit" disabled={cargando}>
-                {cargando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
-                {cargando ? 'Leyendo la web…' : 'Preparar preguntas'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-600">Prueba:</span>
+              {SECTORES_EJEMPLO.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSector(s)}
+                  className="rounded-full border border-gray-200 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-c1">Competidor 1 (opcional)</Label>
+                <Input id="rx-c1" placeholder="Nombre del negocio" value={competidor1} onChange={(e) => setCompetidor1(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-c2">Competidor 2 (opcional)</Label>
+                <Input id="rx-c2" placeholder="Nombre del negocio" value={competidor2} onChange={(e) => setCompetidor2(e.target.value)} />
+              </div>
+            </div>
+            <Button type="submit" disabled={cargando}>
+              {cargando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+              {cargando ? 'Leyendo la web…' : 'Preparar preguntas'}
+            </Button>
+          </form>
+        </div>
       )}
 
       {/* ── Paso 2: revisar marca y preguntas ─────────────────────────────── */}
       {paso === 'preguntas' && prep && (
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <div className="space-y-1.5 max-w-md">
-              <Label htmlFor="rx-marca">Marca detectada en {prep.dominio}</Label>
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="rx-marca">Nombre comercial detectado en {prep.dominio}</Label>
               <Input id="rx-marca" value={marca} onChange={(e) => setMarca(e.target.value)} />
-              {prep.descripcion && <p className="text-xs text-gray-500">{prep.descripcion}</p>}
-              {!prep.web_legible && (
-                <p className="text-xs text-amber-600 flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" /> No se pudo leer la web automáticamente. Revisa el nombre de la marca.
-                </p>
-              )}
             </div>
-            <div className="space-y-2">
-              <Label>Preguntas que se lanzarán a los tres asistentes</Label>
-              {preguntas.map((p, i) => (
+            <div className="space-y-1.5">
+              <Label htmlFor="rx-alias">Otros nombres del negocio (separados por comas)</Label>
+              <Input id="rx-alias" placeholder="Nombre del dominio, variantes…" value={aliasTexto} onChange={(e) => setAliasTexto(e.target.value)} />
+            </div>
+          </div>
+          {prep.descripcion && <p className="text-xs text-gray-600">{prep.descripcion}</p>}
+          {!prep.web_legible && (
+            <p className="text-xs text-amber-800 flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" /> No se pudo leer la web automáticamente. Revisa el nombre del negocio.
+            </p>
+          )}
+          <div className="space-y-2">
+            <Label>Preguntas que se lanzarán a los tres asistentes</Label>
+            {preguntas.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                {etiquetas[i] && (
+                  <span className="w-24 shrink-0 text-xs font-semibold uppercase tracking-wide text-violet-700">{etiquetas[i]}</span>
+                )}
                 <Input
-                  key={i}
                   value={p}
                   aria-label={`Pregunta ${i + 1}`}
                   onChange={(e) => setPreguntas((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
                 />
-              ))}
-              <p className="text-xs text-gray-400">Puedes editarlas. Deja una vacía para no lanzarla.</p>
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={lanzar}>Lanzar radiografía</Button>
-              <Button variant="outline" onClick={reiniciar}>Volver</Button>
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            ))}
+            <p className="text-xs text-gray-600">Puedes editarlas. Deja una vacía para no lanzarla.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={lanzar}>Lanzar radiografía</Button>
+            <Button variant="outline" onClick={reiniciar}>Volver</Button>
+          </div>
+        </div>
       )}
 
       {/* ── Paso 3: resultado ─────────────────────────────────────────────── */}
       {paso === 'resultado' && prep && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-lg font-semibold text-gray-900">{marca}</p>
-              <p className="text-sm text-gray-500">
-                {prep.dominio} · {new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}
+          <header className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-[13px] font-semibold uppercase tracking-wide text-violet-700">Radiografía Express</p>
+              <h2 className="text-[28px] font-bold leading-tight text-gray-900">{marca}</h2>
+              <p className="text-sm text-gray-600">
+                {prep.dominio}
+                {sector ? ` · ${sector}` : ''}
+                {zona ? ` · ${zona}` : ''} · {new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}
               </p>
             </div>
-            <div className="flex gap-2 print:hidden">
-              <Button variant="outline" size="sm" onClick={() => window.print()} disabled={enCurso}>
-                <Printer className="h-3.5 w-3.5" /> Imprimir o guardar PDF
+            <div className="flex flex-wrap gap-2 print:hidden">
+              <Button variant="outline" onClick={() => window.print()} disabled={enCurso}>
+                <Printer className="h-4 w-4" /> Guardar PDF
               </Button>
-              <Button variant="outline" size="sm" onClick={reiniciar} disabled={enCurso}>
-                <RotateCcw className="h-3.5 w-3.5" /> Nueva
+              <Button onClick={reiniciar} disabled={enCurso}>
+                <RotateCcw className="h-4 w-4" /> Nueva radiografía
               </Button>
             </div>
-          </div>
+          </header>
 
           {enCurso && (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
               <Loader2 className="h-4 w-4 animate-spin" />
               Preguntando a los asistentes… {estados.filter((e) => e !== 'pendiente').length} de {estados.length} preguntas
             </div>
           )}
 
+          {/* Veredicto */}
           {hechos.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <Card className="col-span-2">
-                <CardContent className="p-4">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide">Nota de visibilidad en IA</p>
-                  <p className={`text-4xl font-bold ${colorNota(notaGlobal)}`}>
-                    {notaGlobal}<span className="text-base font-normal text-gray-400">/100</span>
-                  </p>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Aparece en {apariciones} de {totalValidas} respuestas
-                  </p>
-                </CardContent>
-              </Card>
-              {MOTORES.map((m) => (
-                <Card key={m}>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-gray-400 uppercase tracking-wide">{MOTOR_LABEL[m]}</p>
-                    {notaPorMotor[m] === null ? (
-                      <p className="text-sm text-gray-400 mt-2">Sin datos</p>
+            <section aria-label="Veredicto" className="flex flex-wrap items-center gap-8 rounded-2xl border border-gray-200 bg-white p-7">
+              <div className="relative h-[168px] w-[168px] shrink-0">
+                <svg viewBox="0 0 120 120" role="img" aria-label={`Nota de visibilidad en IA: ${agg.notaGlobal} sobre 100`} className="h-full w-full -rotate-90">
+                  <circle cx="60" cy="60" r="50" fill="none" stroke="#ede9fe" strokeWidth="11" />
+                  <circle
+                    cx="60" cy="60" r="50" fill="none" stroke="#7c3aed" strokeWidth="11" strokeLinecap="round"
+                    strokeDasharray={circunferencia}
+                    strokeDashoffset={circunferencia - (agg.notaGlobal / 100) * circunferencia}
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-5xl font-bold leading-none text-gray-900">{agg.notaGlobal}</span>
+                  <span className="text-[13px] text-gray-600">de 100</span>
+                </div>
+              </div>
+              <div className="min-w-0 flex-[999_1_420px] space-y-3">
+                <p className="text-[13px] font-semibold uppercase tracking-wide text-gray-600">Veredicto</p>
+                <p className="text-[26px] font-bold leading-tight text-gray-900">{agg.titular}</p>
+                <p className="text-base leading-relaxed text-gray-700">{agg.subtitular}</p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-gray-100 px-3 py-1.5 text-[13px] font-medium text-gray-700">
+                    {hechos.length} {hechos.length === 1 ? 'pregunta' : 'preguntas'} de comprador
+                  </span>
+                  <span className="rounded-full bg-gray-100 px-3 py-1.5 text-[13px] font-medium text-gray-700">
+                    {MOTORES.length} asistentes con búsqueda web
+                  </span>
+                  {agg.sinObtener > 0 && !enCurso && (
+                    <span className="rounded-full bg-amber-100 px-3 py-1.5 text-[13px] font-medium text-amber-900">
+                      {agg.sinObtener} {agg.sinObtener === 1 ? 'respuesta' : 'respuestas'} sin obtener
+                    </span>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Nota por asistente */}
+          {hechos.length > 0 && (
+            <section aria-label="Nota por asistente" className="flex flex-wrap gap-4">
+              {agg.motores.map((m) => {
+                const sinDatos = m.nota === null;
+                const c = colorNota(m.nota ?? 0);
+                return (
+                  <div
+                    key={m.motor}
+                    className={`flex-1 basis-[300px] space-y-3 rounded-2xl bg-white p-5 ${sinDatos ? 'border border-dashed border-gray-400' : 'border border-gray-200'}`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <h3 className="text-base font-semibold text-gray-900">{MOTOR_LABEL[m.motor]}</h3>
+                      {sinDatos ? (
+                        <span className="text-base font-semibold text-gray-600">Sin datos</span>
+                      ) : (
+                        <span className={`text-[28px] font-bold leading-none ${c.texto}`}>{m.nota}</span>
+                      )}
+                    </div>
+                    {sinDatos ? (
+                      <div className="h-2.5 rounded-full" style={{ background: RAYADO }} />
                     ) : (
-                      <p className={`text-2xl font-bold ${colorNota(notaPorMotor[m] as number)}`}>{notaPorMotor[m]}</p>
+                      <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
+                        <div className="h-full rounded-full" style={{ width: `${Math.max(m.nota ?? 0, 2)}%`, background: c.barra }} />
+                      </div>
                     )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                    <p className="text-sm text-gray-700">
+                      {sinDatos
+                        ? enCurso
+                          ? 'Esperando respuesta…'
+                          : `${motivoFallo(m.error)} No cuenta en la nota.`
+                        : m.mencionadas === 0
+                          ? `No te menciona en ${m.respondidas === 1 ? 'la respuesta que dio' : `las ${m.respondidas} respuestas que dio`}.`
+                          : `Te recomienda en ${m.mencionadas} de ${m.respondidas} ${m.respondidas === 1 ? 'pregunta' : 'preguntas'}${m.primeras > 0 ? `, ${m.primeras === 1 ? 'una vez' : `${m.primeras} veces`} en primer lugar` : ''}.`}
+                      {!sinDatos && m.fallidas > 0 && !enCurso ? ` ${m.fallidas === 1 ? 'Otra no llegó' : `Otras ${m.fallidas} no llegaron`}.` : ''}
+                    </p>
+                  </div>
+                );
+              })}
+            </section>
           )}
-
-          {fallosMotor.length > 0 && !enCurso && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              {fallosMotor.map((m) => MOTOR_LABEL[m]).join(' y ')} no respondió. La nota se calcula solo con los asistentes que sí lo hicieron.
-              Revisa la clave de API o el modelo configurado.
-            </div>
-          )}
-
-          {(resumiendo || resumen) && (
-            <Card>
-              <CardContent className="p-5 space-y-3">
-                <p className="text-sm font-semibold text-gray-900">Diagnóstico y qué arreglar primero</p>
-                {resumiendo && <p className="text-sm text-gray-500 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Redactando el diagnóstico…</p>}
-                {resumen?.diagnostico && <p className="text-sm text-gray-700">{resumen.diagnostico}</p>}
-                {resumen && resumen.arreglos.length > 0 && (
-                  <ol className="space-y-2">
-                    {resumen.arreglos.map((a, i) => (
-                      <li key={i} className="flex gap-3 text-sm">
-                        <span className="text-gray-400 w-4 shrink-0">{i + 1}.</span>
-                        <div>
-                          <span className="font-medium text-gray-900">{a.titulo}</span>{' '}
-                          <Badge variant={a.prioridad === 'alta' ? 'destructive' : a.prioridad === 'media' ? 'warning' : 'secondary'}>
-                            {a.prioridad}
-                          </Badge>
-                          <p className="text-gray-600">{a.detalle}</p>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Base técnica: comprobaciones sin IA */}
-          <Card>
-            <CardContent className="p-5">
-              <p className="text-sm font-semibold text-gray-900 mb-3">Base técnica de la web</p>
-              <ul className="space-y-2 text-sm text-gray-700">
-                <li>
-                  <span className="font-medium">Acceso de los rastreadores de IA: </span>
-                  {prep.tecnico.bots_bloqueados === null && 'no hay robots.txt legible, así que no hay bloqueos declarados.'}
-                  {prep.tecnico.bots_bloqueados?.length === 0 && 'robots.txt no bloquea a ninguno.'}
-                  {!!prep.tecnico.bots_bloqueados?.length && (
-                    <span className="text-red-600">robots.txt bloquea a {prep.tecnico.bots_bloqueados.join(', ')}.</span>
-                  )}
-                </li>
-                <li>
-                  <span className="font-medium">Datos estructurados en la portada: </span>
-                  {prep.tecnico.schema_tipos.length ? prep.tecnico.schema_tipos.join(', ') : (
-                    <span className="text-amber-600">no se encontró ninguno.</span>
-                  )}
-                </li>
-                <li>
-                  <span className="font-medium">Archivo llms.txt: </span>
-                  {prep.tecnico.llms_txt ? 'publicado.' : 'no publicado.'}
-                </li>
-              </ul>
-            </CardContent>
-          </Card>
 
           {/* Matriz pregunta × asistente */}
-          <Card>
-            <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+          <section aria-label="Pregunta por pregunta" className="space-y-4 rounded-2xl border border-gray-200 bg-white p-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="text-xl font-bold text-gray-900">¿Te recomiendan cuando un cliente pregunta?</h2>
+              <div className="flex flex-wrap gap-3 text-[13px] text-gray-700">
+                <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-green-600 bg-green-200" />Te recomienda (puesto)</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-red-600 bg-red-200" />No apareces</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-gray-400" style={{ background: RAYADO }} />Sin respuesta</span>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] border-separate text-sm" style={{ borderSpacing: '0 8px' }}>
                 <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-400">
-                    <th className="px-4 py-3 font-medium">Pregunta</th>
-                    {MOTORES.map((m) => <th key={m} className="px-4 py-3 font-medium text-center">{MOTOR_LABEL[m]}</th>)}
+                  <tr>
+                    <th scope="col" className="pb-1 pr-3 text-left text-[13px] font-semibold text-gray-600">Pregunta</th>
+                    {MOTORES.map((m) => (
+                      <th key={m} scope="col" className="w-[120px] px-1 pb-1 text-[13px] font-semibold text-gray-600">{MOTOR_LABEL[m]}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {preguntas.map((p, i) => (
-                    <tr key={i} className="border-b last:border-0">
-                      <td className="px-4 py-3 text-gray-700">{p}</td>
-                      {MOTORES.map((m) => {
-                        const r = resultados[i]?.resultados.find((x) => x.motor === m);
-                        return (
-                          <td key={m} className="px-4 py-3 text-center">
-                            {estados[i] === 'pendiente' && <Loader2 className="h-4 w-4 animate-spin text-gray-300 inline" />}
-                            {estados[i] === 'error' && <span className="text-xs text-gray-400">error</span>}
-                            {r && r.error && <span className="text-xs text-gray-400" title={r.error}>sin respuesta</span>}
-                            {r && !r.error && r.marca_mencionada && (
-                              <span className="inline-flex items-center gap-1 text-green-600 font-medium">
-                                <Check className="h-4 w-4" />{r.posicion ? `${r.posicion}º` : 'sí'}
-                              </span>
-                            )}
-                            {r && !r.error && !r.marca_mencionada && <X className="h-4 w-4 text-red-400 inline" aria-label="No aparece" />}
-                          </td>
-                        );
-                      })}
+                    <tr key={i}>
+                      <th scope="row" className="pr-3 text-left font-normal text-gray-900">
+                        {etiquetas[i] && (
+                          <span className="block text-xs font-semibold uppercase tracking-wide text-violet-700">{etiquetas[i]}</span>
+                        )}
+                        {p}
+                      </th>
+                      {MOTORES.map((m) => (
+                        <td key={m} className="px-1">
+                          <CeldaMatriz estado={estados[i]} r={resultados[i]?.resultados.find((x) => x.motor === m)} />
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
           {hechos.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card>
-                <CardContent className="p-5">
-                  <p className="text-sm font-semibold text-gray-900 mb-3">A quién recomienda la IA</p>
-                  {ranking.length === 0 && <p className="text-sm text-gray-400">No se detectaron negocios concretos.</p>}
-                  <ul className="space-y-1.5">
-                    {ranking.map((n) => (
-                      <li key={n.nombre} className="flex items-center justify-between text-sm">
-                        <span className={n.propio ? 'font-semibold text-violet-700' : 'text-gray-700'}>
-                          {n.nombre}
-                          {n.propio && <Badge className="ml-2" variant="success">tú</Badge>}
-                          {!n.propio && n.indicado && <Badge className="ml-2" variant="secondary">competidor</Badge>}
+            <div className="flex flex-wrap gap-4">
+              {/* Competidores */}
+              <section aria-label="A quién recomienda la IA" className="min-w-0 flex-1 basis-[480px] space-y-4 rounded-2xl border border-gray-200 bg-white p-6">
+                <div className="space-y-1">
+                  <h2 className="text-xl font-bold text-gray-900">A quién recomienda la IA</h2>
+                  <p className="text-sm text-gray-600">Respuestas en las que aparece cada negocio, de {agg.totalValidas}.</p>
+                </div>
+                {agg.ranking.length === 0 && <p className="text-sm text-gray-600">No se detectaron negocios concretos.</p>}
+                <div className="space-y-3">
+                  {agg.ranking.map((n) => (
+                    <div key={n.nombre} className={`space-y-1 ${n.propio ? '-mx-3 rounded-[10px] bg-violet-50 px-3 py-2.5' : ''}`}>
+                      <div className={`flex justify-between gap-2 text-sm ${n.propio ? 'font-bold text-violet-900' : 'text-gray-900'}`}>
+                        <span>
+                          {n.nombre}{' '}
+                          {n.propio && <span className="rounded-full bg-violet-700 px-2 py-0.5 text-xs font-semibold text-white">Tú</span>}
+                          {!n.propio && n.indicado && (
+                            <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-900">Competidor indicado</span>
+                          )}
                         </span>
-                        <span className="text-gray-400">{n.veces} de {totalValidas}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-5">
-                  <p className="text-sm font-semibold text-gray-900 mb-3">De dónde saca la información</p>
-                  {fuentesTop.length === 0 && <p className="text-sm text-gray-400">Los asistentes no citaron fuentes.</p>}
-                  <ul className="space-y-1.5">
-                    {fuentesTop.map(([d, veces]) => (
-                      <li key={d} className="flex items-center justify-between text-sm">
-                        <span className={d.includes(prep.dominio) ? 'font-semibold text-violet-700' : 'text-gray-700'}>{d}</span>
-                        <span className="text-gray-400">{veces}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {/* Respuestas literales */}
-          {hechos.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-gray-900">Respuestas literales</p>
-              {hechos.map((p) => (
-                <details key={p.pregunta} className="rounded-md border border-gray-200 bg-white">
-                  <summary className="cursor-pointer px-4 py-3 text-sm text-gray-700">{p.pregunta}</summary>
-                  <div className="border-t px-4 py-3 space-y-4">
-                    {p.resultados.map((r) => (
-                      <div key={r.motor}>
-                        <p className="text-xs font-medium text-gray-500 mb-1">
-                          {MOTOR_LABEL[r.motor]}
-                          {r.modelo && ` · ${r.modelo}`} · {new Date(p.fecha).toLocaleString('es-ES')}
-                        </p>
-                        {r.error ? (
-                          <p className="text-xs text-red-500">No respondió: {r.error}</p>
-                        ) : (
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{r.respuesta}</p>
-                        )}
+                        <span className="font-semibold">{n.veces}</span>
                       </div>
+                      <div className={`h-3.5 rounded-md ${n.propio ? 'bg-violet-200' : 'bg-gray-100'}`}>
+                        <div
+                          className="h-full rounded-md"
+                          style={{
+                            width: `${(n.veces / maxRanking) * 100}%`,
+                            background: n.propio ? '#7c3aed' : n.indicado ? '#c2410c' : '#6b7280',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {agg.apariciones === 0 && agg.ranking.length > 0 && (
+                  <p className="text-[13px] text-gray-600">Tu negocio no aparece en ninguna respuesta, por eso no está en la lista.</p>
+                )}
+              </section>
+
+              {/* Fuentes */}
+              <section aria-label="De dónde saca la información" className="min-w-0 flex-1 basis-[480px] space-y-4 rounded-2xl border border-gray-200 bg-white p-6">
+                <div className="space-y-1">
+                  <h2 className="text-xl font-bold text-gray-900">De dónde saca la información</h2>
+                  <p className="text-sm text-gray-600">
+                    {hayTipos ? 'Veces que los asistentes citan cada tipo de fuente.' : 'Webs que más citan los asistentes.'}
+                  </p>
+                </div>
+                {agg.fuentes.length === 0 && <p className="text-sm text-gray-600">Los asistentes no citaron fuentes.</p>}
+                {hayTipos ? (
+                  <>
+                    <div
+                      className="flex h-9 overflow-hidden rounded-[10px]"
+                      role="img"
+                      aria-label={agg.grupos.map((g) => `${TIPO_FUENTE_LABEL[g.tipo]}: ${g.citas} citas`).join(', ')}
+                    >
+                      {agg.grupos.map((g, i) => (
+                        <div
+                          key={g.tipo}
+                          style={{ width: `${(g.citas / Math.max(totalCitas, 1)) * 100}%`, background: COLOR_TIPO[g.tipo], borderLeft: i ? '2px solid #fff' : undefined }}
+                        />
+                      ))}
+                    </div>
+                    <div className="space-y-3">
+                      {agg.grupos.map((g) => (
+                        <div key={g.tipo} className="flex items-start gap-3">
+                          <span className="mt-[3px] h-3.5 w-3.5 shrink-0 rounded" style={{ background: COLOR_TIPO[g.tipo] }} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-gray-900">{TIPO_FUENTE_LABEL[g.tipo]} · {g.citas}</p>
+                            <p className="break-words text-[13px] text-gray-600">{g.dominios.slice(0, 6).map((d) => d.dominio).join(', ')}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {agg.fuentes.slice(0, 10).map((f) => (
+                      <li key={f.dominio} className="flex items-center justify-between text-sm">
+                        <span className={f.dominio.includes(prep.dominio) ? 'font-semibold text-violet-800' : 'text-gray-800'}>{f.dominio}</span>
+                        <span className="text-gray-600">{f.citas}</span>
+                      </li>
                     ))}
-                  </div>
-                </details>
-              ))}
+                  </ul>
+                )}
+              </section>
             </div>
           )}
 
-          <p className="text-xs text-gray-400">
-            Es una foto del momento: las respuestas de los asistentes cambian de una vez a otra y lo que devuelve la API
-            se parece a lo que ve un usuario en la app, pero no es idéntico. La nota usa la misma fórmula que los informes GEORadar.
+          {/* Qué arreglar primero: solo si hay contenido o se está generando */}
+          {(resumiendo || (resumen && (resumen.arreglos.length > 0 || resumen.diagnostico))) && (
+            <section aria-label="Qué arreglar primero" className="space-y-4">
+              <h2 className="text-xl font-bold text-gray-900">Qué arreglar primero</h2>
+              {resumiendo && (
+                <p className="flex items-center gap-2 text-sm text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Redactando el diagnóstico…
+                </p>
+              )}
+              {!resumiendo && resumen?.diagnostico && <p className="text-base leading-relaxed text-gray-700">{resumen.diagnostico}</p>}
+              {!resumiendo && resumen && resumen.arreglos.length > 0 && (
+                <div className="flex flex-wrap gap-4">
+                  {resumen.arreglos.map((a, i) => (
+                    <article key={i} className="flex-1 basis-[300px] space-y-2.5 rounded-2xl border border-gray-200 bg-white p-5">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-[15px] font-bold text-white">{i + 1}</span>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                            a.prioridad === 'alta' ? 'bg-red-100 text-red-800' : a.prioridad === 'media' ? 'bg-amber-100 text-amber-900' : 'bg-gray-100 text-gray-700'
+                          }`}
+                        >
+                          Prioridad {a.prioridad}
+                        </span>
+                      </div>
+                      <h3 className="text-[17px] font-semibold leading-snug text-gray-900">{a.titulo}</h3>
+                      <p className="text-sm leading-relaxed text-gray-700">{a.detalle}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Base técnica */}
+          <section aria-label="Base técnica de la web" className="space-y-4 rounded-2xl border border-gray-200 bg-white p-6">
+            <h2 className="text-xl font-bold text-gray-900">Base técnica de la web</h2>
+            {!prep.web_legible && (
+              <p className="text-sm text-amber-800">No se pudo leer la web automáticamente, así que estas comprobaciones pueden no ser fiables.</p>
+            )}
+            <div className="flex flex-wrap gap-4">
+              {(() => {
+                const bloqueados = prep.tecnico.bots_bloqueados;
+                const hayBloqueo = !!bloqueados?.length;
+                const haySchema = prep.tecnico.schema_tipos.length > 0;
+                const filas = [
+                  {
+                    ok: !hayBloqueo,
+                    neutro: false,
+                    titulo: 'Rastreadores de IA',
+                    texto: hayBloqueo
+                      ? `robots.txt bloquea a ${bloqueados!.join(', ')}.`
+                      : 'Ningún bloqueo declarado: pueden leer la web.',
+                  },
+                  {
+                    ok: haySchema,
+                    neutro: false,
+                    titulo: 'Datos estructurados',
+                    texto: haySchema ? prep.tecnico.schema_tipos.slice(0, 6).join(', ') : 'No se encontró ninguno en la portada.',
+                  },
+                  {
+                    ok: prep.tecnico.llms_txt,
+                    neutro: !prep.tecnico.llms_txt,
+                    titulo: 'Archivo llms.txt',
+                    texto: prep.tecnico.llms_txt ? 'Publicado.' : 'No publicado. Es opcional.',
+                  },
+                ];
+                return filas.map((f) => (
+                  <div key={f.titulo} className="flex flex-1 basis-[280px] items-start gap-3">
+                    <span
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${f.neutro ? 'bg-gray-100' : f.ok ? 'bg-green-100' : 'bg-red-100'}`}
+                    >
+                      {f.neutro ? (
+                        <Minus className="h-5 w-5 text-gray-600" aria-hidden="true" />
+                      ) : f.ok ? (
+                        <Check className="h-5 w-5 text-green-800" aria-hidden="true" />
+                      ) : (
+                        <X className="h-5 w-5 text-red-800" aria-hidden="true" />
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-semibold text-gray-900">{f.titulo}</p>
+                      <p className="break-words text-sm text-gray-700">{f.texto}</p>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </section>
+
+          {/* Respuestas */}
+          {hechos.length > 0 && (
+            <section aria-label="Qué dijeron exactamente" className="space-y-3">
+              <h2 className="text-xl font-bold text-gray-900">Qué dijeron exactamente</h2>
+              {resultados.map((p, i) => {
+                if (!p) return null;
+                const ok = p.resultados.filter((r) => !r.error);
+                const fallidos = p.resultados.filter((r) => r.error);
+                return (
+                  <details key={p.pregunta} open={i === 0} className="rounded-2xl border border-gray-200 bg-white px-5">
+                    <summary className="flex min-h-[56px] cursor-pointer items-center gap-3 text-[15px] font-semibold text-gray-900">
+                      {p.pregunta}
+                    </summary>
+                    <div className="flex flex-wrap gap-4 pb-5">
+                      {ok.map((r) => (
+                        <RespuestaMotorCard key={r.motor} r={r} fecha={p.fecha} />
+                      ))}
+                      {fallidos.length > 0 && (
+                        <div className="min-w-0 flex-1 basis-[420px] space-y-2.5 rounded-xl border border-dashed border-gray-400 p-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-bold text-gray-900">{fallidos.map((r) => MOTOR_LABEL[r.motor]).join(' y ')}</span>
+                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700">Sin respuesta</span>
+                          </div>
+                          {fallidos.map((r) => (
+                            <p key={r.motor} className="text-sm leading-relaxed text-gray-700">
+                              {MOTOR_LABEL[r.motor]}: {motivoFallo(r.error || null)}
+                            </p>
+                          ))}
+                          <Button variant="outline" size="sm" onClick={() => reintentar(i)} disabled={reintentando !== null || enCurso} className="print:hidden">
+                            {reintentando === i && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                            Reintentar {fallidos.length === 1 ? MOTOR_LABEL[fallidos[0].motor] : 'estos'}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                );
+              })}
+            </section>
+          )}
+
+          <p className="text-[13px] leading-relaxed text-gray-600">
+            Es una foto del momento: las respuestas cambian de una vez a otra, y lo que devuelve la API se parece a lo que ve un
+            usuario en la app sin ser idéntico. La nota usa la misma fórmula que los informes GEORadar.
           </p>
         </div>
       )}

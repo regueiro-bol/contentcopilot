@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { analizarPregunta } from '@/lib/georadar/radiografia/analizar';
 import { normalizarDominio } from '@/lib/georadar/radiografia/preparar';
+import { MOTORES, type Motor } from '@/lib/georadar/radiografia/types';
 
 // Tres motores con búsqueda web en paralelo + análisis. Suele tardar 20-60 s.
-export const maxDuration = 180;
+export const maxDuration = 240;
 
 /**
  * POST /api/georadar/radiografia/pregunta
@@ -25,10 +26,26 @@ export async function POST(req: NextRequest) {
     .filter(Boolean)
     .slice(0, 3);
 
+  const alias = (Array.isArray(body.alias) ? body.alias : [])
+    .map((c: unknown) => String(c).trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 5);
+  // Opcional: reintentar solo algunos asistentes.
+  const motores = (Array.isArray(body.motores) ? body.motores : []).filter((m: unknown): m is Motor =>
+    MOTORES.includes(m as Motor),
+  );
+
   if (!dominio || !marca || pregunta.length < 8) {
     return NextResponse.json({ error: 'dominio, marca y pregunta son obligatorios' }, { status: 400 });
   }
 
-  const resultado = await analizarPregunta(pregunta, marca, dominio, competidores);
+  const resultado = await analizarPregunta(
+    pregunta,
+    marca,
+    alias,
+    dominio,
+    competidores,
+    motores.length ? motores : MOTORES,
+  );
   return NextResponse.json(resultado);
 }

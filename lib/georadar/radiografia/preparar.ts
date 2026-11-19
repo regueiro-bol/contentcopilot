@@ -111,8 +111,9 @@ async function leerWeb(dominio: string): Promise<{ portada: string | null; tecni
 
 interface PreparacionIA {
   marca?: string;
+  alias?: string[];
   descripcion?: string;
-  preguntas?: string[];
+  preguntas?: Array<{ etiqueta?: string; pregunta?: string } | string>;
 }
 
 export async function prepararRadiografia(
@@ -135,31 +136,45 @@ ${portada || '(no se pudo leer la web)'}
 ---
 
 Tarea:
-1. "marca": el nombre comercial del negocio tal como lo diría un cliente (sin "S.L.", sin eslóganes).
-2. "descripcion": una frase corta sobre qué vende y dónde.
-3. "preguntas": exactamente 5 preguntas que un cliente potencial haría a ChatGPT, Gemini o Perplexity
-   ANTES de conocer el negocio, cuando busca a quién comprar o contratar.
-   - NO menciones la marca ni el dominio en ninguna pregunta.
-   - Tienen que pedir una recomendación de negocios concretos ("mejor...", "dónde...", "qué ... recomiendas").
-   - Si hay zona, inclúyela en al menos 4 de las 5.
-   - Varía el ángulo: genérica del sector, por servicio concreto, por necesidad o problema, por precio/calidad, comparativa.
-   - En español, naturales, como las escribe una persona.
+1. "marca": el nombre comercial con el que un cliente conoce el negocio (sin "S.L.", sin eslóganes).
+   Si el nombre comercial y el dominio no coinciden, usa el nombre comercial que aparece en la web.
+2. "alias": otros nombres con los que también se le conoce (el nombre ligado al dominio, variantes de escritura). Máximo 3; lista vacía si no hay.
+3. "descripcion": una frase corta sobre qué vende y dónde.
+4. "preguntas": exactamente 5 preguntas que un cliente potencial haría a ChatGPT, Gemini o Perplexity
+   ANTES de conocer el negocio, cuando busca a quién comprar o contratar. Una por cada ángulo, en este orden:
+   - "General": quién es el mejor del sector en la zona.
+   - "Servicio": dónde conseguir el servicio o producto principal.
+   - "Urgencia": una necesidad o problema concreto que resolver ya.
+   - "Precio": relación calidad-precio o precios claros.
+   - "Confianza": atención, trato, opiniones o garantías.
+   Reglas: NO menciones la marca ni el dominio. Tienen que pedir una recomendación de negocios concretos.
+   Si hay zona, inclúyela en todas. En español, naturales, como las escribe una persona.
 
-Devuelve SOLO un objeto JSON: {"marca": "...", "descripcion": "...", "preguntas": ["...", "...", "...", "...", "..."]}`;
+Devuelve SOLO un objeto JSON:
+{"marca": "...", "alias": ["..."], "descripcion": "...", "preguntas": [{"etiqueta": "General", "pregunta": "..."}, {"etiqueta": "Servicio", "pregunta": "..."}, {"etiqueta": "Urgencia", "pregunta": "..."}, {"etiqueta": "Precio", "pregunta": "..."}, {"etiqueta": "Confianza", "pregunta": "..."}]}`;
 
-  const ia = await claudeJson<PreparacionIA>(prompt, 800);
+  const ia = await claudeJson<PreparacionIA>(prompt, 1000);
 
-  const preguntas = (ia?.preguntas || [])
-    .filter((p): p is string => typeof p === 'string' && p.trim().length > 8)
-    .map((p) => p.trim())
+  const pares = (ia?.preguntas || [])
+    .map((p) => (typeof p === 'string' ? { etiqueta: '', pregunta: p } : { etiqueta: p?.etiqueta || '', pregunta: p?.pregunta || '' }))
+    .filter((p) => typeof p.pregunta === 'string' && p.pregunta.trim().length > 8)
     .slice(0, 5);
+
+  const marca = (ia?.marca || '').trim() || marcaDesdeDominio(dominio);
+  const alias = (Array.isArray(ia?.alias) ? ia!.alias! : [])
+    .filter((a): a is string => typeof a === 'string' && a.trim().length > 1)
+    .map((a) => a.trim().slice(0, 80))
+    .filter((a) => a.toLowerCase() !== marca.toLowerCase())
+    .slice(0, 3);
 
   return {
     dominio,
-    marca: (ia?.marca || '').trim() || marcaDesdeDominio(dominio),
+    marca,
+    alias,
     descripcion: (ia?.descripcion || '').trim(),
     web_legible: portada !== null,
     tecnico,
-    preguntas,
+    preguntas: pares.map((p) => p.pregunta.trim()),
+    etiquetas: pares.map((p) => String(p.etiqueta).trim().slice(0, 24)),
   };
 }

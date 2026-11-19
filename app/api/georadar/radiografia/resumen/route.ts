@@ -3,7 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { resumirRadiografia } from '@/lib/georadar/radiografia/analizar';
 import { normalizarDominio } from '@/lib/georadar/radiografia/preparar';
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 /**
  * POST /api/georadar/radiografia/resumen
@@ -28,6 +28,10 @@ export async function POST(req: NextRequest) {
     String(body.descripcion || '').slice(0, 300),
     body.web_legible !== false,
     preguntas,
+    (Array.isArray(body.dominios) ? body.dominios : [])
+      .map((d: unknown) => String(d).toLowerCase().slice(0, 100))
+      .filter(Boolean)
+      .slice(0, 25),
   );
   return NextResponse.json(resumen);
 }
