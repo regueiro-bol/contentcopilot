@@ -13,6 +13,7 @@
  * de peticiones (429) se reintentan con espera.
  */
 
+import { CARGOS, costeTokens, redondear } from './precios';
 import { SIN_RESUMEN_IA } from './types';
 import type { Fuente, Motor, RespuestaMotor } from './types';
 
@@ -61,7 +62,7 @@ function dedupe(fuentes: Fuente[]): Fuente[] {
   });
 }
 
-type Parcial = Pick<RespuestaMotor, 'modelo' | 'respuesta' | 'fuentes' | 'tokens_entrada' | 'tokens_salida'>;
+type Parcial = Pick<RespuestaMotor, 'modelo' | 'respuesta' | 'fuentes' | 'tokens_entrada' | 'tokens_salida' | 'coste_usd'>;
 
 // ─── ChatGPT ────────────────────────────────────────────────────────────────
 
@@ -90,6 +91,7 @@ async function chatgptResponses(pregunta: string, modelo: string): Promise<Parci
     fuentes: dedupe(fuentes),
     tokens_entrada: data.usage?.input_tokens || 0,
     tokens_salida: data.usage?.output_tokens || 0,
+    coste_usd: costeTokens(modelo, data.usage?.input_tokens || 0, data.usage?.output_tokens || 0) + CARGOS.openai_busqueda,
   };
 }
 
@@ -109,6 +111,9 @@ async function chatgptChatSearch(pregunta: string): Promise<Parcial> {
     fuentes: dedupe(fuentes),
     tokens_entrada: data.usage?.prompt_tokens || 0,
     tokens_salida: data.usage?.completion_tokens || 0,
+    coste_usd:
+      costeTokens(OPENAI_CHAT_SEARCH, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0) +
+      CARGOS.openai_busqueda,
   };
 }
 
@@ -142,6 +147,9 @@ async function geminiCon(pregunta: string, modelo: string): Promise<Parcial> {
     fuentes: dedupe(fuentes),
     tokens_entrada: data.usageMetadata?.promptTokenCount || 0,
     tokens_salida: data.usageMetadata?.candidatesTokenCount || 0,
+    coste_usd:
+      costeTokens(modelo, data.usageMetadata?.promptTokenCount || 0, data.usageMetadata?.candidatesTokenCount || 0) +
+      (cand?.groundingMetadata?.webSearchQueries?.length || 1) * CARGOS.gemini_busqueda,
   };
 }
 
@@ -175,6 +183,12 @@ async function perplexityCon(pregunta: string, modelo: string): Promise<Parcial>
     fuentes: dedupe(fuentes),
     tokens_entrada: data.usage?.prompt_tokens || 0,
     tokens_salida: data.usage?.completion_tokens || 0,
+    // Perplexity suele devolver el coste real de la llamada; si no, se estima.
+    coste_usd:
+      typeof data.usage?.cost?.total_cost === 'number'
+        ? data.usage.cost.total_cost
+        : costeTokens(modelo, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0) +
+          CARGOS.perplexity_peticion,
   };
 }
 
@@ -203,7 +217,8 @@ async function claudeCon(pregunta: string, modelo: string): Promise<Parcial> {
       model: modelo,
       max_tokens: 2000,
       messages: [{ role: 'user', content: pregunta }],
-      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+      // Una sola búsqueda por pregunta: es lo que más encarece la consulta.
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
     },
   );
   let texto = '';
@@ -222,6 +237,9 @@ async function claudeCon(pregunta: string, modelo: string): Promise<Parcial> {
     fuentes: dedupe(fuentes),
     tokens_entrada: data.usage?.input_tokens || 0,
     tokens_salida: data.usage?.output_tokens || 0,
+    coste_usd:
+      costeTokens(modelo, data.usage?.input_tokens || 0, data.usage?.output_tokens || 0) +
+      (data.usage?.server_tool_use?.web_search_requests || 0) * CARGOS.claude_busqueda,
   };
 }
 
@@ -242,6 +260,13 @@ async function claude(pregunta: string): Promise<Parcial> {
 // Google no ofrece API para sus respuestas de IA; DataForSEO las captura del
 // buscador. Ubicación España (2724), idioma español.
 
+/** Google respondió pero sin resumen de IA: la consulta se cobra igual. */
+class SinResumenIA extends Error {
+  constructor(mensaje: string, public coste_usd: number) {
+    super(mensaje);
+  }
+}
+
 const DFS_BASE = 'https://api.dataforseo.com/v3';
 const DFS_LOCATION = Number(process.env.RADIOGRAFIA_GOOGLE_LOCATION_CODE) || 2724;
 
@@ -255,7 +280,10 @@ async function dataforseo(ruta: string, cuerpo: Record<string, unknown>) {
   if (!tarea || tarea.status_code !== 20000) {
     throw new Error(`DataForSEO ${tarea?.status_code || data.status_code}: ${tarea?.status_message || data.status_message || 'sin detalle'}`);
   }
-  return (tarea.result?.[0]?.items || []) as any[];
+  return {
+    items: (tarea.result?.[0]?.items || []) as any[],
+    coste: typeof tarea.cost === 'number' ? (tarea.cost as number) : null,
+  };
 }
 
 /** Texto y fuentes de un elemento ai_overview de DataForSEO (la forma varía según el caso) */
@@ -279,7 +307,7 @@ function leerResumenIA(item: any): { texto: string; fuentes: Fuente[] } {
 }
 
 async function googleIA(pregunta: string): Promise<Parcial> {
-  const items = await dataforseo('/serp/google/ai_mode/live/advanced', {
+  const { items, coste } = await dataforseo('/serp/google/ai_mode/live/advanced', {
     keyword: pregunta,
     location_code: DFS_LOCATION,
     language_code: 'es',
@@ -287,12 +315,13 @@ async function googleIA(pregunta: string): Promise<Parcial> {
   });
   const item = items.find((i) => i.type === 'ai_overview');
   const { texto, fuentes } = item ? leerResumenIA(item) : { texto: '', fuentes: [] };
-  if (!texto) throw new Error(`${SIN_RESUMEN_IA} respuesta del Modo IA para esta búsqueda`);
-  return { modelo: 'Modo IA', respuesta: texto, fuentes, tokens_entrada: 0, tokens_salida: 0 };
+  const coste_usd = coste ?? CARGOS.google_modo_ia;
+  if (!texto) throw new SinResumenIA(`${SIN_RESUMEN_IA} respuesta del Modo IA para esta búsqueda`, coste_usd);
+  return { modelo: 'Modo IA', respuesta: texto, fuentes, tokens_entrada: 0, tokens_salida: 0, coste_usd };
 }
 
 async function googleAIO(pregunta: string): Promise<Parcial> {
-  const items = await dataforseo('/serp/google/organic/live/advanced', {
+  const { items, coste } = await dataforseo('/serp/google/organic/live/advanced', {
     keyword: pregunta,
     location_code: DFS_LOCATION,
     language_code: 'es',
@@ -302,8 +331,9 @@ async function googleAIO(pregunta: string): Promise<Parcial> {
   });
   const item = items.find((i) => i.type === 'ai_overview');
   const { texto, fuentes } = item ? leerResumenIA(item) : { texto: '', fuentes: [] };
-  if (!texto) throw new Error(`${SIN_RESUMEN_IA} un resumen de IA en los resultados de esta búsqueda`);
-  return { modelo: 'AI Overview', respuesta: texto, fuentes, tokens_entrada: 0, tokens_salida: 0 };
+  const coste_usd = coste ?? CARGOS.google_aio;
+  if (!texto) throw new SinResumenIA(`${SIN_RESUMEN_IA} un resumen de IA en los resultados de esta búsqueda`, coste_usd);
+  return { modelo: 'AI Overview', respuesta: texto, fuentes, tokens_entrada: 0, tokens_salida: 0, coste_usd };
 }
 
 // ─── Entrada común ──────────────────────────────────────────────────────────
@@ -323,7 +353,7 @@ export async function preguntarMotor(motor: Motor, pregunta: string): Promise<Re
   try {
     const r = await CONECTORES[motor](pregunta);
     if (!r.respuesta.trim()) throw new Error('Respuesta vacía');
-    return { motor, ...r, duracion_ms: Date.now() - inicio };
+    return { motor, ...r, coste_usd: redondear(r.coste_usd), duracion_ms: Date.now() - inicio };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!msg.startsWith(SIN_RESUMEN_IA)) {
@@ -337,6 +367,7 @@ export async function preguntarMotor(motor: Motor, pregunta: string): Promise<Re
       tokens_entrada: 0,
       tokens_salida: 0,
       duracion_ms: Date.now() - inicio,
+      coste_usd: e instanceof SinResumenIA ? redondear(e.coste_usd) : 0,
       error: msg.substring(0, 300),
     };
   }

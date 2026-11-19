@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { normalizarDominio, prepararRadiografia } from '@/lib/georadar/radiografia/preparar';
+import { guardarRegistroCoste } from '@/lib/costes';
 
 export const maxDuration = 60;
 
@@ -22,6 +23,14 @@ export async function POST(req: NextRequest) {
   const zona = String(body.zona || '').slice(0, 120);
 
   const preparacion = await prepararRadiografia(dominio, sector, zona);
+  if (preparacion.coste_usd > 0) {
+    await guardarRegistroCoste({
+      tipo_operacion: 'radiografia_express',
+      agente: 'radiografia_preparar',
+      coste_usd: preparacion.coste_usd,
+      metadatos: { dominio },
+    });
+  }
   if (preparacion.preguntas.length === 0) {
     return NextResponse.json(
       { error: 'No se pudieron generar las preguntas. Indica el sector y la zona y vuelve a intentarlo.' },

@@ -35,6 +35,8 @@ export interface RespuestaMotor {
   tokens_entrada: number;
   tokens_salida: number;
   duracion_ms: number;
+  /** Coste estimado de la consulta al asistente, en USD */
+  coste_usd: number;
   error?: string;
 }
 
@@ -57,6 +59,8 @@ export interface ResultadoMotor extends RespuestaMotor {
   /** 1-2 frases: qué dice la respuesta y cómo queda la marca */
   resumen: string;
   score: number;
+  /** Coste estimado de analizar esta respuesta, en USD */
+  coste_analisis_usd: number;
 }
 
 export interface ResultadoPregunta {
@@ -89,6 +93,8 @@ export interface Preparacion {
   preguntas: string[];
   /** Ángulo de cada pregunta, en el mismo orden: general, servicio, urgencia, precio, comparativa... */
   etiquetas: string[];
+  /** Coste estimado de preparar la radiografía, en USD */
+  coste_usd: number;
 }
 
 export interface Arreglo {
@@ -112,4 +118,6 @@ export interface Resumen {
   arreglos: Arreglo[];
   /** Tipo de cada dominio citado, para agrupar las fuentes */
   tipos_fuente: Record<string, TipoFuente>;
+  /** Coste estimado del diagnóstico, en USD */
+  coste_usd: number;
 }

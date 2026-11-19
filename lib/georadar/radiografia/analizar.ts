@@ -1,5 +1,6 @@
 import { calculateScore } from '../scorer';
-import { claudeJson } from './claude';
+import { claudeJson, MODELOS_ANALISIS } from './claude';
+import { redondear } from './precios';
 import { preguntarMotor } from './motores';
 import { MOTORES } from './types';
 import type {
@@ -45,6 +46,7 @@ function sinAnalisis(r: RespuestaMotor, dominio: string): ResultadoMotor {
     negocios: [],
     resumen: '',
     score: 0,
+    coste_analisis_usd: 0,
   };
 }
 
@@ -88,8 +90,8 @@ Reglas para "negocios":
 - Incluye a la propia marca si aparece, con "es_marca": true.
 - "es_competidor_indicado" es true SOLO si el negocio es uno de los competidores indicados por el usuario.`;
 
-  const ia = await claudeJson<AnalisisIA>(prompt, 1100);
-  if (!ia) return sinAnalisis(r, dominio);
+  const { json: ia, coste_usd: costeAnalisis } = await claudeJson<AnalisisIA>(prompt, 1100, MODELOS_ANALISIS);
+  if (!ia) return { ...sinAnalisis(r, dominio), coste_analisis_usd: costeAnalisis };
 
   const mencionada = ia.marca_mencionada === true;
   const posicion = mencionada && typeof ia.posicion === 'number' && ia.posicion > 0 ? Math.round(ia.posicion) : null;
@@ -130,6 +132,7 @@ Reglas para "negocios":
     negocios,
     resumen: typeof ia.resumen === 'string' ? ia.resumen.trim().slice(0, 500) : '',
     score,
+    coste_analisis_usd: costeAnalisis,
   };
 }
 
@@ -221,7 +224,7 @@ Reglas:
 - No prometas posiciones ni resultados. No inventes datos que no estén arriba.
 - Español de España, tono directo.`;
 
-  const ia = await claudeJson<ResumenIA>(prompt, 2500);
+  const { json: ia, coste_usd } = await claudeJson<ResumenIA>(prompt, 2500);
   if (!ia) console.error('[Radiografía] El resumen no devolvió un JSON interpretable');
 
   const arreglos = (ia?.arreglos || [])
@@ -238,5 +241,5 @@ Reglas:
     if (TIPOS_FUENTE.includes(t as TipoFuente)) tipos_fuente[d.toLowerCase()] = t as TipoFuente;
   }
 
-  return { diagnostico: (ia?.diagnostico || '').trim(), arreglos, tipos_fuente };
+  return { diagnostico: (ia?.diagnostico || '').trim(), arreglos, tipos_fuente, coste_usd: redondear(coste_usd) };
 }
