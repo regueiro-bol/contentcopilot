@@ -321,14 +321,17 @@ async function googleIA(pregunta: string): Promise<Parcial> {
 }
 
 async function googleAIO(pregunta: string): Promise<Parcial> {
-  const { items, coste } = await dataforseo('/serp/google/organic/live/advanced', {
-    keyword: pregunta,
-    location_code: DFS_LOCATION,
-    language_code: 'es',
-    device: 'desktop',
-    depth: 10,
-    load_async_ai_overview: true,
-  });
+  const base = { keyword: pregunta, location_code: DFS_LOCATION, language_code: 'es', device: 'desktop', depth: 10 };
+  let items: any[];
+  let coste: number | null;
+  try {
+    // Con carga del resumen de IA cuando Google lo muestra en diferido.
+    ({ items, coste } = await dataforseo('/serp/google/organic/live/advanced', { ...base, load_async_ai_overview: true }));
+  } catch (e) {
+    // DataForSEO devolvía "Internal SE Server Error" con esa opción: se reintenta sin ella.
+    console.warn(`[Radiografía google_aio] Reintento sin carga diferida: ${e instanceof Error ? e.message : e}`);
+    ({ items, coste } = await dataforseo('/serp/google/organic/live/advanced', base));
+  }
   const item = items.find((i) => i.type === 'ai_overview');
   const { texto, fuentes } = item ? leerResumenIA(item) : { texto: '', fuentes: [] };
   const coste_usd = coste ?? CARGOS.google_aio;
