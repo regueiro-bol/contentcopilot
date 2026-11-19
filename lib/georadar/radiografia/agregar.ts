@@ -3,7 +3,7 @@
  * Funciones puras (sin red ni estado): se usan en el cliente.
  */
 
-import { MOTORES, MOTOR_LABEL } from './types';
+import { MOTORES, MOTOR_LABEL, SIN_RESUMEN_IA } from './types';
 import type { Motor, ResultadoMotor, ResultadoPregunta, TipoFuente } from './types';
 
 export interface DatosMotor {
@@ -13,7 +13,10 @@ export interface DatosMotor {
   respondidas: number;
   mencionadas: number;
   primeras: number;
+  /** Fallos reales (sin saldo, saturación, caída) */
   fallidas: number;
+  /** Búsquedas en las que Google respondió pero no mostró resumen de IA (no es un fallo) */
+  sinResumen: number;
   error: string | null;
 }
 
@@ -109,14 +112,16 @@ export function agregar(
   const motores: DatosMotor[] = MOTORES.map((motor) => {
     const del = todos.filter((r) => r.motor === motor);
     const ok = del.filter((r) => !r.error);
-    const fallo = del.find((r) => r.error);
+    const sinResumen = del.filter((r) => r.error?.startsWith(SIN_RESUMEN_IA)).length;
+    const fallo = del.find((r) => r.error && !r.error.startsWith(SIN_RESUMEN_IA)) || del.find((r) => r.error);
     return {
       motor,
       nota: ok.length ? media(ok.map((r) => r.score)) : null,
       respondidas: ok.length,
       mencionadas: ok.filter((r) => r.marca_mencionada).length,
       primeras: ok.filter((r) => r.marca_mencionada && r.posicion === 1).length,
-      fallidas: del.length - ok.length,
+      fallidas: del.length - ok.length - sinResumen,
+      sinResumen,
       error: fallo?.error || null,
     };
   });
@@ -224,7 +229,7 @@ export function agregar(
     notaGlobal: media(validos.map((r) => r.score)),
     apariciones,
     totalValidas,
-    sinObtener: todos.length - totalValidas,
+    sinObtener: motores.reduce((n, m) => n + m.fallidas, 0),
     motores,
     ranking,
     puestoPropio,

@@ -5,15 +5,21 @@
  * no toca las tablas georadar_* ni el histórico de los informes de clientes.
  */
 
-export type Motor = 'chatgpt' | 'gemini' | 'perplexity';
+export type Motor = 'chatgpt' | 'gemini' | 'perplexity' | 'claude' | 'google_ia' | 'google_aio';
 
-export const MOTORES: Motor[] = ['chatgpt', 'gemini', 'perplexity'];
+export const MOTORES: Motor[] = ['chatgpt', 'gemini', 'perplexity', 'claude', 'google_ia', 'google_aio'];
 
 export const MOTOR_LABEL: Record<Motor, string> = {
   chatgpt: 'ChatGPT',
   gemini: 'Gemini',
   perplexity: 'Perplexity',
+  claude: 'Claude',
+  google_ia: 'Google Modo IA',
+  google_aio: 'Google AI Overviews',
 };
+
+/** Prefijo del "error" cuando Google respondió pero no mostró resumen de IA (no es un fallo) */
+export const SIN_RESUMEN_IA = 'Google no mostró';
 
 export interface Fuente {
   url: string;
@@ -75,6 +81,10 @@ export interface Preparacion {
   /** Otros nombres con los que se conoce el negocio (nombre comercial, variantes) */
   alias: string[];
   web_legible: boolean;
+  /** Motivo técnico si la web no se pudo leer (para diagnóstico) */
+  web_error?: string;
+  /** Páginas enlazadas desde la portada (menú y cuerpo), para no proponer crear lo que ya existe */
+  paginas: Array<{ ruta: string; texto: string }>;
   tecnico: ChequeoTecnico;
   preguntas: string[];
   /** Ángulo de cada pregunta, en el mismo orden: general, servicio, urgencia, precio, comparativa... */

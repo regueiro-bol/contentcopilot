@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { agregar } from '@/lib/georadar/radiografia/agregar';
-import { MOTORES, MOTOR_LABEL, TIPO_FUENTE_LABEL } from '@/lib/georadar/radiografia/types';
+import { MOTORES, MOTOR_LABEL, SIN_RESUMEN_IA, TIPO_FUENTE_LABEL } from '@/lib/georadar/radiografia/types';
 import type {
   Motor,
   Preparacion,
@@ -61,6 +61,8 @@ function colorNota(n: number): { texto: string; barra: string } {
 /** Mensaje corto y sin jerga a partir del error técnico de un asistente */
 function motivoFallo(error: string | null): string {
   if (!error) return 'No respondió.';
+  if (error.startsWith(SIN_RESUMEN_IA)) return `${error}.`;
+  if (error.startsWith('DataForSEO')) return `No se pudo consultar Google (${error.slice(0, 120)}).`;
   if (error.includes('402') || /credit|billing|prepay/i.test(error)) return 'No respondió: la cuenta de la API no tiene saldo.';
   if (error.includes('429') || /rate limit/i.test(error)) return 'Rechazó la petición por exceso de consultas simultáneas.';
   if (/no configurada/i.test(error)) return 'Falta configurar su clave de API.';
@@ -77,6 +79,9 @@ function CeldaMatriz({ estado, r }: { estado: EstadoPregunta | undefined; r: Res
   const base = 'h-[52px] rounded-[10px] flex items-center justify-center';
   if (!r && estado === 'pendiente') {
     return <div className={`${base} bg-gray-50`}><Loader2 className="h-4 w-4 animate-spin text-gray-400" aria-label="Preguntando" /></div>;
+  }
+  if (r?.error?.startsWith(SIN_RESUMEN_IA)) {
+    return <div className={`${base} bg-gray-100 px-1 text-center text-xs font-medium leading-tight text-gray-700`} title={r.error}>Sin resumen de IA</div>;
   }
   if (!r || r.error) {
     return <div className={`${base} text-xs font-medium text-gray-700`} style={{ background: RAYADO }} title={r?.error || undefined}>Sin respuesta</div>;
@@ -223,6 +228,7 @@ export function RadiografiaExpress() {
         web_legible: prep.web_legible,
         preguntas: compactos,
         dominios,
+        paginas: prep.paginas || [],
       });
       setResumen(res);
     } catch {
@@ -272,7 +278,9 @@ export function RadiografiaExpress() {
   async function reintentar(i: number) {
     const actual = resultados[i];
     if (!actual || !prep) return;
-    const fallidos = actual.resultados.filter((r) => r.error).map((r) => r.motor);
+    const fallidos = actual.resultados
+      .filter((r) => r.error && !r.error.startsWith(SIN_RESUMEN_IA))
+      .map((r) => r.motor);
     if (fallidos.length === 0) return;
     setReintentando(i);
     try {
@@ -320,7 +328,7 @@ export function RadiografiaExpress() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Radiografía Express</h1>
           <p className="text-sm text-gray-600">
-            ¿Recomiendan ChatGPT, Gemini y Perplexity a este negocio, o a su competencia?
+            ¿Recomiendan ChatGPT, Gemini, Perplexity, Claude y Google a este negocio, o a su competencia?
           </p>
         </div>
         <Badge variant="warning" className="ml-auto">Demo interna</Badge>
@@ -399,7 +407,7 @@ export function RadiografiaExpress() {
             </p>
           )}
           <div className="space-y-2">
-            <Label>Preguntas que se lanzarán a los tres asistentes</Label>
+            <Label>Preguntas que se lanzarán a los {MOTORES.length} asistentes</Label>
             {preguntas.map((p, i) => (
               <div key={i} className="flex items-center gap-2">
                 {etiquetas[i] && (
@@ -477,7 +485,7 @@ export function RadiografiaExpress() {
                     {hechos.length} {hechos.length === 1 ? 'pregunta' : 'preguntas'} de comprador
                   </span>
                   <span className="rounded-full bg-gray-100 px-3 py-1.5 text-[13px] font-medium text-gray-700">
-                    {MOTORES.length} asistentes con búsqueda web
+                    {MOTORES.length} asistentes consultados
                   </span>
                   {agg.sinObtener > 0 && !enCurso && (
                     <span className="rounded-full bg-amber-100 px-3 py-1.5 text-[13px] font-medium text-amber-900">
@@ -519,11 +527,16 @@ export function RadiografiaExpress() {
                       {sinDatos
                         ? enCurso
                           ? 'Esperando respuesta…'
-                          : `${motivoFallo(m.error)} No cuenta en la nota.`
+                          : m.fallidas === 0 && m.sinResumen > 0
+                            ? 'Google no mostró resumen de IA en ninguna de estas búsquedas. No cuenta en la nota.'
+                            : `${motivoFallo(m.error)} No cuenta en la nota.`
                         : m.mencionadas === 0
                           ? `No te menciona en ${m.respondidas === 1 ? 'la respuesta que dio' : `las ${m.respondidas} respuestas que dio`}.`
                           : `Te recomienda en ${m.mencionadas} de ${m.respondidas} ${m.respondidas === 1 ? 'pregunta' : 'preguntas'}${m.primeras > 0 ? `, ${m.primeras === 1 ? 'una vez' : `${m.primeras} veces`} en primer lugar` : ''}.`}
                       {!sinDatos && m.fallidas > 0 && !enCurso ? ` ${m.fallidas === 1 ? 'Otra no llegó' : `Otras ${m.fallidas} no llegaron`}.` : ''}
+                      {!sinDatos && m.sinResumen > 0 && !enCurso
+                        ? ` En ${m.sinResumen === 1 ? 'otra búsqueda' : `otras ${m.sinResumen} búsquedas`} Google no mostró resumen de IA.`
+                        : ''}
                     </p>
                   </div>
                 );
@@ -539,15 +552,16 @@ export function RadiografiaExpress() {
                 <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-green-600 bg-green-200" />Te recomienda (puesto)</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-red-600 bg-red-200" />No apareces</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-gray-400" style={{ background: RAYADO }} />Sin respuesta</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 rounded border border-gray-400 bg-gray-100" />Google no mostró resumen</span>
               </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] border-separate text-sm" style={{ borderSpacing: '0 8px' }}>
+              <table className="w-full min-w-[960px] border-separate text-sm" style={{ borderSpacing: '0 8px' }}>
                 <thead>
                   <tr>
                     <th scope="col" className="pb-1 pr-3 text-left text-[13px] font-semibold text-gray-600">Pregunta</th>
                     {MOTORES.map((m) => (
-                      <th key={m} scope="col" className="w-[120px] px-1 pb-1 text-[13px] font-semibold text-gray-600">{MOTOR_LABEL[m]}</th>
+                      <th key={m} scope="col" className="w-[100px] px-1 pb-1 align-bottom text-xs font-semibold leading-tight text-gray-600">{MOTOR_LABEL[m]}</th>
                     ))}
                   </tr>
                 </thead>
@@ -697,33 +711,49 @@ export function RadiografiaExpress() {
           <section aria-label="Base técnica de la web" className="space-y-4 rounded-2xl border border-gray-200 bg-white p-6">
             <h2 className="text-xl font-bold text-gray-900">Base técnica de la web</h2>
             {!prep.web_legible && (
-              <p className="text-sm text-amber-800">No se pudo leer la web automáticamente, así que estas comprobaciones pueden no ser fiables.</p>
+              <p className="text-sm text-amber-800">
+                No se pudo leer la web automáticamente{prep.web_error ? ` (${prep.web_error})` : ''}, así que no se han podido hacer estas comprobaciones.
+              </p>
             )}
             <div className="flex flex-wrap gap-4">
               {(() => {
                 const bloqueados = prep.tecnico.bots_bloqueados;
                 const hayBloqueo = !!bloqueados?.length;
                 const haySchema = prep.tecnico.schema_tipos.length > 0;
+                const sinComprobar = 'No se pudo comprobar.';
                 const filas = [
                   {
                     ok: !hayBloqueo,
-                    neutro: false,
+                    neutro: bloqueados === null,
                     titulo: 'Rastreadores de IA',
-                    texto: hayBloqueo
-                      ? `robots.txt bloquea a ${bloqueados!.join(', ')}.`
-                      : 'Ningún bloqueo declarado: pueden leer la web.',
+                    texto:
+                      bloqueados === null
+                        ? prep.web_legible
+                          ? 'No se pudo leer el archivo robots.txt.'
+                          : sinComprobar
+                        : hayBloqueo
+                          ? `robots.txt bloquea a ${bloqueados.join(', ')}.`
+                          : 'robots.txt no bloquea a ninguno: pueden leer la web.',
                   },
                   {
                     ok: haySchema,
-                    neutro: false,
+                    neutro: !prep.web_legible,
                     titulo: 'Datos estructurados',
-                    texto: haySchema ? prep.tecnico.schema_tipos.slice(0, 6).join(', ') : 'No se encontró ninguno en la portada.',
+                    texto: !prep.web_legible
+                      ? sinComprobar
+                      : haySchema
+                        ? prep.tecnico.schema_tipos.slice(0, 6).join(', ')
+                        : 'No se encontró ninguno en la portada.',
                   },
                   {
                     ok: prep.tecnico.llms_txt,
                     neutro: !prep.tecnico.llms_txt,
                     titulo: 'Archivo llms.txt',
-                    texto: prep.tecnico.llms_txt ? 'Publicado.' : 'No publicado. Es opcional.',
+                    texto: prep.tecnico.llms_txt
+                      ? 'Publicado.'
+                      : prep.web_legible
+                        ? 'No se encontró en la raíz del dominio. Es opcional.'
+                        : sinComprobar,
                   },
                 ];
                 return filas.map((f) => (
@@ -756,7 +786,8 @@ export function RadiografiaExpress() {
               {resultados.map((p, i) => {
                 if (!p) return null;
                 const ok = p.resultados.filter((r) => !r.error);
-                const fallidos = p.resultados.filter((r) => r.error);
+                const fallidos = p.resultados.filter((r) => r.error && !r.error.startsWith(SIN_RESUMEN_IA));
+                const sinResumen = p.resultados.filter((r) => r.error?.startsWith(SIN_RESUMEN_IA));
                 return (
                   <details key={p.pregunta} open={i === 0} className="rounded-2xl border border-gray-200 bg-white px-5">
                     <summary className="flex min-h-[56px] cursor-pointer items-center gap-3 text-[15px] font-semibold text-gray-900">
@@ -784,6 +815,11 @@ export function RadiografiaExpress() {
                         </div>
                       )}
                     </div>
+                    {sinResumen.length > 0 && (
+                      <p className="pb-5 text-sm text-gray-600">
+                        {sinResumen.map((r) => MOTOR_LABEL[r.motor]).join(' y ')}: Google no mostró resumen de IA para esta búsqueda.
+                      </p>
+                    )}
                   </details>
                 );
               })}

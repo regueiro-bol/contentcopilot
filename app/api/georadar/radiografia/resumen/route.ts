@@ -32,6 +32,13 @@ export async function POST(req: NextRequest) {
       .map((d: unknown) => String(d).toLowerCase().slice(0, 100))
       .filter(Boolean)
       .slice(0, 25),
+    (Array.isArray(body.paginas) ? body.paginas : [])
+      .slice(0, 40)
+      .map((p: { ruta?: unknown; texto?: unknown }) => ({
+        ruta: String(p?.ruta || '').slice(0, 120),
+        texto: String(p?.texto || '').slice(0, 60),
+      }))
+      .filter((p: { ruta: string }) => p.ruta.startsWith('/')),
   );
   return NextResponse.json(resumen);
 }
