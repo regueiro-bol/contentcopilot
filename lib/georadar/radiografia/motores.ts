@@ -13,6 +13,7 @@
  * de peticiones (429) se reintentan con espera.
  */
 
+import { SIN_RESUMEN_IA } from './types';
 import type { Fuente, Motor, RespuestaMotor } from './types';
 
 const TIMEOUT_MS = 90_000;
@@ -190,12 +191,130 @@ async function perplexity(pregunta: string): Promise<Parcial> {
   throw ultimo;
 }
 
+// ─── Claude ─────────────────────────────────────────────────────────────────
+
+const CLAUDE_MODELOS = [process.env.RADIOGRAFIA_CLAUDE_SEARCH_MODEL || 'claude-sonnet-5-5', 'claude-sonnet-4-5'];
+
+async function claudeCon(pregunta: string, modelo: string): Promise<Parcial> {
+  const data = await postJson(
+    'https://api.anthropic.com/v1/messages',
+    { 'x-api-key': process.env.ANTHROPIC_API_KEY as string, 'anthropic-version': '2023-06-01' },
+    {
+      model: modelo,
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: pregunta }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+    },
+  );
+  let texto = '';
+  const fuentes: Fuente[] = [];
+  for (const bloque of data.content || []) {
+    if (bloque.type === 'text') {
+      texto += bloque.text || '';
+      for (const c of bloque.citations || []) {
+        if (c.url) fuentes.push({ url: c.url, titulo: c.title });
+      }
+    }
+  }
+  return {
+    modelo,
+    respuesta: texto,
+    fuentes: dedupe(fuentes),
+    tokens_entrada: data.usage?.input_tokens || 0,
+    tokens_salida: data.usage?.output_tokens || 0,
+  };
+}
+
+async function claude(pregunta: string): Promise<Parcial> {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY no configurada');
+  let ultimo: unknown;
+  for (const modelo of CLAUDE_MODELOS) {
+    try {
+      return await claudeCon(pregunta, modelo);
+    } catch (e) {
+      ultimo = e;
+    }
+  }
+  throw ultimo;
+}
+
+// ─── Google (Modo IA y AI Overviews) vía DataForSEO ─────────────────────────
+// Google no ofrece API para sus respuestas de IA; DataForSEO las captura del
+// buscador. Ubicación España (2724), idioma español.
+
+const DFS_BASE = 'https://api.dataforseo.com/v3';
+const DFS_LOCATION = Number(process.env.RADIOGRAFIA_GOOGLE_LOCATION_CODE) || 2724;
+
+async function dataforseo(ruta: string, cuerpo: Record<string, unknown>) {
+  const login = process.env.DATAFORSEO_LOGIN;
+  const password = process.env.DATAFORSEO_PASSWORD;
+  if (!login || !password) throw new Error('DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD no configuradas');
+  const auth = Buffer.from(`${login}:${password}`).toString('base64');
+  const data = await postJson(`${DFS_BASE}${ruta}`, { Authorization: `Basic ${auth}` }, [cuerpo]);
+  const tarea = data.tasks?.[0];
+  if (!tarea || tarea.status_code !== 20000) {
+    throw new Error(`DataForSEO ${tarea?.status_code || data.status_code}: ${tarea?.status_message || data.status_message || 'sin detalle'}`);
+  }
+  return (tarea.result?.[0]?.items || []) as any[];
+}
+
+/** Texto y fuentes de un elemento ai_overview de DataForSEO (la forma varía según el caso) */
+function leerResumenIA(item: any): { texto: string; fuentes: Fuente[] } {
+  const fuentes: Fuente[] = [];
+  const partes: string[] = [];
+  const recorrer = (nodo: any, nivel: number) => {
+    if (!nodo || typeof nodo !== 'object') return;
+    for (const r of nodo.references || []) {
+      if (r?.url) fuentes.push({ url: r.url, titulo: r.title || r.source || r.domain });
+    }
+    if (nivel > 0) {
+      const t = nodo.markdown || nodo.text;
+      if (typeof t === 'string' && t.trim()) partes.push(t.trim());
+    }
+    for (const hijo of nodo.items || []) recorrer(hijo, nivel + 1);
+  };
+  recorrer(item, 0);
+  const propio = typeof item.markdown === 'string' && item.markdown.trim() ? item.markdown.trim() : '';
+  return { texto: propio || partes.join('\n\n'), fuentes: dedupe(fuentes) };
+}
+
+async function googleIA(pregunta: string): Promise<Parcial> {
+  const items = await dataforseo('/serp/google/ai_mode/live/advanced', {
+    keyword: pregunta,
+    location_code: DFS_LOCATION,
+    language_code: 'es',
+    device: 'desktop',
+  });
+  const item = items.find((i) => i.type === 'ai_overview');
+  const { texto, fuentes } = item ? leerResumenIA(item) : { texto: '', fuentes: [] };
+  if (!texto) throw new Error(`${SIN_RESUMEN_IA} respuesta del Modo IA para esta búsqueda`);
+  return { modelo: 'Modo IA', respuesta: texto, fuentes, tokens_entrada: 0, tokens_salida: 0 };
+}
+
+async function googleAIO(pregunta: string): Promise<Parcial> {
+  const items = await dataforseo('/serp/google/organic/live/advanced', {
+    keyword: pregunta,
+    location_code: DFS_LOCATION,
+    language_code: 'es',
+    device: 'desktop',
+    depth: 10,
+    load_async_ai_overview: true,
+  });
+  const item = items.find((i) => i.type === 'ai_overview');
+  const { texto, fuentes } = item ? leerResumenIA(item) : { texto: '', fuentes: [] };
+  if (!texto) throw new Error(`${SIN_RESUMEN_IA} un resumen de IA en los resultados de esta búsqueda`);
+  return { modelo: 'AI Overview', respuesta: texto, fuentes, tokens_entrada: 0, tokens_salida: 0 };
+}
+
 // ─── Entrada común ──────────────────────────────────────────────────────────
 
 const CONECTORES: Record<Motor, (pregunta: string) => Promise<Parcial>> = {
   chatgpt,
   gemini,
   perplexity,
+  claude,
+  google_ia: googleIA,
+  google_aio: googleAIO,
 };
 
 /** Pregunta a un motor con búsqueda web. Nunca lanza: devuelve `error` si falla. */
@@ -207,7 +326,9 @@ export async function preguntarMotor(motor: Motor, pregunta: string): Promise<Re
     return { motor, ...r, duracion_ms: Date.now() - inicio };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[Radiografía ${motor}] ERROR "${pregunta.substring(0, 60)}": ${msg}`);
+    if (!msg.startsWith(SIN_RESUMEN_IA)) {
+      console.error(`[Radiografía ${motor}] ERROR "${pregunta.substring(0, 60)}": ${msg}`);
+    }
     return {
       motor,
       modelo: '',

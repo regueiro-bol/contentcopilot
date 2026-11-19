@@ -19,19 +19,48 @@ function marcaDesdeDominio(dominio: string): string {
   return base.charAt(0).toUpperCase() + base.slice(1);
 }
 
-const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; RaizRadiografia/1.0)' };
+// Cabeceras de navegador: muchos WordPress y cortafuegos de hosting rechazan
+// peticiones con un agente desconocido, y la web se quedaba sin leer.
+const CABECERAS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 RaizRadiografia/1.0',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7',
+  'Accept-Language': 'es-ES,es;q=0.9,en;q=0.6',
+};
 const BOTS_IA = ['GPTBot', 'OAI-SearchBot', 'ChatGPT-User', 'ClaudeBot', 'PerplexityBot', 'Google-Extended'];
 
-async function leerTexto(url: string, soloTexto = false): Promise<string | null> {
+interface Lectura {
+  texto: string | null;
+  /** Motivo si no se pudo leer */
+  motivo?: string;
+  urlFinal?: string;
+}
+
+/**
+ * Descarga una URL. `tipo` = 'html' exige una página; 'texto' exige un archivo
+ * de texto (robots.txt, llms.txt) y descarta las páginas de error en HTML.
+ */
+async function leerUrl(url: string, tipo: 'html' | 'texto'): Promise<Lectura> {
   try {
-    const res = await fetch(url, { redirect: 'follow', headers: UA, signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return null;
-    const tipo = res.headers.get('content-type') || '';
-    if (soloTexto ? tipo.includes('html') : !tipo.includes('html')) return null;
-    return (await res.text()).slice(0, 400_000);
-  } catch {
-    return null;
+    const res = await fetch(url, { redirect: 'follow', headers: CABECERAS, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return { texto: null, motivo: `HTTP ${res.status}` };
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    const cuerpo = (await res.text()).slice(0, 600_000);
+    const pareceHtml = ct.includes('html') || /^\s*<(!doctype|html)/i.test(cuerpo);
+    if (tipo === 'html' && !pareceHtml) return { texto: null, motivo: `no es HTML (${ct || 'sin tipo'})` };
+    if (tipo === 'texto' && pareceHtml) return { texto: null, motivo: 'devuelve una página, no un archivo de texto' };
+    return { texto: cuerpo, urlFinal: res.url };
+  } catch (e) {
+    return { texto: null, motivo: e instanceof Error ? e.message.slice(0, 120) : 'error de red' };
   }
+}
+
+/** Prueba el dominio tal cual y con www. Devuelve la primera lectura válida. */
+async function leerConVariantes(dominio: string, ruta: string, tipo: 'html' | 'texto'): Promise<Lectura> {
+  const primera = await leerUrl(`https://${dominio}${ruta}`, tipo);
+  if (primera.texto !== null || dominio.startsWith('www.')) return primera;
+  const segunda = await leerUrl(`https://www.${dominio}${ruta}`, tipo);
+  return segunda.texto !== null ? segunda : primera;
 }
 
 /** Rastreadores de IA con "Disallow: /" en robots.txt (lectura simplificada por bloques). */
@@ -77,18 +106,51 @@ function tiposSchema($: cheerio.CheerioAPI): string[] {
   return Array.from(tipos).slice(0, 12);
 }
 
-async function leerWeb(dominio: string): Promise<{ portada: string | null; tecnico: ChequeoTecnico }> {
+interface Pagina {
+  ruta: string;
+  texto: string;
+}
+
+/** Enlaces internos de la portada (menú y cuerpo): qué páginas tiene el sitio */
+export function paginasInternas($: cheerio.CheerioAPI, base: string, dominio: string): Pagina[] {
+  const vistas = new Map<string, string>();
+  $('a[href]').each((_, el) => {
+    const href = ($(el).attr('href') || '').trim();
+    if (!href || href.startsWith('#') || /^(mailto|tel|javascript|whatsapp):/i.test(href)) return;
+    let u: URL;
+    try { u = new URL(href, base); } catch { return; }
+    if (!u.hostname.replace(/^www\./, '').endsWith(dominio)) return;
+    const ruta = u.pathname.replace(/\/+$/, '') || '/';
+    if (ruta === '/' || /\.(jpe?g|png|webp|svg|pdf|zip)$/i.test(ruta) || /\/(wp-|feed|tag|author)/.test(ruta)) return;
+    const texto = $(el).text().replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!vistas.has(ruta) || (!vistas.get(ruta) && texto)) vistas.set(ruta, texto);
+  });
+  return Array.from(vistas.entries()).slice(0, 40).map(([ruta, texto]) => ({ ruta, texto }));
+}
+
+async function leerWeb(dominio: string): Promise<{
+  portada: string | null;
+  motivo?: string;
+  paginas: Pagina[];
+  tecnico: ChequeoTecnico;
+}> {
   const [html, robots, llms] = await Promise.all([
-    leerTexto(`https://${dominio}`),
-    leerTexto(`https://${dominio}/robots.txt`, true),
-    leerTexto(`https://${dominio}/llms.txt`, true),
+    leerConVariantes(dominio, '', 'html'),
+    leerConVariantes(dominio, '/robots.txt', 'texto'),
+    leerConVariantes(dominio, '/llms.txt', 'texto'),
   ]);
+
+  if (html.texto === null) console.warn(`[Radiografía] No se pudo leer https://${dominio}: ${html.motivo}`);
+  if (robots.texto === null) console.warn(`[Radiografía] robots.txt de ${dominio}: ${robots.motivo}`);
+  if (llms.texto === null) console.warn(`[Radiografía] llms.txt de ${dominio}: ${llms.motivo}`);
 
   let portada: string | null = null;
   let schema: string[] = [];
-  if (html) {
-    const $ = cheerio.load(html);
+  let paginas: Pagina[] = [];
+  if (html.texto) {
+    const $ = cheerio.load(html.texto);
     schema = tiposSchema($);
+    paginas = paginasInternas($, html.urlFinal || `https://${dominio}/`, dominio);
     $('script, style, noscript, svg').remove();
     portada = [
       `TITLE: ${$('title').first().text().trim()}`,
@@ -101,9 +163,11 @@ async function leerWeb(dominio: string): Promise<{ portada: string | null; tecni
 
   return {
     portada,
+    motivo: html.motivo,
+    paginas,
     tecnico: {
-      bots_bloqueados: robots === null ? null : botsBloqueados(robots),
-      llms_txt: !!llms && llms.trim().length > 0,
+      bots_bloqueados: robots.texto === null ? null : botsBloqueados(robots.texto),
+      llms_txt: !!llms.texto && llms.texto.trim().length > 0,
       schema_tipos: schema,
     },
   };
@@ -121,7 +185,7 @@ export async function prepararRadiografia(
   sector: string,
   zona: string,
 ): Promise<Preparacion> {
-  const { portada, tecnico } = await leerWeb(dominio);
+  const { portada, motivo, paginas, tecnico } = await leerWeb(dominio);
 
   const prompt = `Eres experto en GEO (visibilidad de marcas en asistentes de IA).
 Vas a preparar una radiografía de visibilidad para un negocio.
@@ -173,6 +237,8 @@ Devuelve SOLO un objeto JSON:
     alias,
     descripcion: (ia?.descripcion || '').trim(),
     web_legible: portada !== null,
+    web_error: portada === null ? motivo : undefined,
+    paginas,
     tecnico,
     preguntas: pares.map((p) => p.pregunta.trim()),
     etiquetas: pares.map((p) => String(p.etiqueta).trim().slice(0, 24)),
