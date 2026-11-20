@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
+import { NextResponse } from 'next/server'
 
 /**
  * Rutas que requieren autenticación (Clerk v7 — patrón de protección invertida).
@@ -40,6 +41,13 @@ const isProtectedRoute = createRouteMatcher([
  */
 export default clerkMiddleware(
   async (auth, request) => {
+    // Radar Local: el subdominio radar.* sirve la página pública /radar en su raíz.
+    const host = (request.headers.get('host') || '').toLowerCase()
+    if (host.startsWith('radar.') && request.nextUrl.pathname === '/') {
+      const destino = request.nextUrl.clone()
+      destino.pathname = '/radar'
+      return NextResponse.rewrite(destino)
+    }
     if (isProtectedRoute(request)) {
       // Redirige a /sign-in si el usuario no está autenticado
       await auth.protect()
