@@ -9,6 +9,19 @@ export type Motor = 'chatgpt' | 'gemini' | 'perplexity' | 'claude' | 'google_ia'
 
 export const MOTORES: Motor[] = ['chatgpt', 'gemini', 'perplexity', 'claude', 'google_ia', 'google_aio'];
 
+/**
+ * Modo de la radiografía.
+ * - captacion: 3 preguntas genéricas (solo sector + zona) a 4 asistentes. Rápida y barata; es la demo comercial.
+ * - completa: 5 preguntas a medida de la web a los 6 asistentes. Informe interno.
+ */
+export type Modo = 'captacion' | 'completa';
+
+export const MOTORES_CAPTACION: Motor[] = ['chatgpt', 'gemini', 'perplexity', 'google_ia'];
+
+export function motoresDe(modo: Modo): Motor[] {
+  return modo === 'captacion' ? MOTORES_CAPTACION : MOTORES;
+}
+
 export const MOTOR_LABEL: Record<Motor, string> = {
   chatgpt: 'ChatGPT',
   gemini: 'Gemini',
