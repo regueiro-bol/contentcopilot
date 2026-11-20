@@ -10,8 +10,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { agregar } from '@/lib/georadar/radiografia/agregar';
-import { MOTORES, MOTOR_LABEL, SIN_RESUMEN_IA, TIPO_FUENTE_LABEL } from '@/lib/georadar/radiografia/types';
+import { MOTOR_LABEL, SIN_RESUMEN_IA, TIPO_FUENTE_LABEL, motoresDe } from '@/lib/georadar/radiografia/types';
 import type {
+  Modo,
   Motor,
   Preparacion,
   ResultadoMotor,
@@ -153,6 +154,8 @@ export function RadiografiaExpress() {
   const [dominio, setDominio] = useState('');
   const [sector, setSector] = useState('');
   const [zona, setZona] = useState('');
+  const [modo, setModo] = useState<Modo>('captacion');
+  const MOTORES = motoresDe(modo);
   const [competidor1, setCompetidor1] = useState('');
   const [competidor2, setCompetidor2] = useState('');
   const [cargando, setCargando] = useState(false);
@@ -176,9 +179,9 @@ export function RadiografiaExpress() {
   const enCurso = estados.some((e) => e === 'pendiente');
 
   const agg = useMemo(
-    () => agregar(hechos, marca.trim(), alias, prep?.dominio || '', resumen?.tipos_fuente || {}),
+    () => agregar(hechos, marca.trim(), alias, prep?.dominio || '', resumen?.tipos_fuente || {}, MOTORES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [resultados, marca, aliasTexto, prep, resumen],
+    [resultados, marca, aliasTexto, prep, resumen, modo],
   );
 
   async function preparar(e: React.FormEvent) {
@@ -186,7 +189,7 @@ export function RadiografiaExpress() {
     setError(null);
     setCargando(true);
     try {
-      const p = await post<Preparacion>('/api/georadar/radiografia/preparar', { dominio, sector, zona });
+      const p = await post<Preparacion>('/api/georadar/radiografia/preparar', { dominio, sector, zona, modo });
       setPrep(p);
       setMarca(p.marca);
       setAliasTexto((p.alias || []).join(', '));
@@ -207,7 +210,7 @@ export function RadiografiaExpress() {
       alias,
       competidores,
       pregunta,
-      ...(motores ? { motores } : {}),
+      motores: motores || MOTORES,
     };
   }
 
@@ -220,7 +223,7 @@ export function RadiografiaExpress() {
         ...p,
         resultados: p.resultados.map((r) => ({ ...r, respuesta: '', resumen: '' })),
       }));
-      const dominios = agregar(validos, marca.trim(), alias, prep.dominio, {}).fuentes.map((f) => f.dominio);
+      const dominios = agregar(validos, marca.trim(), alias, prep.dominio, {}, MOTORES).fuentes.map((f) => f.dominio);
       const res = await post<Resumen>('/api/georadar/radiografia/resumen', {
         dominio: prep.dominio,
         marca: marca.trim(),
@@ -345,7 +348,7 @@ export function RadiografiaExpress() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Radiografía Express</h1>
           <p className="text-sm text-gray-600">
-            ¿Recomiendan ChatGPT, Gemini, Perplexity, Claude y Google a este negocio, o a su competencia?
+            ¿Recomiendan ChatGPT, Gemini, Perplexity y Google a este negocio, o a su competencia?
           </p>
         </div>
         <Badge variant="warning" className="ml-auto">Demo interna</Badge>
@@ -359,14 +362,43 @@ export function RadiografiaExpress() {
       {paso === 'formulario' && (
         <div className="rounded-2xl border border-gray-200 bg-white p-6">
           <form onSubmit={preparar} className="space-y-4">
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium text-gray-900">Tipo de radiografía</legend>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(
+                  [
+                    ['captacion', 'Demo de captación', '3 preguntas genéricas (solo sector y ciudad) a 4 asistentes: ChatGPT, Gemini, Perplexity y Google Modo IA. Rápida y barata.'],
+                    ['completa', 'Informe completo', '5 preguntas a medida de la web a los 6 asistentes, con Claude y Google AI Overviews. Uso interno.'],
+                  ] as Array<[Modo, string, string]>
+                ).map(([valor, titulo, texto]) => (
+                  <label
+                    key={valor}
+                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${modo === valor ? 'border-violet-600 bg-violet-50' : 'border-gray-200 bg-white'}`}
+                  >
+                    <input
+                      type="radio"
+                      name="rx-modo"
+                      value={valor}
+                      checked={modo === valor}
+                      onChange={() => setModo(valor)}
+                      className="mt-1 h-4 w-4 accent-violet-600"
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold text-gray-900">{titulo}</span>
+                      <span className="block text-[13px] leading-snug text-gray-600">{texto}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="rx-dominio">Dominio *</Label>
                 <Input id="rx-dominio" required placeholder="tunegocio.es" value={dominio} onChange={(e) => setDominio(e.target.value)} />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rx-sector">Sector</Label>
-                <Input id="rx-sector" placeholder="Óptica" value={sector} onChange={(e) => setSector(e.target.value)} />
+                <Label htmlFor="rx-sector">A qué se dedica{modo === 'captacion' ? ' *' : ''}</Label>
+                <Input id="rx-sector" required={modo === 'captacion'} placeholder="Óptica" value={sector} onChange={(e) => setSector(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="rx-zona">Ciudad o zona</Label>

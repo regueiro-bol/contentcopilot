@@ -104,12 +104,13 @@ export function agregar(
   alias: string[],
   dominio: string,
   tiposFuente: Record<string, TipoFuente>,
+  motoresActivos: Motor[] = MOTORES,
 ): Agregado {
   const todos: ResultadoMotor[] = preguntas.flatMap((p) => p.resultados);
   const validos = todos.filter((r) => !r.error);
 
   // ── Por asistente ─────────────────────────────────────────────────────────
-  const motores: DatosMotor[] = MOTORES.map((motor) => {
+  const motores: DatosMotor[] = motoresActivos.map((motor) => {
     const del = todos.filter((r) => r.motor === motor);
     const ok = del.filter((r) => !r.error);
     const sinResumen = del.filter((r) => r.error?.startsWith(SIN_RESUMEN_IA)).length;
