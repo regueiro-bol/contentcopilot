@@ -182,12 +182,12 @@ interface PreparacionIA {
   preguntas?: Array<{ etiqueta?: string; pregunta?: string } | string>;
 }
 
-type Par = { etiqueta: string; pregunta: string };
+export type Par = { etiqueta: string; pregunta: string };
 
 const ANGULOS_CAPTACION = ['La mejor', 'Precio', 'Confianza'];
 
 /** Preguntas de reserva, por si la IA no devuelve las suyas. */
-function plantillasGenericas(categoria: string, zona: string): Par[] {
+export function plantillasGenericas(categoria: string, zona: string): Par[] {
   const cat = categoria.trim().toLowerCase();
   const en = zona.trim() ? ` en ${zona.trim()}` : '';
   const de = zona.trim() ? ` de ${zona.trim()}` : '';
@@ -202,7 +202,7 @@ function plantillasGenericas(categoria: string, zona: string): Par[] {
  * Tres preguntas genéricas para la demo de captación. Se redactan SOLO con el tipo de negocio
  * y la zona, sin leer la web, para que no salgan a medida del negocio analizado.
  */
-async function preguntasGenericas(categoria: string, zona: string): Promise<{ pares: Par[]; coste_usd: number }> {
+export async function preguntasGenericas(categoria: string, zona: string): Promise<{ pares: Par[]; coste_usd: number }> {
   const cat = categoria.trim().slice(0, 80);
   if (!cat) return { pares: [], coste_usd: 0 };
 

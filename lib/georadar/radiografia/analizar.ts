@@ -31,7 +31,8 @@ const SENTIMIENTOS = ['positivo', 'neutro', 'negativo', 'no_mencionado'];
 const TIPOS_FUENTE: TipoFuente[] = ['prensa', 'competidor', 'directorio', 'otro'];
 
 function dominioEnFuentes(r: RespuestaMotor, dominio: string): boolean {
-  const d = dominio.toLowerCase();
+  const d = dominio.trim().toLowerCase();
+  if (!d) return false; // negocio sin web: no hay dominio que buscar
   return r.fuentes.some((f) => `${f.url} ${f.titulo || ''}`.toLowerCase().includes(d));
 }
 
